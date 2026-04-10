@@ -50,7 +50,7 @@ export default function FiltrosCartera({ filtros, vendedores, onFiltrar, onLimpi
         <Form.Item name="busqueda" style={{ minWidth: 200 }}>
           <Input
             prefix={<SearchOutlined />}
-            placeholder="Buscar cliente, c\u00f3digo o NCF"
+            placeholder="Buscar cliente, código o NCF"
             allowClear
             onChange={(e) => {
               if (!e.target.value) form.submit();
@@ -77,16 +77,16 @@ export default function FiltrosCartera({ filtros, vendedores, onFiltrar, onLimpi
           />
         </Form.Item>
         <Form.Item name="dias_min">
-          <InputNumber placeholder="D\u00edas m\u00edn" min={0} style={{ width: 110 }} />
+          <InputNumber placeholder="Días mín" min={0} style={{ width: 110 }} />
         </Form.Item>
         <Form.Item name="dias_max">
-          <InputNumber placeholder="D\u00edas m\u00e1x" min={0} style={{ width: 110 }} />
+          <InputNumber placeholder="Días máx" min={0} style={{ width: 110 }} />
         </Form.Item>
         <Form.Item name="monto_min">
-          <InputNumber placeholder="Monto m\u00edn" min={0} style={{ width: 130 }} />
+          <InputNumber placeholder="Monto mín" min={0} style={{ width: 130 }} />
         </Form.Item>
         <Form.Item name="monto_max">
-          <InputNumber placeholder="Monto m\u00e1x" min={0} style={{ width: 130 }} />
+          <InputNumber placeholder="Monto máx" min={0} style={{ width: 130 }} />
         </Form.Item>
         <Form.Item>
           <Space>

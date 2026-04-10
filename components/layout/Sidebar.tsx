@@ -30,12 +30,12 @@ const menuItems = [
   {
     key: "/cola-aprobacion",
     icon: <CheckCircleOutlined />,
-    label: "Cola de Aprobaci\u00f3n",
+    label: "Cola de Aprobación",
   },
   {
     key: "/conciliacion",
     icon: <BankOutlined />,
-    label: "Conciliaci\u00f3n",
+    label: "Conciliación",
   },
   {
     key: "/clientes",

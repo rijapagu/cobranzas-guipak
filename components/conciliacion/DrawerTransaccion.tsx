@@ -89,7 +89,7 @@ export default function DrawerTransaccion({ entrada, open, onClose, onRefresh, c
       <Drawer
         title={
           <Space>
-            <span>Transacci\u00f3n #{entrada.id}</span>
+            <span>Transacción #{entrada.id}</span>
             <span style={{
               color: estadoColor[entrada.estado],
               fontWeight: 600,
@@ -116,8 +116,8 @@ export default function DrawerTransaccion({ entrada, open, onClose, onRefresh, c
               {formatMonto(entrada.monto, entrada.moneda)}
             </Title>
           </Descriptions.Item>
-          <Descriptions.Item label="Descripci\u00f3n" span={2}>
-            {entrada.descripcion || <Text type="secondary">Sin descripci\u00f3n</Text>}
+          <Descriptions.Item label="Descripción" span={2}>
+            {entrada.descripcion || <Text type="secondary">Sin descripción</Text>}
           </Descriptions.Item>
           <Descriptions.Item label="Referencia">
             {entrada.referencia || "-"}
@@ -145,7 +145,7 @@ export default function DrawerTransaccion({ entrada, open, onClose, onRefresh, c
           <>
             <Divider>Asignar Cliente</Divider>
             <Space direction="vertical" size="middle" style={{ width: "100%" }}>
-              <Text>Seleccione el cliente que realiz\u00f3 esta transferencia:</Text>
+              <Text>Seleccione el cliente que realizó esta transferencia:</Text>
               <SelectorCliente
                 clientes={clientes}
                 value={clienteSel?.codigo}
@@ -162,7 +162,7 @@ export default function DrawerTransaccion({ entrada, open, onClose, onRefresh, c
                 Asignar y Aprender
               </Button>
               <Text type="secondary" style={{ fontSize: 12 }}>
-                El sistema recordar\u00e1 esta cuenta para futuras conciliaciones.
+                El sistema recordará esta cuenta para futuras conciliaciones.
               </Text>
             </Space>
           </>
@@ -170,7 +170,7 @@ export default function DrawerTransaccion({ entrada, open, onClose, onRefresh, c
 
         {entrada.estado === "POR_APLICAR" && (
           <>
-            <Divider>Acci\u00f3n</Divider>
+            <Divider>Acción</Divider>
             <Button
               type="primary"
               icon={<CheckOutlined />}
@@ -188,7 +188,7 @@ export default function DrawerTransaccion({ entrada, open, onClose, onRefresh, c
           <>
             <Divider />
             <Text type="success">
-              Esta transacci\u00f3n ya est\u00e1 conciliada con Softec.
+              Esta transacción ya está conciliada con Softec.
             </Text>
           </>
         )}

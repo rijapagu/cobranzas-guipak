@@ -52,12 +52,12 @@ export default function DetalleFactura({ factura, open, onClose }: Props) {
         <Descriptions.Item label="Segmento">
           <SegmentoTag segmento={factura.segmento_riesgo} />
         </Descriptions.Item>
-        <Descriptions.Item label="D\u00edas Vencido">
+        <Descriptions.Item label="Días Vencido">
           <Text type="danger" strong>
             {diasVencidoTexto(factura.dias_vencido)}
           </Text>
         </Descriptions.Item>
-        <Descriptions.Item label="Emisi\u00f3n">{formatFecha(factura.fecha_emision)}</Descriptions.Item>
+        <Descriptions.Item label="Emisión">{formatFecha(factura.fecha_emision)}</Descriptions.Item>
         <Descriptions.Item label="Vencimiento">{formatFecha(factura.fecha_vencimiento)}</Descriptions.Item>
         <Descriptions.Item label="Total">
           {formatMonto(factura.total_factura, factura.moneda)}
@@ -72,7 +72,7 @@ export default function DetalleFactura({ factura, open, onClose }: Props) {
         </Descriptions.Item>
         <Descriptions.Item label="Moneda">{factura.moneda}</Descriptions.Item>
         <Descriptions.Item label="Tasa Cambio">{factura.tasa_cambio}</Descriptions.Item>
-        <Descriptions.Item label="T\u00e9rminos">{factura.terminos_pago}</Descriptions.Item>
+        <Descriptions.Item label="Términos">{factura.terminos_pago}</Descriptions.Item>
         <Descriptions.Item label="Vendedor">{factura.vendedor}</Descriptions.Item>
         <Descriptions.Item label="Contacto Cobros" span={2}>
           {factura.contacto_cobros || <Text type="secondary">No asignado</Text>}
@@ -91,7 +91,7 @@ export default function DetalleFactura({ factura, open, onClose }: Props) {
             </Link>
           </Descriptions.Item>
         )}
-        <Descriptions.Item label="\u00daltimo Pago" span={2}>
+        <Descriptions.Item label="Último Pago" span={2}>
           {factura.fecha_ultimo_pago
             ? formatFecha(factura.fecha_ultimo_pago)
             : <Tag color="default">Sin pagos registrados</Tag>

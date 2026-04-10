@@ -40,7 +40,7 @@ export default function TablaConciliacion({ entradas, loading, clientes, onRefre
       sorter: (a, b) => new Date(a.fecha_transaccion).getTime() - new Date(b.fecha_transaccion).getTime(),
     },
     {
-      title: "Descripci\u00f3n",
+      title: "Descripción",
       dataIndex: "descripcion",
       ellipsis: true,
       width: 250,

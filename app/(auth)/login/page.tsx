@@ -28,14 +28,14 @@ function LoginForm() {
       const data = await res.json();
 
       if (!res.ok) {
-        setError(data.error || "Error al iniciar sesi\u00f3n");
+        setError(data.error || "Error al iniciar sesión");
         return;
       }
 
       router.push(redirect);
       router.refresh();
     } catch {
-      setError("Error de conexi\u00f3n");
+      setError("Error de conexión");
     } finally {
       setLoading(false);
     }
@@ -69,7 +69,7 @@ function LoginForm() {
             name="email"
             rules={[
               { required: true, message: "Ingrese su email" },
-              { type: "email", message: "Email inv\u00e1lido" },
+              { type: "email", message: "Email inválido" },
             ]}
           >
             <Input prefix={<MailOutlined />} placeholder="Email" />
@@ -78,12 +78,12 @@ function LoginForm() {
           <Form.Item
             name="password"
             rules={[
-              { required: true, message: "Ingrese su contrase\u00f1a" },
+              { required: true, message: "Ingrese su contraseña" },
             ]}
           >
             <Input.Password
               prefix={<LockOutlined />}
-              placeholder="Contrase\u00f1a"
+              placeholder="Contraseña"
             />
           </Form.Item>
 
@@ -94,7 +94,7 @@ function LoginForm() {
               loading={loading}
               block
             >
-              Iniciar Sesi\u00f3n
+              Iniciar Sesión
             </Button>
           </Form.Item>
         </Form>

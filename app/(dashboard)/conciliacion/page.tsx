@@ -74,7 +74,7 @@ export default function ConciliacionPage() {
       );
       fetchResultados();
     } catch {
-      messageApi.error("Error de conexi\u00f3n");
+      messageApi.error("Error de conexión");
     } finally {
       setCargando(false);
     }
@@ -85,12 +85,12 @@ export default function ConciliacionPage() {
       {contextHolder}
 
       <Title level={4} style={{ marginBottom: 16 }}>
-        Conciliaci\u00f3n Bancaria
+        Conciliación Bancaria
       </Title>
 
       <Alert
-        message="Conciliaci\u00f3n inteligente"
-        description="El sistema aprende a identificar cuentas bancarias de clientes. La primera vez que aparece una cuenta nueva, debe asignarla manualmente. En futuras cargas, el sistema la propondr\u00e1 autom\u00e1ticamente."
+        message="Conciliación inteligente"
+        description="El sistema aprende a identificar cuentas bancarias de clientes. La primera vez que aparece una cuenta nueva, debe asignarla manualmente. En futuras cargas, el sistema la propondrá automáticamente."
         type="info"
         showIcon
         closable

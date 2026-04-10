@@ -49,7 +49,7 @@ export default function TablaCartera({ facturas, loading }: Props) {
       render: (v: string) => formatFecha(v),
     },
     {
-      title: "D\u00edas",
+      title: "Días",
       dataIndex: "dias_vencido",
       width: 120,
       sorter: (a, b) => a.dias_vencido - b.dias_vencido,

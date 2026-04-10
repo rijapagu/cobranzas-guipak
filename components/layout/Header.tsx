@@ -39,7 +39,7 @@ export default function Header({ userName, userRol }: HeaderProps) {
     {
       key: "logout",
       icon: <LogoutOutlined />,
-      label: "Cerrar sesi\u00f3n",
+      label: "Cerrar sesión",
       danger: true,
       onClick: handleLogout,
     },

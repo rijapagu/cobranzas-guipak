@@ -126,7 +126,7 @@ export default function CarteraPage() {
             )}
             {ultimaConsulta && (
               <Text type="secondary" style={{ fontSize: 12 }}>
-                <ClockCircleOutlined /> \u00daltima consulta: {formatFecha(ultimaConsulta)}
+                <ClockCircleOutlined /> Última consulta: {formatFecha(ultimaConsulta)}
               </Text>
             )}
           </Space>
@@ -143,8 +143,8 @@ export default function CarteraPage() {
 
       {modo === "mock" && (
         <Alert
-          message="Sin conexi\u00f3n a Softec"
-          description="Mostrando datos de demostraci\u00f3n. Configure las credenciales de Softec en .env.local para ver datos reales."
+          message="Sin conexión a Softec"
+          description="Mostrando datos de demostración. Configure las credenciales de Softec en .env.local para ver datos reales."
           type="info"
           showIcon
           closable

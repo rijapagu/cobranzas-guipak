@@ -61,7 +61,7 @@ export default function ColaAprobacionPage() {
       messageApi.success(`${data.generadas} gestiones generadas`);
       fetchCola();
     } catch {
-      messageApi.error("Error de conexi\u00f3n");
+      messageApi.error("Error de conexión");
     } finally {
       setGenerando(false);
     }
@@ -75,7 +75,7 @@ export default function ColaAprobacionPage() {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
         <div>
           <Title level={4} style={{ margin: 0 }}>
-            Cola de Aprobaci\u00f3n
+            Cola de Aprobación
           </Title>
           <Space size={8} style={{ marginTop: 4 }}>
             {resumen.pendientes > 0 && (
@@ -104,8 +104,8 @@ export default function ColaAprobacionPage() {
 
       {gestiones.length === 0 && !loading && (
         <Alert
-          message="Cola vac\u00eda"
-          description='No hay gestiones pendientes. Haga clic en "Generar Cola" para crear mensajes de cobranza autom\u00e1ticamente.'
+          message="Cola vacía"
+          description='No hay gestiones pendientes. Haga clic en "Generar Cola" para crear mensajes de cobranza automáticamente.'
           type="info"
           showIcon
           style={{ marginBottom: 16 }}

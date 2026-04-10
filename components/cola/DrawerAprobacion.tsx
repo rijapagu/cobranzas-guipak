@@ -63,7 +63,7 @@ export default function DrawerAprobacion({ gestion, open, onClose, onAccionCompl
       onClose();
       onAccionCompletada();
     } catch {
-      messageApi.error("Error de conexi\u00f3n");
+      messageApi.error("Error de conexión");
     } finally {
       setLoading(false);
     }
@@ -94,7 +94,7 @@ export default function DrawerAprobacion({ gestion, open, onClose, onAccionCompl
       onClose();
       onAccionCompletada();
     } catch {
-      messageApi.error("Error de conexi\u00f3n");
+      messageApi.error("Error de conexión");
     } finally {
       setLoading(false);
     }
@@ -115,11 +115,11 @@ export default function DrawerAprobacion({ gestion, open, onClose, onAccionCompl
         return;
       }
 
-      messageApi.success("Escalada a gesti\u00f3n manual");
+      messageApi.success("Escalada a gestión manual");
       onClose();
       onAccionCompletada();
     } catch {
-      messageApi.error("Error de conexi\u00f3n");
+      messageApi.error("Error de conexión");
     } finally {
       setLoading(false);
     }
@@ -137,7 +137,7 @@ export default function DrawerAprobacion({ gestion, open, onClose, onAccionCompl
       <Drawer
         title={
           <Space>
-            <span>Gesti\u00f3n #{gestion.id}</span>
+            <span>Gestión #{gestion.id}</span>
             <SegmentoTag segmento={gestion.segmento_riesgo} />
           </Space>
         }
@@ -209,7 +209,7 @@ export default function DrawerAprobacion({ gestion, open, onClose, onAccionCompl
               {formatMonto(gestion.saldo_pendiente, gestion.moneda)}
             </Text>
           </Descriptions.Item>
-          <Descriptions.Item label="D\u00edas Vencido">
+          <Descriptions.Item label="Días Vencido">
             <Text style={{ color: colorSegmento(gestion.segmento_riesgo) }}>
               {diasVencidoTexto(gestion.dias_vencido)}
             </Text>
@@ -283,7 +283,7 @@ export default function DrawerAprobacion({ gestion, open, onClose, onAccionCompl
 
       {/* Modal descartar */}
       <Modal
-        title="Descartar gesti\u00f3n"
+        title="Descartar gestión"
         open={motivoModal}
         onOk={handleDescartar}
         onCancel={() => { setMotivoModal(false); setMotivo(""); }}
@@ -291,12 +291,12 @@ export default function DrawerAprobacion({ gestion, open, onClose, onAccionCompl
         okText="Descartar"
         okButtonProps={{ danger: true }}
       >
-        <p>Indique el motivo por el cual se descarta esta gesti\u00f3n:</p>
+        <p>Indique el motivo por el cual se descarta esta gestión:</p>
         <TextArea
           value={motivo}
           onChange={(e) => setMotivo(e.target.value)}
           rows={3}
-          placeholder="Ej: Cliente ya pag\u00f3, factura incorrecta, etc."
+          placeholder="Ej: Cliente ya pagó, factura incorrecta, etc."
         />
       </Modal>
 
@@ -305,7 +305,7 @@ export default function DrawerAprobacion({ gestion, open, onClose, onAccionCompl
         title="Pausar cliente"
         open={pausaModal}
         onOk={() => {
-          messageApi.info(`Pausa de ${diasPausa} d\u00edas (funcionalidad completa en Fase 6)`);
+          messageApi.info(`Pausa de ${diasPausa} días (funcionalidad completa en Fase 6)`);
           setPausaModal(false);
         }}
         onCancel={() => setPausaModal(false)}
@@ -317,7 +317,7 @@ export default function DrawerAprobacion({ gestion, open, onClose, onAccionCompl
           onChange={(v) => setDiasPausa(v || 7)}
           min={1}
           max={90}
-          addonAfter="d\u00edas"
+          addonAfter="días"
         />
       </Modal>
     </>

@@ -39,7 +39,7 @@ export default function DashboardPage() {
         <Col xs={24} sm={12} lg={6}>
           <Card>
             <Statistic
-              title="Pendientes Aprobaci\u00f3n"
+              title="Pendientes Aprobación"
               value={0}
               prefix={<WarningOutlined />}
               valueStyle={{ color: "#1890ff" }}
@@ -59,7 +59,7 @@ export default function DashboardPage() {
       </Row>
       <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
         <Col xs={24} lg={12}>
-          <Card title="Distribuci\u00f3n por Segmento">
+          <Card title="Distribución por Segmento">
             <Typography.Text type="secondary">
               Conecta con Softec para ver datos reales
             </Typography.Text>
@@ -68,7 +68,7 @@ export default function DashboardPage() {
         <Col xs={24} lg={12}>
           <Card title="Actividad Reciente">
             <Typography.Text type="secondary">
-              Sin actividad registrada a\u00fan
+              Sin actividad registrada aún
             </Typography.Text>
           </Card>
         </Col>

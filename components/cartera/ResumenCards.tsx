@@ -12,9 +12,9 @@ const iconEmoji: Record<SegmentoRiesgo, string> = {
 };
 
 const labelSegmento: Record<SegmentoRiesgo, string> = {
-  ROJO: "Cr\u00edtico (30+ d\u00edas)",
-  NARANJA: "Alto (16-30 d\u00edas)",
-  AMARILLO: "Medio (1-15 d\u00edas)",
+  ROJO: "Crítico (30+ días)",
+  NARANJA: "Alto (16-30 días)",
+  AMARILLO: "Medio (1-15 días)",
   VERDE: "Preventivo",
 };
 

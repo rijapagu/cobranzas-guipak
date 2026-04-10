@@ -11,11 +11,11 @@ const { Text } = Typography;
 const BANCOS = [
   "Banreservas",
   "Banco Popular",
-  "BHD Le\u00f3n",
+  "BHD León",
   "Scotiabank",
   "Banco BDI",
   "Banco Santa Cruz",
-  "Banco L\u00f3pez de Haro",
+  "Banco López de Haro",
   "Banco Caribe",
   "Otro",
 ];
@@ -69,7 +69,7 @@ export default function CargadorExtracto({ onProcesar, loading }: Props) {
               <InboxOutlined />
             </p>
             <p className="ant-upload-text">
-              Arrastre el extracto aqu\u00ed o haga clic para seleccionar
+              Arrastre el extracto aquí o haga clic para seleccionar
             </p>
             <p className="ant-upload-hint">
               <Text type="secondary">Formatos: .xlsx, .xls, .csv</Text>
