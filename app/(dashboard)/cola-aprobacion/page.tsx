@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Typography, Button, Space, Tag, Alert, message } from "antd";
-import { PlusCircleOutlined, ReloadOutlined } from "@ant-design/icons";
+import { PlusCircleOutlined, ReloadOutlined, SendOutlined } from "@ant-design/icons";
 import type { CobranzaGestion } from "@/lib/types/cobranzas";
 import ResumenCola from "@/components/cola/ResumenCola";
 import TablaColaAprobacion from "@/components/cola/TablaColaAprobacion";
@@ -13,6 +13,8 @@ export default function ColaAprobacionPage() {
   const [gestiones, setGestiones] = useState<CobranzaGestion[]>([]);
   const [loading, setLoading] = useState(true);
   const [generando, setGenerando] = useState(false);
+  const [enviando, setEnviando] = useState(false);
+  const [vistaEstado, setVistaEstado] = useState<string>("PENDIENTE");
   const [resumen, setResumen] = useState({
     pendientes: 0,
     aprobadas_hoy: 0,
@@ -25,7 +27,7 @@ export default function ColaAprobacionPage() {
   const fetchCola = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/cobranzas/cola-aprobacion");
+      const res = await fetch(`/api/cobranzas/cola-aprobacion?estado=${vistaEstado}`);
       const data = await res.json();
       setGestiones(data.gestiones || []);
       setResumen({
@@ -39,7 +41,7 @@ export default function ColaAprobacionPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [vistaEstado]);
 
   useEffect(() => {
     fetchCola();
@@ -67,6 +69,31 @@ export default function ColaAprobacionPage() {
     }
   };
 
+  const handleEnviarTodo = async () => {
+    const aprobadas = gestiones.filter(
+      (g) => g.estado === "APROBADO" || g.estado === "EDITADO"
+    );
+    if (aprobadas.length === 0) {
+      messageApi.warning("No hay gestiones aprobadas para enviar");
+      return;
+    }
+    setEnviando(true);
+    let enviadas = 0;
+    let fallidas = 0;
+    for (const g of aprobadas) {
+      try {
+        const res = await fetch(`/api/cobranzas/gestiones/${g.id}/enviar`, { method: "POST" });
+        if (res.ok) enviadas++;
+        else fallidas++;
+      } catch {
+        fallidas++;
+      }
+    }
+    messageApi.success(`${enviadas} enviadas${fallidas > 0 ? `, ${fallidas} fallidas` : ""}`);
+    setEnviando(false);
+    fetchCola();
+  };
+
   return (
     <div>
       {contextHolder}
@@ -91,18 +118,45 @@ export default function ColaAprobacionPage() {
           >
             Actualizar
           </Button>
-          <Button
-            type="primary"
-            icon={<PlusCircleOutlined />}
-            onClick={handleGenerarCola}
-            loading={generando}
-          >
-            Generar Cola
-          </Button>
+          {vistaEstado === "PENDIENTE" && (
+            <Button
+              type="primary"
+              icon={<PlusCircleOutlined />}
+              onClick={handleGenerarCola}
+              loading={generando}
+            >
+              Generar Cola
+            </Button>
+          )}
+          {(vistaEstado === "APROBADO" || vistaEstado === "EDITADO") && gestiones.length > 0 && (
+            <Button
+              type="primary"
+              icon={<SendOutlined />}
+              onClick={handleEnviarTodo}
+              loading={enviando}
+              style={{ background: "#52c41a", borderColor: "#52c41a" }}
+            >
+              Enviar Todo ({gestiones.length})
+            </Button>
+          )}
         </Space>
       </div>
 
-      {gestiones.length === 0 && !loading && (
+      {/* Tabs de estado */}
+      <Space style={{ marginBottom: 16 }}>
+        {["PENDIENTE", "APROBADO", "ENVIADO", "DESCARTADO"].map((est) => (
+          <Button
+            key={est}
+            type={vistaEstado === est ? "primary" : "default"}
+            size="small"
+            onClick={() => setVistaEstado(est)}
+          >
+            {est === "PENDIENTE" ? "Pendientes" : est === "APROBADO" ? "Aprobadas" : est === "ENVIADO" ? "Enviadas" : "Descartadas"}
+          </Button>
+        ))}
+      </Space>
+
+      {gestiones.length === 0 && !loading && vistaEstado === "PENDIENTE" && (
         <Alert
           message="Cola vacía"
           description='No hay gestiones pendientes. Haga clic en "Generar Cola" para crear mensajes de cobranza automáticamente.'

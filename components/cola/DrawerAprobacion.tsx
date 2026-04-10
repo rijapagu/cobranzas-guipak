@@ -7,7 +7,7 @@ import {
 } from "antd";
 import {
   CheckOutlined, EditOutlined, CloseOutlined,
-  ExclamationCircleOutlined, PauseCircleOutlined,
+  ExclamationCircleOutlined, PauseCircleOutlined, SendOutlined,
 } from "@ant-design/icons";
 import type { CobranzaGestion } from "@/lib/types/cobranzas";
 import { formatMonto, formatFecha, diasVencidoTexto, colorSegmento } from "@/lib/utils/formato";
@@ -131,6 +131,30 @@ export default function DrawerAprobacion({ gestion, open, onClose, onAccionCompl
     setEditando(true);
   };
 
+  const handleEnviar = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/cobranzas/gestiones/${gestion.id}/enviar`, {
+        method: "POST",
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        messageApi.error(data.error || "Error enviando");
+        return;
+      }
+      messageApi.success("Mensaje enviado");
+      onClose();
+      onAccionCompletada();
+    } catch {
+      messageApi.error("Error de conexión");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const esAprobado = gestion.estado === "APROBADO" || gestion.estado === "EDITADO";
+  const esPendiente = gestion.estado === "PENDIENTE";
+
   return (
     <>
       {contextHolder}
@@ -169,7 +193,17 @@ export default function DrawerAprobacion({ gestion, open, onClose, onAccionCompl
               >
                 Descartar
               </Button>
-              {!editando ? (
+              {esAprobado ? (
+                <Button
+                  type="primary"
+                  icon={<SendOutlined />}
+                  onClick={handleEnviar}
+                  loading={loading}
+                  style={{ background: "#52c41a", borderColor: "#52c41a" }}
+                >
+                  Enviar Ahora
+                </Button>
+              ) : !editando ? (
                 <>
                   <Button icon={<EditOutlined />} onClick={iniciarEdicion}>
                     Editar
