@@ -1,0 +1,41 @@
+services:
+  db:
+    image: mysql:8.0
+    container_name: cobranzas_mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_COBRANZAS_ROOT_PASS:-cobranzas_root_2026}
+      MYSQL_DATABASE: cobranzas_guipak
+      MYSQL_USER: ${DB_COBRANZAS_USER:-cobranzas_app}
+      MYSQL_PASSWORD: ${DB_COBRANZAS_PASS:-cobranzas_pass_2026}
+    ports:
+      - "3308:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./docker/init.sql:/docker-entrypoint-initdb.d/01-init.sql
+    command: --default-authentication-plugin=mysql_native_password --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: cobranzas_app
+    restart: unless-stopped
+    ports:
+      - "4847:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - .env.local
+    environment:
+      DB_COBRANZAS_HOST: db
+      DB_COBRANZAS_PORT: 3306
+
+volumes:
+  mysql_data:
