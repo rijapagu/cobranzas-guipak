@@ -115,3 +115,114 @@ export function generarMensajeMock(ctx: ContextoCobranza): {
     asunto_email: msg.asunto,
   };
 }
+
+// ═══════════════════════════════════════════════════════════
+// FASE 7: Prompts para respuestas a mensajes entrantes
+// ═══════════════════════════════════════════════════════════
+
+export interface ContextoRespuesta {
+  nombre_cliente: string;
+  codigo_cliente: string;
+  mensaje_cliente: string;
+  historial_conversacion: string[];
+  saldo_pendiente: number;
+  moneda: string;
+  dias_vencido: number;
+  segmento_riesgo: SegmentoRiesgo;
+  acuerdos_previos: string[];
+  numero_factura: number;
+}
+
+export interface RespuestaIA {
+  respuesta_wa: string;
+  intencion: 'PROMESA_PAGO' | 'DISPUTA' | 'SOLICITUD_INFO' | 'AGRADECIMIENTO' | 'OTRO';
+  acuerdo?: {
+    monto: number;
+    fecha: string;
+    descripcion: string;
+  };
+  disputa?: {
+    motivo: string;
+    monto_disputado?: number;
+  };
+}
+
+export function buildPromptRespuesta(ctx: ContextoRespuesta): string {
+  const monto = formatMonto(ctx.saldo_pendiente, ctx.moneda);
+
+  let historial = '';
+  if (ctx.historial_conversacion.length > 0) {
+    historial = `\nHistorial reciente de esta conversación:\n${ctx.historial_conversacion.slice(-6).join('\n')}`;
+  }
+
+  let acuerdos = '';
+  if (ctx.acuerdos_previos.length > 0) {
+    acuerdos = `\nAcuerdos de pago previos:\n${ctx.acuerdos_previos.join('\n')}`;
+  }
+
+  return `Eres un asistente de cobranzas para Suministros Guipak, S.R.L. Un cliente ha respondido a un mensaje de cobranza.
+
+DATOS:
+- Cliente: ${ctx.nombre_cliente} (${ctx.codigo_cliente})
+- Factura #${ctx.numero_factura}
+- Saldo pendiente: ${monto}
+- Días vencido: ${ctx.dias_vencido}
+- Segmento: ${ctx.segmento_riesgo}
+${historial}
+${acuerdos}
+
+MENSAJE DEL CLIENTE:
+"${ctx.mensaje_cliente}"
+
+INSTRUCCIONES:
+1. Clasifica la INTENCIÓN del mensaje: PROMESA_PAGO, DISPUTA, SOLICITUD_INFO, AGRADECIMIENTO, u OTRO.
+2. Genera una respuesta profesional y cordial de máximo 300 caracteres para WhatsApp.
+3. Si el cliente PROMETE PAGAR en una fecha específica, extrae el monto y la fecha.
+4. Si el cliente DISPUTA la factura, extrae el motivo.
+
+${TONOS[ctx.segmento_riesgo]}
+
+Responde EXACTAMENTE en este formato JSON:
+{
+  "respuesta_wa": "texto de respuesta WhatsApp",
+  "intencion": "PROMESA_PAGO|DISPUTA|SOLICITUD_INFO|AGRADECIMIENTO|OTRO",
+  "acuerdo": { "monto": 0, "fecha": "YYYY-MM-DD", "descripcion": "..." },
+  "disputa": { "motivo": "...", "monto_disputado": 0 }
+}
+
+Incluye "acuerdo" SOLO si detectas una promesa de pago con fecha. Incluye "disputa" SOLO si el cliente disputa.
+Solo responde el JSON.`;
+}
+
+export function generarRespuestaMock(ctx: ContextoRespuesta): RespuestaIA {
+  const msg = ctx.mensaje_cliente.toLowerCase();
+
+  if (msg.includes('pago') || msg.includes('transferi') || msg.includes('deposit')) {
+    return {
+      respuesta_wa: `Gracias ${ctx.nombre_cliente}. Tomamos nota de su intención de pago. Por favor confirme la fecha y el monto exacto para registrar el acuerdo. - Cobros Guipak`,
+      intencion: 'PROMESA_PAGO',
+    };
+  }
+
+  if (msg.includes('error') || msg.includes('incorrecto') || msg.includes('no debo') || msg.includes('reclamo')) {
+    return {
+      respuesta_wa: `Entendemos su preocupación ${ctx.nombre_cliente}. Hemos registrado su observación y nuestro equipo la revisará. Le contactaremos con una resolución. - Cobros Guipak`,
+      intencion: 'DISPUTA',
+      disputa: {
+        motivo: ctx.mensaje_cliente,
+      },
+    };
+  }
+
+  if (msg.includes('gracias') || msg.includes('recibido') || msg.includes('ok')) {
+    return {
+      respuesta_wa: `Gracias por su respuesta ${ctx.nombre_cliente}. Quedamos atentos. - Cobros Guipak`,
+      intencion: 'AGRADECIMIENTO',
+    };
+  }
+
+  return {
+    respuesta_wa: `Gracias por comunicarse ${ctx.nombre_cliente}. Un asesor revisará su mensaje y le responderá a la brevedad. - Cobros Guipak`,
+    intencion: 'OTRO',
+  };
+}

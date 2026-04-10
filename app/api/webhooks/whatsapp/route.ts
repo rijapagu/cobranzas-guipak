@@ -60,14 +60,31 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Mensajes entrantes (respuestas de clientes) — se implementa en Fase 7
+    // Mensajes entrantes (respuestas de clientes)
     if (event === 'messages.upsert') {
       const fromNumber = data.key?.remoteJid?.replace('@s.whatsapp.net', '') || '';
       const messageText = data.message?.conversation || data.message?.extendedTextMessage?.text || '';
+      const fromMe = data.key?.fromMe || false;
 
-      if (fromNumber && messageText) {
+      // Solo procesar mensajes de clientes (no los nuestros)
+      if (fromNumber && messageText && !fromMe) {
         console.log('[WEBHOOK-WA] Mensaje entrante de:', fromNumber, '| Texto:', messageText.substring(0, 50));
-        // TODO Fase 7: Procesar respuesta con Claude AI
+
+        // Procesar con IA — la respuesta va a cola de aprobación (CP-02)
+        try {
+          const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+          await fetch(`${baseUrl}/api/cobranzas/procesar-respuesta`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              telefono: fromNumber,
+              mensaje: messageText,
+              canal: 'WHATSAPP',
+            }),
+          });
+        } catch (err) {
+          console.error('[WEBHOOK-WA] Error procesando respuesta:', err);
+        }
       }
     }
 
