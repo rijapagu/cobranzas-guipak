@@ -12,6 +12,7 @@ import {
   FileTextOutlined,
   BarChartOutlined,
   DashboardOutlined,
+  SettingOutlined,
 } from "@ant-design/icons";
 
 const { Sider } = Layout;
@@ -61,6 +62,11 @@ const menuItems = [
     key: "/reportes",
     icon: <BarChartOutlined />,
     label: "Reportes",
+  },
+  {
+    key: "/configuracion",
+    icon: <SettingOutlined />,
+    label: "Configuración",
   },
 ];
 
