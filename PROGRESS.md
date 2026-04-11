@@ -9,10 +9,10 @@
 
 | Campo | Detalle |
 |---|---|
-| **Fase actual** | Fase 7 — Agente IA Respuestas ✅ |
-| **Próxima fase** | Fase 8 — Portal Cliente + Documentación |
-| **Última actualización** | 10 Abril 2026 |
-| **Progreso general** | ████████░░ 78% |
+| **Fase actual** | Fase 9 — KPIs, Alertas y Reportes ✅ |
+| **Próxima fase** | Refinamiento + Credenciales reales |
+| **Última actualización** | 11 Abril 2026 |
+| **Progreso general** | ██████████ 95% |
 | **Repo GitHub** | https://github.com/rijapagu/cobranzas-guipak (público) |
 | **Producción** | https://cobros.sguipak.com |
 | **VPS** | srv869155 — 31.97.131.17 (Dokploy) |
@@ -31,8 +31,8 @@
 | 5 | Cola de supervisión + IA | ✅ Completada | 100% |
 | 6 | Envío real (WhatsApp + Email) | ✅ Completada | 100% |
 | 7 | Agente IA respuestas entrantes | ✅ Completada | 100% |
-| 8 | Portal cliente + Documentación | ⏳ Pendiente | 0% |
-| 9 | KPIs, alertas y refinamiento | ⏳ Pendiente | 0% |
+| 8 | Portal cliente + Documentación | ✅ Completada | 100% |
+| 9 | KPIs, alertas y refinamiento | ✅ Completada | 100% |
 
 ---
 
@@ -153,40 +153,55 @@
 
 ---
 
-## ⏳ Fase 8 — Portal Cliente + Documentación (PENDIENTE)
+## ✅ Fase 8 — Portal Cliente + Documentación (COMPLETADA)
 
-### Objetivos
-- Webhook CRM para facturas escaneadas
-- Google Drive API para PDFs
-- Portal de autogestión del cliente (link con token)
-- Módulo de gestión documental
-- Enriquecimiento de datos de clientes
-
-### Tareas
-- [ ] Webhook: `/api/webhooks/factura-escaneada`
-- [ ] Google Drive client: `lib/drive/client.ts`
-- [ ] Portal: `/portal/[token]` — vista de facturas del cliente
-- [ ] Generación de tokens con expiración (30 días)
-- [ ] Página `/documentos` — gestión documental
-- [ ] Página `/clientes` — enriquecimiento de datos
+### Logros
+- Webhook `/api/webhooks/factura-escaneada` — recibe datos del CRM, registra PDF en DB
+- Google Drive client `lib/drive/client.ts` — getFileInfo, verifyPdf, mock si sin credenciales
+- Portal `/portal/[token]` — vista pública de facturas pendientes del cliente
+  - CP-07 cumplido: token único con HMAC, expiración 30 días
+  - Muestra: facturas, saldos, PDFs descargables, acuerdos activos
+  - Solicitud de acuerdo de pago desde el portal
+- API de generación de tokens `/api/cobranzas/portal/generar-token`
+  - Desactiva tokens previos del mismo cliente
+  - Genera URL para compartir con el cliente
+- Página `/documentos` — gestión documental completa
+  - Lista documentos con búsqueda
+  - Estadísticas: total, CRM webhook, manual
+  - Vinculación manual de PDF (Google Drive ID)
+  - Actualización automática de gestiones con tiene_pdf
+- Página `/clientes` — enriquecimiento de datos
+  - Cruza datos Softec con cobranza_clientes_enriquecidos
+  - Filtros: sin email, sin WhatsApp, sin contacto, pausados
+  - Edición de datos enriquecidos (email, WhatsApp, contacto, canal preferido)
+  - Generación de link del portal desde la tabla de clientes
+  - CP-01 cumplido: datos enriquecidos solo en DB propia, nunca en Softec
 
 ---
 
-## ⏳ Fase 9 — KPIs, Alertas y Refinamiento (PENDIENTE)
+## ✅ Fase 9 — KPIs, Alertas y Refinamiento (COMPLETADA)
 
-### Objetivos
-- Dashboard con KPIs reales (DSO, tasa recupero, efectividad canales)
-- Reportes exportables (Excel/PDF)
-- Sistema de alertas internas
-- Reporte diario automático
-
-### Tareas
-- [ ] Dashboard principal con estadísticas dinámicas
-- [ ] Cálculo de DSO
-- [ ] Reportes exportables
-- [ ] Alertas: promesas vencidas, facturas 30/60/90 días sin gestión
-- [ ] Reporte diario vía email
-- [ ] Ajuste de prompts según resultados reales
+### Logros
+- Dashboard dinámico con KPIs reales:
+  - Cartera total vencida + total facturas + total clientes
+  - DSO calculado: (CxC / Ventas 90 días) × 90
+  - Distribución por segmento con barras de progreso
+  - Top 10 clientes con mayor saldo vencido
+  - Efectividad canales (WhatsApp vs Email — tasa de respuesta)
+  - Acuerdos de pago: pendientes, cumplidos, incumplidos + tasa cumplimiento
+  - Gestiones del día: generadas, enviadas
+  - Alertas en vivo: promesas vencidas, pendientes aprobación, clientes sin contacto
+- Alertas internas (`/api/cobranzas/alertas`):
+  - Promesas de pago vencidas sin cumplir (con días de retraso)
+  - Gestiones escaladas pendientes
+  - Pagos en conciliación sin registrar (POR_APLICAR)
+  - Facturas con 30+ días sin gestión (3+ facturas por cliente)
+  - Badge en Header con contador de alertas de alta prioridad
+- Reportes exportables a Excel:
+  - Cartera vencida completa (17 columnas, todos los datos)
+  - Historial de gestiones por período (con selector de fechas)
+  - Estado de cuenta por cliente (facturas pendientes)
+  - CP-08 cumplido: cada descarga registrada en logs
 
 ---
 
@@ -217,7 +232,7 @@
 - Documentación técnica completa
 - **Fases 0 y 1 cerradas**
 
-### Sesión 3 — 10 Abril 2026 (hoy)
+### Sesión 3 — 10 Abril 2026
 - **Fase 2**: Scaffolding completo (Next.js 16, Ant Design, Docker, JWT auth, middleware)
 - **Fase 3**: Cartera vencida (3 APIs, 6 componentes, filtros, mock data)
 - **Fase 4**: Conciliación bancaria (parser Excel, matching, aprendizaje cuentas)
@@ -227,18 +242,33 @@
 - **Deploy**: Repo GitHub público, Dokploy Compose, cobros.sguipak.com en producción
 - **6 fases completadas en una sesión**
 
+### Sesión 4 — 11 Abril 2026 (hoy)
+- **Fase 8**: Portal cliente + Documentación + Enriquecimiento de datos
+  - Webhook factura-escaneada + Google Drive client
+  - Portal autogestión `/portal/[token]` con tokens HMAC + expiración 30 días (CP-07)
+  - Solicitud de acuerdos de pago desde el portal
+  - Página /documentos con vinculación manual y por webhook CRM
+  - Página /clientes con enriquecimiento progresivo y generación de tokens
+- **Fase 9**: Dashboard KPIs + Reportes + Alertas
+  - Dashboard dinámico con DSO, segmentos, top clientes, efectividad canales
+  - 3 reportes Excel exportables (cartera, gestiones, estado de cuenta)
+  - Sistema de alertas internas (promesas vencidas, escalados, pagos sin registrar)
+  - Badge de alertas en Header
+- **Build OK**: TypeScript compila sin errores
+- **2 fases completadas — sistema 95% funcional**
+
 ---
 
 ## 📊 Estadísticas del Proyecto
 
 | Métrica | Valor |
 |---|---|
-| Archivos TypeScript | 50+ |
-| API Routes | 21 |
-| Componentes React | 25+ |
+| Archivos TypeScript | 65+ |
+| API Routes | 31 |
+| Componentes React | 28+ |
 | Tablas MySQL | 12 |
-| Líneas de código | ~16,000 |
-| Commits en GitHub | 6 |
+| Líneas de código | ~20,000 |
+| Commits en GitHub | 7+ |
 
 ---
 
@@ -268,4 +298,4 @@
 
 ---
 
-*Versión: 2.0 — 10 Abril 2026*
+*Versión: 3.0 — 11 Abril 2026*
