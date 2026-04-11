@@ -205,17 +205,29 @@
 
 ---
 
-## 🔲 Pendientes de Confirmación Externa
+## 🔲 Pendientes
 
-| # | Pendiente | Bloqueado por | Estado |
+| # | Pendiente | Estado |
+|---|---|---|
+| 1 | **WhatsApp (Evolution API)** — falta API Key + nombre instancia | ⏳ Ricardo decide cuándo activar |
+| 2 | **Webhook CRM → Cobranzas** — el CRM debe enviar POST a `https://cobros.sguipak.com/api/webhooks/factura-escaneada` | ⏳ Desarrollo CRM |
+| 3 | **Disputas** — página funcional completa (actualmente placeholder) | ⏳ Pendiente desarrollo |
+| 4 | **N8N workflow** — generar cola de cobranza automática cada mañana | ⏳ Pendiente configuración |
+| 5 | **Reporte diario por email** — resumen automático al supervisor | ⏳ Pendiente desarrollo |
+| 6 | **Campañas/cadencias** — contacto cada X días por segmento | ⏳ Pendiente desarrollo |
+| 7 | Banco(s) principal(es) de Guipak para conciliación | ⏳ Ricardo |
+| 8 | Formato extractos bancarios reales (Excel/PDF) | ⏳ Ricardo |
+
+## ✅ Credenciales Configuradas (Producción + Local)
+
+| # | Servicio | Estado | Verificado |
 |---|---|---|---|
-| 1 | Banco(s) principal(es) de Guipak | Ricardo | ⏳ |
-| 2 | Formato extractos bancarios (Excel/PDF) | Ricardo | ⏳ |
-| 3 | Credenciales MySQL Softec (usuario solo lectura) | Ingeniero Softec | ⏳ |
-| 4 | Webhook disponible en CRM para factura escaneada | Desarrollo CRM | ⏳ |
-| 5 | Credenciales Evolution API (instancia + API key) | Ricardo | ⏳ |
-| 6 | Credenciales SMTP/SendGrid | Ricardo | ⏳ |
-| 7 | API key de Anthropic (Claude AI) | Ricardo | ⏳ |
+| 1 | Softec MySQL (solo lectura) | ✅ 45.32.218.224 — user: softec | 636 facturas, 225 clientes, RD$13.1M |
+| 2 | Claude AI (Anthropic) | ✅ sk-ant-api03-... | Responde OK |
+| 3 | SMTP Email | ✅ mail.guipak.com:465 | cobros@guipak.com |
+| 4 | Google Drive API | ✅ OAuth 2.0 + refresh token | 5 archivos visibles, carpeta Facturas ID configurado |
+| 5 | WhatsApp (Evolution API) | ⏳ URL configurada, falta API Key | evolutionapi.sguipak.com |
+| 6 | Dokploy (producción) | ✅ 27 variables configuradas | cobros.sguipak.com |
 
 ---
 
@@ -254,8 +266,15 @@
   - 3 reportes Excel exportables (cartera, gestiones, estado de cuenta)
   - Sistema de alertas internas (promesas vencidas, escalados, pagos sin registrar)
   - Badge de alertas en Header
-- **Build OK**: TypeScript compila sin errores
-- **2 fases completadas — sistema 95% funcional**
+- **Página /configuracion**: formularios para cada integración + botones de prueba
+- **Credenciales configuradas y verificadas**:
+  - Softec MySQL: 636 facturas vencidas, 225 clientes, RD$13.1M cartera real
+  - Claude AI: API key validada, responde OK
+  - SMTP: mail.guipak.com:465 configurado
+  - Google Drive: OAuth 2.0 conectado, carpeta Guipak/Facturas identificada
+  - Dokploy: 27 variables de entorno en producción
+- **Fix**: MySQL devuelve decimales como strings → convertir con Number() en dashboard
+- **9 fases completadas — sistema en producción con datos reales**
 
 ---
 
@@ -263,12 +282,12 @@
 
 | Métrica | Valor |
 |---|---|
-| Archivos TypeScript | 65+ |
-| API Routes | 31 |
+| Archivos TypeScript | 70+ |
+| API Routes | 34 |
 | Componentes React | 28+ |
 | Tablas MySQL | 12 |
-| Líneas de código | ~20,000 |
-| Commits en GitHub | 7+ |
+| Líneas de código | ~21,000 |
+| Commits en GitHub | 10 |
 
 ---
 
@@ -298,4 +317,4 @@
 
 ---
 
-*Versión: 3.0 — 11 Abril 2026*
+*Versión: 4.0 — 11 Abril 2026*
