@@ -98,13 +98,13 @@ export async function GET() {
 
       kpis.segmentos = segmentos.map(s => ({
         segmento: s.segmento,
-        facturas: s.num_facturas,
-        clientes: s.num_clientes,
-        saldo: s.saldo_total,
+        facturas: Number(s.num_facturas),
+        clientes: Number(s.num_clientes),
+        saldo: Number(s.saldo_total),
       }));
-      kpis.total_facturas = segmentos.reduce((sum, s) => sum + s.num_facturas, 0);
-      kpis.total_clientes = segmentos.reduce((sum, s) => sum + s.num_clientes, 0);
-      kpis.cartera_total = segmentos.reduce((sum, s) => sum + s.saldo_total, 0);
+      kpis.total_facturas = kpis.segmentos.reduce((sum, s) => sum + s.facturas, 0);
+      kpis.total_clientes = kpis.segmentos.reduce((sum, s) => sum + s.clientes, 0);
+      kpis.cartera_total = kpis.segmentos.reduce((sum, s) => sum + s.saldo, 0);
 
       // Top 10 clientes
       const top = await softecQuery<{
@@ -127,7 +127,12 @@ export async function GET() {
         ORDER BY saldo DESC
         LIMIT 10
       `);
-      kpis.top_clientes = top;
+      kpis.top_clientes = top.map(t => ({
+        codigo: String(t.codigo).trim(),
+        nombre: String(t.nombre).trim(),
+        saldo: Number(t.saldo),
+        facturas: Number(t.facturas),
+      }));
 
       // DSO = (CxC / Ventas últimos 90 días) × 90
       const dsoData = await softecQuery<{ cxc: number; ventas_90: number }>(`
@@ -135,8 +140,8 @@ export async function GET() {
           (SELECT SUM(IJ_TOT - IJ_TOTAPPL) FROM ijnl WHERE IJ_TYPEDOC='IN' AND IJ_INVTORF='T' AND IJ_PAID='F' AND (IJ_TOT - IJ_TOTAPPL) > 0) AS cxc,
           (SELECT SUM(IJ_TOT) FROM ijnl WHERE IJ_TYPEDOC='IN' AND IJ_INVTORF='T' AND IJ_DATE >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)) AS ventas_90
       `);
-      if (dsoData[0] && dsoData[0].ventas_90 > 0) {
-        kpis.dso = Math.round((dsoData[0].cxc / dsoData[0].ventas_90) * 90);
+      if (dsoData[0] && Number(dsoData[0].ventas_90) > 0) {
+        kpis.dso = Math.round((Number(dsoData[0].cxc) / Number(dsoData[0].ventas_90)) * 90);
       }
 
       // Clientes sin contacto
@@ -146,10 +151,10 @@ export async function GET() {
         INNER JOIN ijnl f ON f.IJ_CCODE = c.IC_CODE
         WHERE c.IC_STATUS = 'A' AND f.IJ_TYPEDOC = 'IN' AND f.IJ_INVTORF = 'T' AND f.IJ_PAID = 'F'
           AND (f.IJ_TOT - f.IJ_TOTAPPL) > 0
-          AND (c.IC_EMAIL IS NULL OR c.IC_EMAIL = '')
-          AND (c.IC_PHONE IS NULL OR c.IC_PHONE = '')
+          AND (c.IC_EMAIL IS NULL OR TRIM(c.IC_EMAIL) = '')
+          AND (c.IC_PHONE IS NULL OR TRIM(c.IC_PHONE) = '')
       `);
-      kpis.clientes_sin_contacto = sinContacto[0]?.total || 0;
+      kpis.clientes_sin_contacto = Number(sinContacto[0]?.total) || 0;
     } else {
       // Mock
       const mockData = getMockCartera();
