@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS cobranza_telegram_usuarios (
   id INT AUTO_INCREMENT PRIMARY KEY,
   telegram_user_id BIGINT UNIQUE NOT NULL,
   telegram_username VARCHAR(64),
-  usuario_id INT NOT NULL,
+  usuario_id BIGINT UNSIGNED NOT NULL,
   rol ENUM('supervisor', 'agente_cobros') NOT NULL DEFAULT 'agente_cobros',
   activo TINYINT(1) DEFAULT 1,
   fecha_alta DATETIME DEFAULT CURRENT_TIMESTAMP,
