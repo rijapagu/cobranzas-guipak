@@ -33,7 +33,7 @@
 | 7 | Agente IA respuestas entrantes | ✅ Completada | 100% |
 | 8 | Portal cliente + Documentación | ✅ Completada | 100% |
 | 9 | KPIs, alertas y refinamiento | ✅ Completada | 100% |
-| 10 | Agente Proactivo Telegram (Capa A + B) | 🟢 En curso | 50% |
+| 10 | Agente Proactivo Telegram (Capa A + B + Plantillas) | 🟢 En curso | 65% |
 
 ---
 
@@ -235,6 +235,36 @@
 - En privado: procesa todo (con auth)
 - Audit log en `cobranza_logs` (CP-10)
 - ✅ Tests pasando: usuario no autorizado, grupo no autorizado, grupo autorizado con/sin mención
+
+### ✅ Capa B+ — Bot propone correos con aprobación inline (COMPLETADA)
+- Tool `proponer_correo_cliente` que genera draft y lo deja PENDIENTE en cobranza_gestiones
+- Webhook detecta `<gestion-pendiente id="N"/>` y reemplaza por botones inline
+- 3 acciones por botón:
+  - ✅ **Aprobar y enviar** — actualiza estado, llama a `enviarGestion()` (CP-02 + CP-06 cumplidos)
+  - ✏️ **Editar** — link al cola de aprobación en la app
+  - ❌ **Descartar** — marca DESCARTADO con motivo
+- Lógica de envío en `lib/telegram/enviar-gestion.ts` reusa `lib/email/sender.ts` de Fase 6
+- Bloqueos: factura en disputa, cliente pausado, gestión ya pendiente
+
+### ✅ Sección Plantillas (COMPLETADA)
+- Tabla `cobranza_plantillas_email` con 6 plantillas iniciales:
+  - 1er aviso VERDE (-3 días) — Recordatorio amigable
+  - 2do aviso AMARILLO (+7 días) — Vencimiento moderado
+  - 3er aviso NARANJA (+20 días) — Cobranza formal
+  - 4to aviso ROJO (+35 días) — Última oportunidad
+  - 5to aviso ROJO (+60 días) — Pre-legal
+  - 6to aviso ROJO (+90 días) — Notificación legal
+- Variables: `{{cliente}}`, `{{contacto}}`, `{{factura}}`, `{{ncf}}`, `{{monto}}`, `{{dias_vencido}}`, `{{fecha_vencimiento}}`
+- 5 niveles de tono: AMIGABLE / MODERADO / FORMAL / FIRME / LEGAL
+- Página `/plantillas` con tabla, drawer editor (Configuración + Contenido)
+- Toggle activa/inactiva, soft-delete
+- Toggle de aprobación: Manual (cola) o Auto (envío directo)
+- API CRUD `/api/cobranzas/plantillas` con auth de SUPERVISOR/ADMIN
+- Sidebar: nueva entrada "Plantillas"
+
+### ✅ Manual de usuario (COMPLETADA)
+- `docs/MANUAL_USUARIO.md` completo con tour por la app, bot Telegram, flujo diario sugerido, FAQ
+- Estilo amigable para Daria + Ricardo
 
 ### ✅ Migration runner (BONUS)
 - Endpoint `POST /api/internal/admin/migrate` ejecuta SQL idempotente

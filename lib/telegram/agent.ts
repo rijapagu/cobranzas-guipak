@@ -78,8 +78,6 @@ export async function procesarMensajeBot(input: MensajeUsuario): Promise<string>
       messages,
     });
 
-    console.error(`[bot] turn=${turn} stop_reason=${response.stop_reason} content_types=${response.content.map(c => c.type).join(',')}`);
-
     // Si Claude solo respondió texto, devolver
     if (response.stop_reason === 'end_turn') {
       const textBlock = response.content.find((b) => b.type === 'text');
@@ -95,12 +93,10 @@ export async function procesarMensajeBot(input: MensajeUsuario): Promise<string>
 
       for (const tool of toolUses) {
         if (tool.type !== 'tool_use') continue;
-        console.log(`[bot] Tool: ${tool.name}`, JSON.stringify(tool.input));
         const resultado = await ejecutarTool(
           tool.name,
           tool.input as Record<string, unknown>
         );
-        console.log(`[bot] Tool result ok=${resultado.ok} error=${resultado.error || ''}`);
         toolResults.push({
           type: 'tool_result',
           tool_use_id: tool.id,
