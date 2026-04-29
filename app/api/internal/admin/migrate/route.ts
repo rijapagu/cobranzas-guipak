@@ -27,23 +27,29 @@ export async function POST(req: NextRequest) {
     for (const archivo of sqls) {
       try {
         const contenido = await readFile(join(migrationsDir, archivo), 'utf-8');
-        // Ejecutar cada statement separado por ;
-        const statements = contenido
-          .split(/;\s*\n/)
-          .map((s) => s.trim())
-          .filter((s) => s.length > 0 && !s.startsWith('--'));
+        // 1. Strip line comments (--) primero
+        const sinComentarios = contenido
+          .split('\n')
+          .map((linea) => {
+            const idx = linea.indexOf('--');
+            return idx === -1 ? linea : linea.substring(0, idx);
+          })
+          .join('\n');
 
+        // 2. Split por ; al final de línea
+        const statements = sinComentarios
+          .split(';')
+          .map((s) => s.trim())
+          .filter((s) => s.length > 0);
+
+        const ejecutadosArchivo: string[] = [];
         for (const stmt of statements) {
-          // Ignorar comentarios solos
-          const sinComentarios = stmt
-            .split('\n')
-            .filter((l) => !l.trim().startsWith('--'))
-            .join('\n')
-            .trim();
-          if (sinComentarios.length === 0) continue;
-          await cobranzasQuery(sinComentarios);
+          await cobranzasQuery(stmt);
+          // Nombre del statement para reporte (CREATE TABLE foo, INSERT INTO foo, etc.)
+          const resumen = stmt.split('\n')[0].substring(0, 60);
+          ejecutadosArchivo.push(resumen);
         }
-        ejecutadas.push(archivo);
+        ejecutadas.push(`${archivo} (${ejecutadosArchivo.length} statements)`);
       } catch (err) {
         errores.push({
           archivo,
