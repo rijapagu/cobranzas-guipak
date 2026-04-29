@@ -9,10 +9,10 @@
 
 | Campo | Detalle |
 |---|---|
-| **Fase actual** | Fase 9 — KPIs, Alertas y Reportes ✅ |
-| **Próxima fase** | Refinamiento + Credenciales reales |
-| **Última actualización** | 11 Abril 2026 |
-| **Progreso general** | ██████████ 95% |
+| **Fase actual** | Fase 10 — Agente Proactivo Telegram (Capa A + B ✅) |
+| **Próxima fase** | Capa C: captura interactiva de datos + Capa D: cadencias |
+| **Última actualización** | 29 Abril 2026 |
+| **Progreso general** | ██████████ 97% |
 | **Repo GitHub** | https://github.com/rijapagu/cobranzas-guipak (público) |
 | **Producción** | https://cobros.sguipak.com |
 | **VPS** | srv869155 — 31.97.131.17 (Dokploy) |
@@ -33,6 +33,7 @@
 | 7 | Agente IA respuestas entrantes | ✅ Completada | 100% |
 | 8 | Portal cliente + Documentación | ✅ Completada | 100% |
 | 9 | KPIs, alertas y refinamiento | ✅ Completada | 100% |
+| 10 | Agente Proactivo Telegram (Capa A + B) | 🟢 En curso | 50% |
 
 ---
 
@@ -202,6 +203,74 @@
   - Historial de gestiones por período (con selector de fechas)
   - Estado de cuenta por cliente (facturas pendientes)
   - CP-08 cumplido: cada descarga registrada en logs
+
+---
+
+## 🟢 Fase 10 — Agente Proactivo Telegram (EN CURSO)
+
+### ✅ Capa A — Empuje matutino (COMPLETADA)
+- Redis 7 Alpine como servicio en docker-compose (production + local)
+- BullMQ cliente con job repetible programado a 8:00 AM AST (12:00 UTC)
+- Worker en `lib/queue/worker.ts` (correrlo con `npm run worker`)
+- Cliente Telegraf en `lib/telegram/client.ts`
+- Endpoint `POST /api/internal/cron/empuje-matutino` (auth `INTERNAL_CRON_SECRET`)
+- Job consulta DB directamente (no llama a APIs internas que requieren auth)
+- Mensaje formateado en HTML con cartera vencida, segmentos, alertas, link a la app
+- ✅ Verificado en producción: mensaje llega al grupo "Cobros Guipak"
+
+### ✅ Capa B — Bot conversacional (COMPLETADA)
+- Webhook `/api/webhooks/telegram` recibe updates de Telegram
+- Cliente Telegraf compartido con Capa A
+- Auth via tabla `cobranza_telegram_usuarios` (Ricardo = supervisor)
+- Agente Claude (claude-sonnet-4-5-20250929) con tool use
+- 6 herramientas implementadas:
+  1. `consultar_saldo_cliente` — aging detallado por código o nombre
+  2. `estado_cobros_hoy` — resumen ad-hoc
+  3. `listar_pendientes_aprobacion` — mensajes esperando aprobación
+  4. `listar_promesas_vencidas` — promesas con días de retraso
+  5. `historial_conversaciones_cliente` — últimas conversaciones
+  6. `buscar_cliente` — búsqueda por nombre o código
+- Comandos rápidos: `/start`, `/help`, `/estado`
+- En grupo: solo procesa mensajes con mención `@CobrosGuipakBot` o `/comandos`
+- En privado: procesa todo (con auth)
+- Audit log en `cobranza_logs` (CP-10)
+- ✅ Tests pasando: usuario no autorizado, grupo no autorizado, grupo autorizado con/sin mención
+
+### ✅ Migration runner (BONUS)
+- Endpoint `POST /api/internal/admin/migrate` ejecuta SQL idempotente
+- Strip line comments antes de split por `;`
+- Reporta cantidad de statements ejecutados por archivo
+
+### ⏳ Capa C — Captura interactiva de datos (PENDIENTE)
+### ⏳ Capa D — Cadencias automáticas (PENDIENTE)
+### 🔮 Capa E — Memoria semántica (DIFERIDA 2-3 meses)
+
+### Tablas nuevas creadas (migration 010)
+- `cobranza_telegram_usuarios` — mapeo telegram_user_id ↔ usuario interno + rol
+- `cobranza_cadencias` — config de cadencias por segmento + 5 cadencias por defecto
+- `cobranza_factura_cadencia_estado` — estado de cadencia por factura
+
+### Variables de entorno nuevas
+```env
+TELEGRAM_BOT_TOKEN=...
+TELEGRAM_CHAT_ID_GRUPO_COBROS=-5138505342
+TELEGRAM_USER_RICARDO=7281538057
+REDIS_HOST=cobranzas-redis
+REDIS_PORT=6379
+INTERNAL_CRON_SECRET=...
+```
+
+### Setup local de desarrollo
+- `docker-compose.local.yml` levanta MySQL (3308) + Redis (6379)
+- `npm run dev` levanta Next.js
+- `npm run worker` levanta BullMQ worker (cuando se necesite)
+- Migration: `docker exec -i ... mysql ... < db/migrations/010_*.sql`
+
+### Próximos pasos para continuar Fase 10
+1. **Privacy mode del bot** — actualmente activo. Para que el bot vea todos los mensajes del grupo (necesario para Capa C), Ricardo debe ir a `@BotFather` → `/setprivacy` → `CobrosGuipakBot` → **Disable** → sacar y re-agregar el bot al grupo.
+2. **Capa C — Datos faltantes** — función `validarDatosClienteCompletos()`, tool `pedir_dato_faltante()`.
+3. **Capa D — Cadencias** — worker BullMQ horario que evalúa próximo paso por factura, UI de configuración.
+4. **Worker en producción** — actualmente el cron del empuje matutino se dispara via Dokploy cron (a configurar) o llamada manual al endpoint. Falta levantar el worker BullMQ como servicio aparte en Dokploy.
 
 ---
 
