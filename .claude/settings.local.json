@@ -28,7 +28,9 @@
       "Bash(node --env-file=.env.local -e ' *)",
       "Bash(taskkill //F //PID 12716)",
       "Bash(unset ANTHROPIC_API_KEY ANTHROPIC_BASE_URL)",
-      "Bash(git stash *)"
+      "Bash(git stash *)",
+      "Bash(mkdir -p \"E:\\\\IA\\\\cobranzas-guipak\\\\app\\\\api\\\\cobranzas\\\\plantillas\\\\[id]\")",
+      "Bash(cp \"E:\\\\IA\\\\cobranzas-guipak\\\\.claude\\\\worktrees\\\\agitated-cerf-ea18e2\\\\app\\\\api\\\\cobranzas\\\\plantillas\\\\[id]\\\\route.ts\" \"E:\\\\IA\\\\cobranzas-guipak\\\\app\\\\api\\\\cobranzas\\\\plantillas\\\\[id]\\\\route.ts\")"
     ]
   }
 }
