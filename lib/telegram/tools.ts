@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { cobranzasQuery } from '@/lib/db/cobranzas';
 import { softecQuery, testSoftecConnection } from '@/lib/db/softec';
+import { proponerCorreoCliente } from './draft-correo';
 
 /**
  * Definición de herramientas que Claude puede invocar desde el bot de Telegram.
@@ -85,6 +86,21 @@ export const TOOLS: Anthropic.Tool[] = [
       required: ['termino'],
     },
   },
+  {
+    name: 'proponer_correo_cliente',
+    description:
+      'Genera un draft de correo de cobranza para un cliente y lo deja en cola PENDIENTE de aprobación. NO envía el correo. Devuelve el ID de gestión, el draft completo y los datos del cliente. El bot debe presentar este draft al usuario con botones para aprobar/editar/descartar (CP-02).',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        termino: {
+          type: 'string',
+          description: 'Código de cliente (ej. "0000274") o nombre parcial',
+        },
+      },
+      required: ['termino'],
+    },
+  },
 ];
 
 interface ResultadoTool {
@@ -119,6 +135,11 @@ export async function ejecutarTool(
 
       case 'buscar_cliente':
         return await buscarCliente(String(argumentos.termino));
+
+      case 'proponer_correo_cliente': {
+        const result = await proponerCorreoCliente(String(argumentos.termino));
+        return { ok: result.ok, data: result };
+      }
 
       default:
         return { ok: false, error: `Tool desconocida: ${nombre}` };
