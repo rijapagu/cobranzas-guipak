@@ -1,49 +1,123 @@
 import { enviarMensajeGrupo } from '@/lib/telegram/client';
+import { cobranzasQuery } from '@/lib/db/cobranzas';
+import { softecQuery, testSoftecConnection } from '@/lib/db/softec';
 
-interface DashboardData {
+interface SegmentoData {
+  segmento: string;
+  num_facturas: number;
+  num_clientes: number;
+  saldo_total: number;
+}
+
+interface ResumenCartera {
   cartera_total: number;
   total_facturas: number;
   total_clientes: number;
-  por_segmento: { VERDE: number; AMARILLO: number; NARANJA: number; ROJO: number };
+  por_segmento: Record<'VERDE' | 'AMARILLO' | 'NARANJA' | 'ROJO', number>;
 }
 
-interface AlertasData {
+interface ResumenAlertas {
   promesas_vencidas: number;
   pendientes_aprobacion: number;
   pagos_sin_registrar: number;
-  sin_gestion_30dias: number;
+  enviadas_hoy: number;
+  acuerdos_vencen_hoy: number;
 }
 
-async function fetchDashboard(): Promise<DashboardData | null> {
+async function obtenerResumenCartera(): Promise<ResumenCartera | null> {
   try {
-    const base = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
-    const res = await fetch(`${base}/api/cobranzas/dashboard`, {
-      headers: { 'x-internal-secret': process.env.INTERNAL_CRON_SECRET || '' },
-    });
-    if (!res.ok) return null;
-    return res.json();
-  } catch {
-    return null;
-  }
-}
+    const softecOk = await testSoftecConnection();
+    if (!softecOk) return null;
 
-async function fetchAlertas(): Promise<AlertasData | null> {
-  try {
-    const base = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
-    const res = await fetch(`${base}/api/cobranzas/alertas`, {
-      headers: { 'x-internal-secret': process.env.INTERNAL_CRON_SECRET || '' },
-    });
-    if (!res.ok) return null;
-    const data = await res.json();
-    return {
-      promesas_vencidas: data.filter((a: { tipo: string }) => a.tipo === 'PROMESA_VENCIDA').length,
-      pendientes_aprobacion: data.filter((a: { tipo: string }) => a.tipo === 'PENDIENTE_APROBACION').length,
-      pagos_sin_registrar: data.filter((a: { tipo: string }) => a.tipo === 'PAGO_SIN_REGISTRAR').length,
-      sin_gestion_30dias: data.filter((a: { tipo: string }) => a.tipo === 'SIN_GESTION_30_DIAS').length,
+    const segmentos = await softecQuery<SegmentoData>(`
+      SELECT
+        CASE
+          WHEN DATEDIFF(CURDATE(), f.IJ_DUEDATE) BETWEEN 1 AND 15 THEN 'AMARILLO'
+          WHEN DATEDIFF(CURDATE(), f.IJ_DUEDATE) BETWEEN 16 AND 30 THEN 'NARANJA'
+          WHEN DATEDIFF(CURDATE(), f.IJ_DUEDATE) > 30 THEN 'ROJO'
+          ELSE 'VERDE'
+        END AS segmento,
+        COUNT(*) AS num_facturas,
+        COUNT(DISTINCT f.IJ_CCODE) AS num_clientes,
+        SUM(f.IJ_TOT - f.IJ_TOTAPPL) AS saldo_total
+      FROM ijnl f
+      WHERE f.IJ_TYPEDOC = 'IN' AND f.IJ_INVTORF = 'T' AND f.IJ_PAID = 'F'
+        AND (f.IJ_TOT - f.IJ_TOTAPPL) > 0
+      GROUP BY segmento
+    `);
+
+    const resumen: ResumenCartera = {
+      cartera_total: 0,
+      total_facturas: 0,
+      total_clientes: 0,
+      por_segmento: { VERDE: 0, AMARILLO: 0, NARANJA: 0, ROJO: 0 },
     };
-  } catch {
+
+    const clientesUnicos = new Set<string>();
+    for (const s of segmentos) {
+      const seg = s.segmento as keyof ResumenCartera['por_segmento'];
+      const facturas = Number(s.num_facturas);
+      const saldo = Number(s.saldo_total);
+      resumen.por_segmento[seg] = facturas;
+      resumen.total_facturas += facturas;
+      resumen.cartera_total += saldo;
+      clientesUnicos.add(seg + ':' + s.num_clientes);
+    }
+
+    const totalClientes = await softecQuery<{ total: number }>(`
+      SELECT COUNT(DISTINCT f.IJ_CCODE) AS total
+      FROM ijnl f
+      WHERE f.IJ_TYPEDOC = 'IN' AND f.IJ_INVTORF = 'T' AND f.IJ_PAID = 'F'
+        AND (f.IJ_TOT - f.IJ_TOTAPPL) > 0
+    `);
+    resumen.total_clientes = Number(totalClientes[0]?.total) || 0;
+
+    return resumen;
+  } catch (error) {
+    console.error('[empuje-matutino] Error obteniendo cartera:', error);
     return null;
   }
+}
+
+async function obtenerAlertas(): Promise<ResumenAlertas> {
+  const resumen: ResumenAlertas = {
+    promesas_vencidas: 0,
+    pendientes_aprobacion: 0,
+    pagos_sin_registrar: 0,
+    enviadas_hoy: 0,
+    acuerdos_vencen_hoy: 0,
+  };
+
+  try {
+    const promesas = await cobranzasQuery<{ total: number }>(
+      "SELECT COUNT(*) AS total FROM cobranza_acuerdos WHERE estado = 'PENDIENTE' AND fecha_prometida < CURDATE()"
+    );
+    resumen.promesas_vencidas = Number(promesas[0]?.total) || 0;
+
+    const pendientes = await cobranzasQuery<{ total: number }>(
+      "SELECT COUNT(*) AS total FROM cobranza_gestiones WHERE estado = 'PENDIENTE'"
+    );
+    resumen.pendientes_aprobacion = Number(pendientes[0]?.total) || 0;
+
+    const pagos = await cobranzasQuery<{ total: number }>(
+      "SELECT COUNT(*) AS total FROM cobranza_conciliacion WHERE estado = 'POR_APLICAR'"
+    );
+    resumen.pagos_sin_registrar = Number(pagos[0]?.total) || 0;
+
+    const enviadas = await cobranzasQuery<{ total: number }>(
+      "SELECT COUNT(*) AS total FROM cobranza_gestiones WHERE estado = 'ENVIADO' AND DATE(fecha_envio) = CURDATE() - INTERVAL 1 DAY"
+    );
+    resumen.enviadas_hoy = Number(enviadas[0]?.total) || 0;
+
+    const venceHoy = await cobranzasQuery<{ total: number }>(
+      "SELECT COUNT(*) AS total FROM cobranza_acuerdos WHERE estado = 'PENDIENTE' AND fecha_prometida = CURDATE()"
+    );
+    resumen.acuerdos_vencen_hoy = Number(venceHoy[0]?.total) || 0;
+  } catch (error) {
+    console.error('[empuje-matutino] Error obteniendo alertas:', error);
+  }
+
+  return resumen;
 }
 
 function formatMonto(monto: number): string {
@@ -55,7 +129,10 @@ function formatMonto(monto: number): string {
 }
 
 export async function ejecutarEmpujeMatutino(): Promise<void> {
-  const [dashboard, alertas] = await Promise.all([fetchDashboard(), fetchAlertas()]);
+  const [cartera, alertas] = await Promise.all([
+    obtenerResumenCartera(),
+    obtenerAlertas(),
+  ]);
 
   const hoy = new Date().toLocaleDateString('es-DO', {
     weekday: 'long',
@@ -65,43 +142,46 @@ export async function ejecutarEmpujeMatutino(): Promise<void> {
     timeZone: 'America/Santo_Domingo',
   });
 
-  let mensaje = `📊 <b>Resumen de Cobranzas — ${hoy}</b>\n\n`;
+  let mensaje = `📊 <b>Resumen de Cobranzas</b>\n<i>${hoy}</i>\n\n`;
 
-  if (dashboard) {
-    mensaje += `💰 <b>Cartera vencida:</b> ${formatMonto(dashboard.cartera_total)}\n`;
-    mensaje += `📄 <b>Facturas:</b> ${dashboard.total_facturas} | <b>Clientes:</b> ${dashboard.total_clientes}\n\n`;
+  if (cartera) {
+    mensaje += `💰 <b>Cartera vencida:</b> ${formatMonto(cartera.cartera_total)}\n`;
+    mensaje += `📄 ${cartera.total_facturas} facturas · 👥 ${cartera.total_clientes} clientes\n\n`;
     mensaje += `<b>Por segmento:</b>\n`;
-    mensaje += `🟢 Verde: ${dashboard.por_segmento.VERDE}\n`;
-    mensaje += `🟡 Amarillo: ${dashboard.por_segmento.AMARILLO}\n`;
-    mensaje += `🟠 Naranja: ${dashboard.por_segmento.NARANJA}\n`;
-    mensaje += `🔴 Rojo: ${dashboard.por_segmento.ROJO}\n\n`;
+    mensaje += `🟢 Verde (vence pronto): ${cartera.por_segmento.VERDE}\n`;
+    mensaje += `🟡 Amarillo (1-15 días): ${cartera.por_segmento.AMARILLO}\n`;
+    mensaje += `🟠 Naranja (16-30 días): ${cartera.por_segmento.NARANJA}\n`;
+    mensaje += `🔴 Rojo (30+ días): ${cartera.por_segmento.ROJO}\n\n`;
   } else {
-    mensaje += `⚠️ No se pudieron cargar datos de cartera.\n\n`;
+    mensaje += `⚠️ No se pudo conectar con Softec.\n\n`;
   }
 
-  if (alertas) {
-    const totalAlertas =
-      alertas.promesas_vencidas +
-      alertas.pendientes_aprobacion +
-      alertas.pagos_sin_registrar +
-      alertas.sin_gestion_30dias;
+  const totalAlertas =
+    alertas.promesas_vencidas +
+    alertas.pendientes_aprobacion +
+    alertas.pagos_sin_registrar;
 
-    if (totalAlertas > 0) {
-      mensaje += `🚨 <b>Alertas (${totalAlertas}):</b>\n`;
-      if (alertas.promesas_vencidas > 0)
-        mensaje += `• ${alertas.promesas_vencidas} promesas vencidas sin cobrar\n`;
-      if (alertas.pendientes_aprobacion > 0)
-        mensaje += `• ${alertas.pendientes_aprobacion} mensajes pendientes de aprobación\n`;
-      if (alertas.pagos_sin_registrar > 0)
-        mensaje += `• ${alertas.pagos_sin_registrar} pagos bancarios sin registrar\n`;
-      if (alertas.sin_gestion_30dias > 0)
-        mensaje += `• ${alertas.sin_gestion_30dias} clientes sin gestión 30+ días\n`;
-    } else {
-      mensaje += `✅ Sin alertas activas\n`;
-    }
+  if (totalAlertas > 0 || alertas.acuerdos_vencen_hoy > 0) {
+    mensaje += `🚨 <b>Acciones del día:</b>\n`;
+    if (alertas.pendientes_aprobacion > 0)
+      mensaje += `• ${alertas.pendientes_aprobacion} mensajes esperando aprobación\n`;
+    if (alertas.acuerdos_vencen_hoy > 0)
+      mensaje += `• ${alertas.acuerdos_vencen_hoy} promesas de pago vencen hoy\n`;
+    if (alertas.promesas_vencidas > 0)
+      mensaje += `• ${alertas.promesas_vencidas} promesas vencidas sin cobrar\n`;
+    if (alertas.pagos_sin_registrar > 0)
+      mensaje += `• ${alertas.pagos_sin_registrar} pagos bancarios por aplicar\n`;
+    mensaje += `\n`;
+  } else {
+    mensaje += `✅ Sin alertas activas\n\n`;
   }
 
-  mensaje += `\n🔗 <a href="${process.env.NEXT_PUBLIC_APP_URL}">Abrir sistema de cobranzas</a>`;
+  if (alertas.enviadas_hoy > 0) {
+    mensaje += `📤 Ayer se enviaron ${alertas.enviadas_hoy} mensajes\n\n`;
+  }
+
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://cobros.sguipak.com';
+  mensaje += `🔗 <a href="${appUrl}">Abrir sistema de cobranzas</a>`;
 
   await enviarMensajeGrupo(mensaje);
 }
