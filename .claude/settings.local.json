@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git checkout *)",
+      "Bash(git merge *)",
+      "Bash(git push *)",
+      "Bash(npm install *)",
+      "Bash(npm audit *)",
+      "Bash(node -e \"require\\('bullmq'\\); require\\('ioredis'\\); require\\('telegraf'\\); console.log\\('OK — bullmq, ioredis, telegraf instalados'\\)\")",
+      "Bash(git commit *)",
+      "Bash(npx tsc *)",
+      "Bash(node -e \"const https=require\\('https'\\);const req=https.request\\({hostname:'cobros.sguipak.com',path:'/api/internal/cron/empuje-matutino',method:'POST',headers:{'Content-Type':'application/json','x-internal-secret':'c8021d7acd666dc798aac543d862b9bf4effce96e1391d88ce8b7d468bec1894'}},r=>{let d='';r.on\\('data',c=>d+=c\\);r.on\\('end',\\(\\)=>console.log\\('Status:',r.statusCode,'Body:',d\\)\\)}\\);req.end\\(\\)\")",
+      "Bash(docker --version)",
+      "Bash(docker info *)",
+      "Bash(docker compose *)",
+      "Bash(docker exec *)",
+      "Bash(npm run *)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:4847/login)",
+      "Bash(rm -f \"E:\\\\IA\\\\cobranzas-guipak\\\\.git\\\\index.lock\")",
+      "Bash(git pull *)"
+    ]
+  }
+}
