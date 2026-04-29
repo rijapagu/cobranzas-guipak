@@ -1,4 +1,5 @@
-import { Telegraf, InlineKeyboard } from 'telegraf';
+import { Telegraf } from 'telegraf';
+import type { InlineKeyboardMarkup } from 'telegraf/types';
 
 let bot: Telegraf | null = null;
 
@@ -19,7 +20,7 @@ function getChatId(): string {
 
 export async function enviarMensajeGrupo(
   texto: string,
-  opciones?: { teclado?: ReturnType<typeof InlineKeyboard.from> }
+  opciones?: { teclado?: InlineKeyboardMarkup }
 ): Promise<number> {
   const telegram = getBot().telegram;
   const chatId = getChatId();
