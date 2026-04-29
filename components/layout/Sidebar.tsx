@@ -13,6 +13,7 @@ import {
   BarChartOutlined,
   DashboardOutlined,
   SettingOutlined,
+  MailOutlined,
 } from "@ant-design/icons";
 
 const { Sider } = Layout;
@@ -62,6 +63,11 @@ const menuItems = [
     key: "/reportes",
     icon: <BarChartOutlined />,
     label: "Reportes",
+  },
+  {
+    key: "/plantillas",
+    icon: <MailOutlined />,
+    label: "Plantillas",
   },
   {
     key: "/configuracion",
