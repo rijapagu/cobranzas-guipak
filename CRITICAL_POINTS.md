@@ -214,6 +214,46 @@ await enviarMensaje(...);
 - Nunca importan ni llaman a `lib/evolution/` ni a funciones de email
 - El flujo: Claude genera → sistema guarda en cola → supervisor aprueba → sistema envía
 
+**Excepción permitida:** El bot de Telegram (`lib/telegram/agent.ts`) sí puede responder a usuarios internos en el grupo de cobros con texto generado por Claude. Esto NO contradice CP-02 porque los mensajes son al equipo interno, no a clientes.
+
+---
+
+## ⚠️ CP-11 — Identidad y autorización en Telegram (Fase 10)
+
+**Descripción:** Todo mensaje recibido del bot de Telegram debe identificar y autorizar al usuario antes de responder.
+
+**Implementación:**
+- `lib/telegram/auth.ts` resuelve `telegram_user_id` → `usuario_id` interno via tabla `cobranza_telegram_usuarios`
+- Si el usuario no está mapeado o está inactivo → bot responde "No estás autorizado" y registra el intento
+- Acciones de rol Supervisor (aprobar montos > umbral, escalar legal) verifican `rol = 'supervisor'`
+- En grupos: solo procesa mensajes del `TELEGRAM_CHAT_ID_GRUPO_COBROS` configurado
+- En privado: solo procesa si el usuario está en la tabla de autorizados
+
+**Verificación:**
+```typescript
+const auth = await resolverUsuarioTelegram(message.from.id);
+if (!auth) {
+  // No autorizado — responder y salir
+  return;
+}
+```
+
+---
+
+## ⚠️ CP-12 — Auditoría de acciones por chat (Fase 10)
+
+**Descripción:** Cada acción del bot que modifica DB debe registrar en `cobranza_logs` con trazabilidad completa.
+
+**Implementación:**
+- Webhook `/api/webhooks/telegram` registra cada query del bot:
+  - `usuario_id` (resuelto desde `telegram_user_id`)
+  - `accion`: `'BOT_TELEGRAM_QUERY'` o similar
+  - `entidad`: `'telegram'`
+  - `detalle`: JSON con `chat_id`, `message_id`, `texto` truncado a 500 chars, `telegram_user_id`
+  - `ip`: `'telegram-webhook'`
+
+**Consecuencia si se rompe:** No hay forma de auditar quién hizo qué consulta o acción desde el bot.
+
 ---
 
 ## Checklist antes de cada PR/commit
