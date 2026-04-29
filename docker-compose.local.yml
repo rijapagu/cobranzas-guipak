@@ -1,0 +1,41 @@
+# Docker Compose para desarrollo LOCAL
+# Levanta MySQL y Redis para correr la app via `npm run dev`
+# Uso: docker compose -f docker-compose.local.yml up -d
+
+services:
+  cobranzas-mysql:
+    image: mysql:8.0
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: cobranzas_root_2026
+      MYSQL_DATABASE: cobranzas_guipak
+      MYSQL_USER: cobranzas_app
+      MYSQL_PASSWORD: cobranzas_pass_2026
+    ports:
+      - "3308:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./docker/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-pcobranzas_root_2026"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  cobranzas-redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  mysql-data:
+  redis-data:
