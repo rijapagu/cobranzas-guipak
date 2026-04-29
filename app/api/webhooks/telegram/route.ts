@@ -101,12 +101,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true, no_autorizado: true });
     }
 
-    console.error(`[webhook] "${textoLimpio.substring(0, 80)}" | anthropic=${!!process.env.ANTHROPIC_API_KEY}`);
     const respuesta = await procesarMensajeBot({
       texto: textoLimpio,
       user: auth,
     });
-    console.error(`[webhook] Resp len=${respuesta.length}, gestion=${respuesta.includes('gestion-pendiente')}, head=${respuesta.substring(0, 100)}`);
 
     // Detectar si la respuesta contiene una gestion_id pendiente
     const { texto: textoFinal, gestionId } = extraerGestionPendiente(respuesta);
