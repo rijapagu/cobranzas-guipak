@@ -172,13 +172,23 @@ async function responderMensaje(
   texto: string,
   replyTo?: number
 ): Promise<void> {
+  const bot = getTelegraf();
   try {
-    const bot = getTelegraf();
     await bot.telegram.sendMessage(chatId, texto, {
       parse_mode: 'HTML',
-      ...(replyTo && { reply_parameters: { message_id: replyTo } }),
+      ...(replyTo && replyTo > 0 && { reply_parameters: { message_id: replyTo } }),
     });
   } catch (error) {
+    // Si falla con reply (mensaje original ya no existe), reintentar sin reply
+    const msg = error instanceof Error ? error.message : String(error);
+    if (msg.includes('reply') || msg.includes('replied')) {
+      try {
+        await bot.telegram.sendMessage(chatId, texto, { parse_mode: 'HTML' });
+        return;
+      } catch (retryError) {
+        console.error('[telegram-webhook] Error en retry:', retryError);
+      }
+    }
     console.error('[telegram-webhook] Error enviando respuesta:', error);
   }
 }
