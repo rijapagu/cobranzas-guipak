@@ -7,6 +7,7 @@ const UpdateSchema = z.object({
   nombre: z.string().min(2).max(100).optional(),
   descripcion: z.string().nullable().optional(),
   segmento: z.enum(['VERDE', 'AMARILLO', 'NARANJA', 'ROJO']).optional(),
+  categoria: z.enum(['SECUENCIA', 'BUEN_CLIENTE', 'PROMESA_ROTA', 'ESTADO_CUENTA']).optional(),
   dia_desde_vencimiento: z.number().int().optional(),
   orden_secuencia: z.number().int().min(1).optional(),
   asunto: z.string().min(2).max(200).optional(),

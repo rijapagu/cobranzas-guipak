@@ -38,11 +38,14 @@ import type { ColumnsType } from "antd/es/table";
 const { Title, Text, Paragraph } = Typography;
 const { TextArea } = Input;
 
+type Categoria = 'SECUENCIA' | 'BUEN_CLIENTE' | 'PROMESA_ROTA' | 'ESTADO_CUENTA';
+
 interface Plantilla {
   id: number;
   nombre: string;
   descripcion: string | null;
   segmento: 'VERDE' | 'AMARILLO' | 'NARANJA' | 'ROJO';
+  categoria: Categoria;
   dia_desde_vencimiento: number;
   orden_secuencia: number;
   asunto: string;
@@ -70,14 +73,29 @@ const TONO_COLORS = {
   LEGAL: 'red',
 };
 
+const CATEGORIA_LABEL: Record<Categoria, string> = {
+  SECUENCIA: 'Secuencia normal',
+  BUEN_CLIENTE: 'Cliente con buen historial',
+  PROMESA_ROTA: 'Promesa de pago incumplida',
+  ESTADO_CUENTA: 'Estado de cuenta',
+};
+
+const CATEGORIA_COLORS: Record<Categoria, string> = {
+  SECUENCIA: 'default',
+  BUEN_CLIENTE: 'green',
+  PROMESA_ROTA: 'volcano',
+  ESTADO_CUENTA: 'blue',
+};
+
 const VARIABLES_DISPONIBLES = [
-  { variable: '{{cliente}}', descripcion: 'Nombre del cliente' },
-  { variable: '{{contacto}}', descripcion: 'Contacto de cobros del cliente' },
-  { variable: '{{factura}}', descripcion: 'Número de factura' },
-  { variable: '{{ncf}}', descripcion: 'NCF fiscal' },
-  { variable: '{{monto}}', descripcion: 'Saldo pendiente formateado' },
-  { variable: '{{dias_vencido}}', descripcion: 'Días que lleva vencida' },
-  { variable: '{{fecha_vencimiento}}', descripcion: 'Fecha de vencimiento' },
+  { variable: '{{cliente}}', descripcion: 'Nombre del contacto o razón social' },
+  { variable: '{{empresa_cliente}}', descripcion: 'Nombre de la empresa cliente' },
+  { variable: '{{numero_factura}}', descripcion: 'Número de factura' },
+  { variable: '{{monto}}', descripcion: 'Saldo pendiente formateado (RD$)' },
+  { variable: '{{fecha_vencimiento}}', descripcion: 'Fecha de vencimiento (DD/MM/YYYY)' },
+  { variable: '{{dias_vencida}}', descripcion: 'Días que lleva vencida' },
+  { variable: '{{fecha_prometida_pago}}', descripcion: 'Fecha que el cliente prometió pagar (solo PROMESA_ROTA)' },
+  { variable: '{{telefono_cobros}}', descripcion: 'Teléfono del depto. de cobros' },
 ];
 
 export default function PlantillasPage() {
@@ -109,6 +127,7 @@ export default function PlantillasPage() {
     form.resetFields();
     form.setFieldsValue({
       segmento: 'AMARILLO',
+      categoria: 'SECUENCIA',
       dia_desde_vencimiento: 0,
       orden_secuencia: 1,
       tono: 'MODERADO',
@@ -124,6 +143,7 @@ export default function PlantillasPage() {
       nombre: p.nombre,
       descripcion: p.descripcion,
       segmento: p.segmento,
+      categoria: p.categoria,
       dia_desde_vencimiento: p.dia_desde_vencimiento,
       orden_secuencia: p.orden_secuencia,
       asunto: p.asunto,
@@ -301,6 +321,8 @@ export default function PlantillasPage() {
   const totalActivas = plantillas.filter((p) => p.activa).length;
   const porSegmento = (s: string) =>
     plantillas.filter((p) => p.segmento === s && p.activa).length;
+  const porCategoria = (c: Categoria) =>
+    plantillas.filter((p) => p.categoria === c);
 
   return (
     <div>
@@ -359,34 +381,53 @@ export default function PlantillasPage() {
       />
 
       <Card>
-        <Table
-          columns={columns}
-          dataSource={plantillas}
-          rowKey="id"
-          loading={loading}
-          pagination={{ pageSize: 20 }}
-          expandable={{
-            expandedRowRender: (record) => (
-              <div style={{ background: '#fafafa', padding: 16, borderRadius: 4 }}>
-                <Text strong>Asunto: </Text>
-                <Text>{record.asunto}</Text>
-                <pre
-                  style={{
-                    marginTop: 8,
-                    background: '#fff',
-                    padding: 12,
-                    borderRadius: 4,
-                    border: '1px solid #e8e8e8',
-                    whiteSpace: 'pre-wrap',
-                    fontFamily: 'inherit',
-                    fontSize: 13,
+        <Tabs
+          items={(['SECUENCIA', 'BUEN_CLIENTE', 'PROMESA_ROTA', 'ESTADO_CUENTA'] as Categoria[]).map((cat) => {
+            const data = porCategoria(cat);
+            return {
+              key: cat,
+              label: (
+                <span>
+                  {CATEGORIA_LABEL[cat]}{' '}
+                  <Tag color={CATEGORIA_COLORS[cat]} style={{ marginLeft: 4 }}>
+                    {data.length}
+                  </Tag>
+                </span>
+              ),
+              children: (
+                <Table
+                  columns={columns}
+                  dataSource={data}
+                  rowKey="id"
+                  loading={loading}
+                  pagination={false}
+                  size="middle"
+                  expandable={{
+                    expandedRowRender: (record) => (
+                      <div style={{ background: '#fafafa', padding: 16, borderRadius: 4 }}>
+                        <Text strong>Asunto: </Text>
+                        <Text>{record.asunto}</Text>
+                        <pre
+                          style={{
+                            marginTop: 8,
+                            background: '#fff',
+                            padding: 12,
+                            borderRadius: 4,
+                            border: '1px solid #e8e8e8',
+                            whiteSpace: 'pre-wrap',
+                            fontFamily: 'inherit',
+                            fontSize: 13,
+                          }}
+                        >
+                          {record.cuerpo}
+                        </pre>
+                      </div>
+                    ),
                   }}
-                >
-                  {record.cuerpo}
-                </pre>
-              </div>
-            ),
-          }}
+                />
+              ),
+            };
+          })}
         />
       </Card>
 
@@ -418,6 +459,22 @@ export default function PlantillasPage() {
 
                     <Form.Item name="descripcion" label="Descripción interna">
                       <TextArea rows={2} placeholder="Para qué se usa esta plantilla (opcional)" />
+                    </Form.Item>
+
+                    <Form.Item
+                      name="categoria"
+                      label="Categoría"
+                      rules={[{ required: true }]}
+                      tooltip="Define cuándo se usa esta plantilla. Secuencia = flujo normal por días vencidos."
+                    >
+                      <Select
+                        options={[
+                          { value: 'SECUENCIA', label: 'Secuencia normal — escalada por días vencidos' },
+                          { value: 'BUEN_CLIENTE', label: 'Cliente con buen historial — atraso puntual' },
+                          { value: 'PROMESA_ROTA', label: 'Promesa de pago incumplida' },
+                          { value: 'ESTADO_CUENTA', label: 'Estado de cuenta — envío rutinario' },
+                        ]}
+                      />
                     </Form.Item>
 
                     <Row gutter={16}>

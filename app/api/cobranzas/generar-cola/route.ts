@@ -5,6 +5,8 @@ import { generarMensajeCobranza } from '@/lib/claude/client';
 import { getMockCartera } from '@/lib/mock/cartera-mock';
 import { softecQuery, testSoftecConnection } from '@/lib/db/softec';
 import type { FacturaVencida } from '@/lib/types/cartera';
+import { seleccionarPlantilla } from '@/lib/templates/seleccionar';
+import { renderPlantilla } from '@/lib/templates/render';
 
 /**
  * POST /api/cobranzas/generar-cola
@@ -67,21 +69,78 @@ export async function POST() {
       else if (tieneEmail && !tieneWa) canal = 'EMAIL';
       else if (!tieneWa && !tieneEmail) continue; // Sin contacto, skip
 
-      // Generar mensajes con Claude AI (CP-10: solo texto)
-      const mensajes = await generarMensajeCobranza({
-        nombre_cliente: f.nombre_cliente,
-        contacto_cobros: f.contacto_cobros,
-        codigo_cliente: f.codigo_cliente,
-        numero_factura: f.numero_interno,
-        ncf_fiscal: f.ncf_fiscal,
-        saldo_pendiente: f.saldo_pendiente,
-        moneda: f.moneda,
-        dias_vencido: f.dias_vencido,
-        fecha_vencimiento: f.fecha_vencimiento,
-        segmento_riesgo: f.segmento_riesgo,
-        tiene_pdf: f.tiene_pdf || false,
-        url_pdf: f.url_pdf || null,
+      // 1. Buscar plantilla apropiada en DB (enfoque A: render directo sin Claude)
+      const plantilla = await seleccionarPlantilla({
+        segmento: f.segmento_riesgo,
+        diasVencido: f.dias_vencido,
       });
+
+      let asuntoEmail = '';
+      let mensajeEmail = '';
+      let mensajeWa = '';
+
+      if (plantilla) {
+        // Renderizar plantilla con datos de la factura
+        const rendered = renderPlantilla(
+          { asunto: plantilla.asunto, cuerpo: plantilla.cuerpo },
+          {
+            cliente: f.contacto_cobros || f.nombre_cliente,
+            empresa_cliente: f.nombre_cliente,
+            numero_factura: f.numero_interno,
+            ncf_fiscal: f.ncf_fiscal,
+            monto: f.saldo_pendiente,
+            moneda: f.moneda,
+            fecha_vencimiento: f.fecha_vencimiento,
+            dias_vencida: f.dias_vencido,
+          }
+        );
+        asuntoEmail = rendered.asunto;
+        mensajeEmail = rendered.cuerpo;
+
+        // WhatsApp: generamos siempre con Claude (las plantillas son solo email)
+        // Solo si el canal lo requiere
+        if (canal === 'WHATSAPP' || canal === 'AMBOS') {
+          const wa = await generarMensajeCobranza({
+            nombre_cliente: f.nombre_cliente,
+            contacto_cobros: f.contacto_cobros,
+            codigo_cliente: f.codigo_cliente,
+            numero_factura: f.numero_interno,
+            ncf_fiscal: f.ncf_fiscal,
+            saldo_pendiente: f.saldo_pendiente,
+            moneda: f.moneda,
+            dias_vencido: f.dias_vencido,
+            fecha_vencimiento: f.fecha_vencimiento,
+            segmento_riesgo: f.segmento_riesgo,
+            tiene_pdf: f.tiene_pdf || false,
+            url_pdf: f.url_pdf || null,
+          });
+          mensajeWa = wa.mensaje_wa;
+        }
+      } else {
+        // Fallback: sin plantilla disponible → Claude genera todo (comportamiento previo)
+        const mensajes = await generarMensajeCobranza({
+          nombre_cliente: f.nombre_cliente,
+          contacto_cobros: f.contacto_cobros,
+          codigo_cliente: f.codigo_cliente,
+          numero_factura: f.numero_interno,
+          ncf_fiscal: f.ncf_fiscal,
+          saldo_pendiente: f.saldo_pendiente,
+          moneda: f.moneda,
+          dias_vencido: f.dias_vencido,
+          fecha_vencimiento: f.fecha_vencimiento,
+          segmento_riesgo: f.segmento_riesgo,
+          tiene_pdf: f.tiene_pdf || false,
+          url_pdf: f.url_pdf || null,
+        });
+        asuntoEmail = mensajes.asunto_email;
+        mensajeEmail = mensajes.mensaje_email;
+        mensajeWa = mensajes.mensaje_wa;
+      }
+      const mensajes = {
+        mensaje_wa: mensajeWa,
+        mensaje_email: mensajeEmail,
+        asunto_email: asuntoEmail,
+      };
 
       // Insertar gestión en DB
       await cobranzasExecute(

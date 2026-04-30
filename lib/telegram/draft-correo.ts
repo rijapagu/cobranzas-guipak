@@ -10,6 +10,9 @@
 import { cobranzasQuery, cobranzasExecute } from '@/lib/db/cobranzas';
 import { softecQuery, testSoftecConnection } from '@/lib/db/softec';
 import { generarMensajeCobranza } from '@/lib/claude/client';
+import { seleccionarPlantilla } from '@/lib/templates/seleccionar';
+import { renderPlantilla } from '@/lib/templates/render';
+import Anthropic from '@anthropic-ai/sdk';
 import type { SegmentoRiesgo } from '@/lib/types/cartera';
 
 interface FacturaUrgente {
@@ -164,7 +167,9 @@ export async function proponerCorreoCliente(
     if (enr[0]?.email) emailDestino = enr[0].email.trim();
   }
 
-  // 6. Generar mensaje con Claude (solo email aquí)
+  // 6. Generar mensaje
+  // Enfoque B (bot manual): selecciona plantilla → render → opcionalmente
+  // refina con Claude para tono natural. Si no hay plantilla, fallback a Claude solo.
   const diasVencido = Number(f.dias_vencido);
   const segmento = calcularSegmento(diasVencido);
 
@@ -172,22 +177,54 @@ export async function proponerCorreoCliente(
   let mensajeEmail = '';
 
   try {
-    const generado = await generarMensajeCobranza({
-      nombre_cliente: nombreCliente,
-      contacto_cobros: f.contacto_cobros ? String(f.contacto_cobros).trim() : '',
-      codigo_cliente: codigoCliente,
-      numero_factura: f.ij_inum,
-      ncf_fiscal: f.ncf_fiscal ? String(f.ncf_fiscal).trim() : '',
-      saldo_pendiente: Number(f.saldo_pendiente),
-      moneda: 'DOP',
-      dias_vencido: diasVencido,
-      fecha_vencimiento: new Date(f.fecha_vencimiento).toISOString().split('T')[0],
-      segmento_riesgo: segmento,
-      tiene_pdf: false,
-      url_pdf: '',
+    const plantilla = await seleccionarPlantilla({
+      segmento,
+      diasVencido,
     });
-    asunto = generado.asunto_email;
-    mensajeEmail = generado.mensaje_email;
+
+    if (plantilla) {
+      const contacto = f.contacto_cobros ? String(f.contacto_cobros).trim() : '';
+      const rendered = renderPlantilla(
+        { asunto: plantilla.asunto, cuerpo: plantilla.cuerpo },
+        {
+          cliente: contacto || nombreCliente,
+          empresa_cliente: nombreCliente,
+          numero_factura: f.ij_inum,
+          ncf_fiscal: f.ncf_fiscal ? String(f.ncf_fiscal).trim() : '',
+          monto: Number(f.saldo_pendiente),
+          moneda: 'DOP',
+          fecha_vencimiento: new Date(f.fecha_vencimiento).toISOString().split('T')[0],
+          dias_vencida: diasVencido,
+        }
+      );
+      asunto = rendered.asunto;
+      mensajeEmail = rendered.cuerpo;
+
+      // Refinamiento opcional con Claude (solo si hay API key — best-effort)
+      const refinado = await refinarConClaude(asunto, mensajeEmail, segmento);
+      if (refinado) {
+        asunto = refinado.asunto;
+        mensajeEmail = refinado.cuerpo;
+      }
+    } else {
+      // Fallback: Claude genera todo
+      const generado = await generarMensajeCobranza({
+        nombre_cliente: nombreCliente,
+        contacto_cobros: f.contacto_cobros ? String(f.contacto_cobros).trim() : '',
+        codigo_cliente: codigoCliente,
+        numero_factura: f.ij_inum,
+        ncf_fiscal: f.ncf_fiscal ? String(f.ncf_fiscal).trim() : '',
+        saldo_pendiente: Number(f.saldo_pendiente),
+        moneda: 'DOP',
+        dias_vencido: diasVencido,
+        fecha_vencimiento: new Date(f.fecha_vencimiento).toISOString().split('T')[0],
+        segmento_riesgo: segmento,
+        tiene_pdf: false,
+        url_pdf: '',
+      });
+      asunto = generado.asunto_email;
+      mensajeEmail = generado.mensaje_email;
+    }
   } catch (err) {
     return {
       ok: false,
@@ -238,4 +275,74 @@ export async function proponerCorreoCliente(
     mensaje_email: mensajeEmail,
     destinatario_email: emailDestino || null,
   };
+}
+
+/**
+ * Toma una plantilla ya renderizada y le pide a Claude que ajuste el tono
+ * para sonar más natural manteniendo el contenido factual idéntico.
+ * Devuelve null si no hay API key o si Claude falla — el caller usa la
+ * plantilla cruda como fallback.
+ */
+async function refinarConClaude(
+  asunto: string,
+  cuerpo: string,
+  segmento: SegmentoRiesgo
+): Promise<{ asunto: string; cuerpo: string } | null> {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return null;
+
+  const tonoHint =
+    segmento === 'VERDE' ? 'amigable y preventivo'
+    : segmento === 'AMARILLO' ? 'cordial con urgencia moderada'
+    : segmento === 'NARANJA' ? 'formal y directo'
+    : 'firme y serio sin amenazas';
+
+  const prompt = `Eres asistente de cobranzas de Suministros Guipak (República Dominicana).
+
+Recibes una plantilla de correo ya redactada. Tu tarea: ajustar el tono para que suene natural y profesional, manteniendo el contenido factual EXACTAMENTE IGUAL.
+
+Tono objetivo: ${tonoHint}.
+
+REGLAS ESTRICTAS:
+- NO inventes hechos nuevos, datos, fechas, montos, números de factura.
+- NO agregues amenazas legales que no estén en el original.
+- NO quites información factual del original.
+- Puedes reordenar oraciones o reformular para mejor flujo.
+- Mantén la firma "Departamento de Cuentas por Cobrar - Suministros Guipak".
+
+ASUNTO ORIGINAL:
+${asunto}
+
+CUERPO ORIGINAL:
+${cuerpo}
+
+Responde EXACTAMENTE en JSON:
+{
+  "asunto": "asunto refinado",
+  "cuerpo": "cuerpo refinado"
+}
+
+Solo JSON, sin texto adicional.`;
+
+  try {
+    const client = new Anthropic({ apiKey });
+    const response = await client.messages.create({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 1500,
+      messages: [{ role: 'user', content: prompt }],
+    });
+
+    const text = response.content[0].type === 'text' ? response.content[0].text : '';
+    const match = text.match(/\{[\s\S]*\}/);
+    if (!match) return null;
+
+    const parsed = JSON.parse(match[0]);
+    if (typeof parsed.asunto !== 'string' || typeof parsed.cuerpo !== 'string') {
+      return null;
+    }
+    return { asunto: parsed.asunto, cuerpo: parsed.cuerpo };
+  } catch (err) {
+    console.error('[draft-correo] Refinamiento Claude falló:', err);
+    return null;
+  }
 }

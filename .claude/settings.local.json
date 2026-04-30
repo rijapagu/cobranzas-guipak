@@ -31,7 +31,13 @@
       "Bash(git stash *)",
       "Bash(mkdir -p \"E:\\\\IA\\\\cobranzas-guipak\\\\app\\\\api\\\\cobranzas\\\\plantillas\\\\[id]\")",
       "Bash(cp \"E:\\\\IA\\\\cobranzas-guipak\\\\.claude\\\\worktrees\\\\agitated-cerf-ea18e2\\\\app\\\\api\\\\cobranzas\\\\plantillas\\\\[id]\\\\route.ts\" \"E:\\\\IA\\\\cobranzas-guipak\\\\app\\\\api\\\\cobranzas\\\\plantillas\\\\[id]\\\\route.ts\")",
-      "Bash(node -e \"const https=require\\('https'\\);const req=https.request\\({hostname:'cobros.sguipak.com',path:'/api/internal/admin/migrate',method:'POST',headers:{'Content-Type':'application/json','x-internal-secret':'c8021d7acd666dc798aac543d862b9bf4effce96e1391d88ce8b7d468bec1894'}},r=>{let d='';r.on\\('data',c=>d+=c\\);r.on\\('end',\\(\\)=>{if\\(d.includes\\('011_plantillas_email'\\)\\){console.log\\(d\\);process.exit\\(0\\)}else{process.exit\\(1\\)}}\\)}\\);req.end\\(\\)\")"
+      "Bash(node -e \"const https=require\\('https'\\);const req=https.request\\({hostname:'cobros.sguipak.com',path:'/api/internal/admin/migrate',method:'POST',headers:{'Content-Type':'application/json','x-internal-secret':'c8021d7acd666dc798aac543d862b9bf4effce96e1391d88ce8b7d468bec1894'}},r=>{let d='';r.on\\('data',c=>d+=c\\);r.on\\('end',\\(\\)=>{if\\(d.includes\\('011_plantillas_email'\\)\\){console.log\\(d\\);process.exit\\(0\\)}else{process.exit\\(1\\)}}\\)}\\);req.end\\(\\)\")",
+      "Bash(curl -s http://localhost:3000/api/cobranzas/plantillas)",
+      "Bash(curl -sv http://localhost:3000/api/cobranzas/plantillas)",
+      "Bash(curl -s -w \"\\\\nHTTP %{http_code}\\\\n\" http://localhost:3001/api/cobranzas/plantillas)",
+      "Bash(node scripts/test-plantillas.mjs)",
+      "Bash(taskkill //PID 16564 //F)",
+      "mcp__Claude_Preview__preview_start"
     ]
   }
 }

@@ -7,6 +7,7 @@ const PlantillaSchema = z.object({
   nombre: z.string().min(2).max(100),
   descripcion: z.string().optional().nullable(),
   segmento: z.enum(['VERDE', 'AMARILLO', 'NARANJA', 'ROJO']),
+  categoria: z.enum(['SECUENCIA', 'BUEN_CLIENTE', 'PROMESA_ROTA', 'ESTADO_CUENTA']).default('SECUENCIA'),
   dia_desde_vencimiento: z.number().int(),
   orden_secuencia: z.number().int().min(1).default(1),
   asunto: z.string().min(2).max(200),
@@ -26,10 +27,14 @@ export async function GET() {
 
   const rows = await cobranzasQuery(
     `SELECT id, nombre, descripcion, segmento, dia_desde_vencimiento, orden_secuencia,
-            asunto, cuerpo, tono, requiere_aprobacion, activa, creado_por,
+            categoria, asunto, cuerpo, tono, requiere_aprobacion, activa, creado_por,
             created_at, updated_at
      FROM cobranza_plantillas_email
-     ORDER BY segmento DESC, dia_desde_vencimiento ASC, orden_secuencia ASC`
+     ORDER BY
+       FIELD(categoria, 'SECUENCIA', 'BUEN_CLIENTE', 'PROMESA_ROTA', 'ESTADO_CUENTA'),
+       FIELD(segmento, 'VERDE', 'AMARILLO', 'NARANJA', 'ROJO'),
+       dia_desde_vencimiento ASC,
+       orden_secuencia ASC`
   );
 
   return NextResponse.json({ plantillas: rows });
@@ -55,12 +60,13 @@ export async function POST(req: NextRequest) {
   const p = parsed.data;
   const result = await cobranzasExecute(
     `INSERT INTO cobranza_plantillas_email
-     (nombre, descripcion, segmento, dia_desde_vencimiento, orden_secuencia, asunto, cuerpo, tono, requiere_aprobacion, activa, creado_por)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     (nombre, descripcion, segmento, categoria, dia_desde_vencimiento, orden_secuencia, asunto, cuerpo, tono, requiere_aprobacion, activa, creado_por)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       p.nombre,
       p.descripcion || null,
       p.segmento,
+      p.categoria,
       p.dia_desde_vencimiento,
       p.orden_secuencia,
       p.asunto,
