@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { cobranzasQuery } from '@/lib/db/cobranzas';
+import { cobranzasQueryRaw } from '@/lib/db/cobranzas';
 import { readFile, readdir } from 'fs/promises';
 import { join } from 'path';
 
@@ -44,7 +44,7 @@ export async function POST(req: NextRequest) {
 
         const ejecutadosArchivo: string[] = [];
         for (const stmt of statements) {
-          await cobranzasQuery(stmt);
+          await cobranzasQueryRaw(stmt);
           // Nombre del statement para reporte (CREATE TABLE foo, INSERT INTO foo, etc.)
           const resumen = stmt.split('\n')[0].substring(0, 60);
           ejecutadosArchivo.push(resumen);

@@ -40,6 +40,16 @@ export async function cobranzasExecute(
 }
 
 /**
+ * Ejecuta SQL crudo SIN protocolo de prepared statements.
+ * Útil para DDL (ALTER, TRUNCATE, etc.) que no soporta el protocolo prepared.
+ * Solo usar en contextos confiables (migrations) — NO acepta params para evitar SQL injection.
+ */
+export async function cobranzasQueryRaw(sql: string): Promise<unknown> {
+  const [result] = await pool.query(sql);
+  return result;
+}
+
+/**
  * Registra una acción en cobranza_logs (CP-08).
  */
 export async function logAccion(
