@@ -10,36 +10,18 @@
 --   4. Todas con requiere_aprobacion=1 (regla de oro)
 --   5. Sin {{vendedor}} ni {{link_pago}} en este lote inicial
 
--- 1. Agregar columna categoria si no existe (MySQL no soporta IF NOT EXISTS para columnas)
-SET @col_exists = (
-  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-  WHERE TABLE_SCHEMA = DATABASE()
-    AND TABLE_NAME = 'cobranza_plantillas_email'
-    AND COLUMN_NAME = 'categoria'
-);
-SET @sql_col = IF(@col_exists = 0,
-  'ALTER TABLE cobranza_plantillas_email ADD COLUMN categoria ENUM(''SECUENCIA'',''BUEN_CLIENTE'',''PROMESA_ROTA'',''ESTADO_CUENTA'') NOT NULL DEFAULT ''SECUENCIA'' AFTER orden_secuencia',
-  'SELECT 1'
-);
-PREPARE stmt_col FROM @sql_col;
-EXECUTE stmt_col;
-DEALLOCATE PREPARE stmt_col;
+-- 1. Agregar columna categoria.
+--    NOTA: ALTER TABLE ADD COLUMN sin IF NOT EXISTS fallará si la columna ya existe
+--    en re-runs del auto-runner. Eso aborta el resto del archivo y NO re-ejecuta el
+--    TRUNCATE de abajo, lo cual es deseado (preserva ediciones del usuario en prod).
+ALTER TABLE cobranza_plantillas_email
+  ADD COLUMN categoria ENUM('SECUENCIA','BUEN_CLIENTE','PROMESA_ROTA','ESTADO_CUENTA')
+  NOT NULL DEFAULT 'SECUENCIA' AFTER orden_secuencia;
 
-SET @idx_exists = (
-  SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
-  WHERE TABLE_SCHEMA = DATABASE()
-    AND TABLE_NAME = 'cobranza_plantillas_email'
-    AND INDEX_NAME = 'idx_categoria'
-);
-SET @sql_idx = IF(@idx_exists = 0,
-  'ALTER TABLE cobranza_plantillas_email ADD INDEX idx_categoria (categoria, activa)',
-  'SELECT 1'
-);
-PREPARE stmt_idx FROM @sql_idx;
-EXECUTE stmt_idx;
-DEALLOCATE PREPARE stmt_idx;
+ALTER TABLE cobranza_plantillas_email
+  ADD INDEX idx_categoria (categoria, activa);
 
--- 2. Limpiar plantillas existentes
+-- 2. Limpiar plantillas existentes (solo se ejecuta si la columna se acaba de crear arriba)
 TRUNCATE TABLE cobranza_plantillas_email;
 
 -- 3. Insertar las 22 plantillas del doc
