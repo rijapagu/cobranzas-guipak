@@ -82,7 +82,14 @@ const ESTADO_COLOR: Record<Estado, string> = {
   CANCELADA: "default",
 };
 
-function fmtFecha(s: string) {
+/**
+ * Normaliza una fecha proveniente de la API a YYYY-MM-DD sin shift de timezone.
+ * MySQL DATE → mysql2 → JSON serializa como "2026-05-02T00:00:00.000Z" o similar.
+ * Si dejamos que dayjs parsee, el cliente en UTC-4 lee "2026-05-01T20:00" y se
+ * pierde un día. Tomamos los primeros 10 chars cuando ya están en formato fecha.
+ */
+function fmtFecha(s: string): string {
+  if (typeof s === "string" && /^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
   return dayjs(s).format("YYYY-MM-DD");
 }
 
@@ -157,7 +164,7 @@ export default function TareasPage() {
       titulo: t.titulo,
       descripcion: t.descripcion,
       tipo: t.tipo,
-      fecha_vencimiento: dayjs(t.fecha_vencimiento),
+      fecha_vencimiento: dayjs(fmtFecha(t.fecha_vencimiento), "YYYY-MM-DD"),
       hora: t.hora ? dayjs(t.hora, "HH:mm:ss") : null,
       codigo_cliente: t.codigo_cliente,
       prioridad: t.prioridad,
