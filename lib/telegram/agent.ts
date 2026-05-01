@@ -64,11 +64,43 @@ PROHIBIDO:
 - Enviar mensajes a clientes sin pasar por aprobación humana (siempre quedan en cola).
 - Modificar Softec (es solo lectura).`;
 
+/**
+ * Construye un mapa precomputado de los próximos 14 días con su nombre en español.
+ * Resuelve el bug de aritmética de fechas en Claude — en vez de pedirle que cuente,
+ * le damos la tabla y solo busca.
+ */
+function tablaProximosDias(hoyIso: string): string {
+  const lineas: string[] = [];
+  const baseMs = new Date(hoyIso + 'T12:00:00Z').getTime();
+  for (let i = 0; i < 14; i++) {
+    const d = new Date(baseMs + i * 86400000);
+    const iso = d.toISOString().split('T')[0];
+    const nombre = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'][d.getUTCDay()];
+    let etiqueta = `${nombre} ${iso}`;
+    if (i === 0) etiqueta += ' ← HOY';
+    else if (i === 1) etiqueta += ' ← mañana';
+    else if (i === 2) etiqueta += ' ← pasado mañana';
+    lineas.push(`  ${etiqueta}`);
+  }
+  return lineas.join('\n');
+}
+
 function buildSystemPrompt(): string {
   const hoy = fechaHoyDominicana();
   const diaSemana = diaSemanaEspanol(hoy);
   return `FECHA DE HOY (Santo Domingo): ${hoy} (${diaSemana}).
-Usa esta fecha como referencia absoluta para todas las fechas relativas (mañana, el viernes, en 3 días, etc.).
+
+CALENDARIO DE LOS PRÓXIMOS 14 DÍAS (úsalo como tabla de lookup, NO calcules tú las fechas):
+${tablaProximosDias(hoy)}
+
+REGLAS PARA RESOLVER FECHAS RELATIVAS:
+- "hoy" → fecha del HOY de la tabla.
+- "mañana" → fecha marcada con "← mañana".
+- "pasado mañana" → fecha marcada con "← pasado mañana".
+- "el lunes" / "el martes" / etc. → busca la PRIMERA fila con ese día de la semana en la tabla (omitiendo el HOY si es ese día).
+- "el próximo lunes" → si HOY es lunes, salta al lunes de la siguiente fila; si no, igual que "el lunes".
+- "en N días" → cuenta N filas hacia abajo desde HOY.
+- Siempre verifica que la fecha que envías a crear_tarea coincida con el día de la semana de la tabla.
 
 ${SYSTEM_PROMPT_BASE}`;
 }

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  ConfigProvider,
   Typography,
   Card,
   Row,
@@ -36,6 +37,10 @@ import {
   EyeOutlined,
 } from "@ant-design/icons";
 import dayjs, { Dayjs } from "dayjs";
+import "dayjs/locale/es";
+import esES from "antd/locale/es_ES";
+
+dayjs.locale("es");
 
 const { Title, Text } = Typography;
 const { TextArea } = Input;
@@ -326,6 +331,7 @@ export default function TareasPage() {
   };
 
   return (
+    <ConfigProvider locale={esES}>
     <div>
       <Row justify="space-between" align="middle" style={{ marginBottom: 16 }}>
         <Col>
@@ -481,5 +487,6 @@ export default function TareasPage() {
         </Form>
       </Drawer>
     </div>
+    </ConfigProvider>
   );
 }
