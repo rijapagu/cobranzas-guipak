@@ -2,7 +2,19 @@ import Anthropic from '@anthropic-ai/sdk';
 import { TOOLS, ejecutarTool } from './tools';
 import type { TelegramUserAuth } from './auth';
 
-const SYSTEM_PROMPT = `Eres el asistente de cobranzas de Suministros Guipak (distribuidora B2B en República Dominicana).
+function fechaHoyDominicana(): string {
+  // YYYY-MM-DD en zona America/Santo_Domingo (UTC-4 sin DST)
+  const ahora = new Date();
+  const ms = ahora.getTime() - 4 * 3600 * 1000;
+  return new Date(ms).toISOString().split('T')[0];
+}
+
+function diaSemanaEspanol(fechaIso: string): string {
+  const d = new Date(fechaIso + 'T12:00:00Z');
+  return ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'][d.getUTCDay()];
+}
+
+const SYSTEM_PROMPT_BASE = `Eres el asistente de cobranzas de Suministros Guipak (distribuidora B2B en República Dominicana).
 
 CONTEXTO:
 - Hablas con el equipo interno de cobros vía Telegram (grupo "Cobros Guipak").
@@ -38,10 +50,28 @@ ESTILO:
 - Habla en español dominicano natural.
 - Emojis con moderación: 📊 para resúmenes, 💰 para montos, 🔴🟠🟡🟢 para segmentos, ⚠️ para alertas, 📧 para correos, ✉️ para drafts.
 
+TAREAS / RECORDATORIOS:
+- Cuando el usuario diga "recuérdame", "agenda", "anota", "anótalo", "mañana hay que...", "el viernes llamar a..." → usa crear_tarea.
+- Calcula la fecha tú mismo a partir de la fecha de hoy que se inyecta abajo. Pasa siempre fecha_vencimiento en formato AAAA-MM-DD.
+- Si el usuario dice "lunes/martes/...", asume el PRÓXIMO día de la semana con ese nombre (no el de esta semana si ya pasó).
+- Si el usuario menciona un cliente sin código exacto y crear_tarea lo necesita, primero usa buscar_cliente.
+- Cuando te pregunten "qué tengo hoy", "mis tareas", "qué hay pendiente esta semana" → usa listar_tareas con el rango apropiado.
+- Cuando el usuario diga "ya hice X", "completé Y", "cumplido" sobre una tarea → usa marcar_tarea_hecha (puede que necesites listar_tareas primero para ubicar el ID).
+- Después de crear una tarea, confirma con un mensaje breve: "📝 Anotado: <título> para <fecha en formato dominicano>".
+
 PROHIBIDO:
 - Inventar datos. Si no tienes info, dilo.
 - Enviar mensajes a clientes sin pasar por aprobación humana (siempre quedan en cola).
 - Modificar Softec (es solo lectura).`;
+
+function buildSystemPrompt(): string {
+  const hoy = fechaHoyDominicana();
+  const diaSemana = diaSemanaEspanol(hoy);
+  return `FECHA DE HOY (Santo Domingo): ${hoy} (${diaSemana}).
+Usa esta fecha como referencia absoluta para todas las fechas relativas (mañana, el viernes, en 3 días, etc.).
+
+${SYSTEM_PROMPT_BASE}`;
+}
 
 const MAX_TURNS = 5;
 
@@ -73,7 +103,7 @@ export async function procesarMensajeBot(input: MensajeUsuario): Promise<string>
     const response = await client.messages.create({
       model: 'claude-sonnet-4-5-20250929',
       max_tokens: 2048,
-      system: SYSTEM_PROMPT,
+      system: buildSystemPrompt(),
       tools: TOOLS,
       messages,
     });
@@ -95,7 +125,13 @@ export async function procesarMensajeBot(input: MensajeUsuario): Promise<string>
         if (tool.type !== 'tool_use') continue;
         const resultado = await ejecutarTool(
           tool.name,
-          tool.input as Record<string, unknown>
+          tool.input as Record<string, unknown>,
+          {
+            userId: String(input.user.usuario_id),
+            userEmail: input.user.telegram_username
+              ? `telegram:${input.user.telegram_username}`
+              : `telegram:${input.user.telegram_user_id}`,
+          }
         );
         toolResults.push({
           type: 'tool_result',

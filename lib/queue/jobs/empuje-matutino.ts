@@ -120,6 +120,58 @@ async function obtenerAlertas(): Promise<ResumenAlertas> {
   return resumen;
 }
 
+interface TareasResumen {
+  hoy: { id: number; titulo: string; hora: string | null }[];
+  atrasadas: { id: number; titulo: string; fecha: string }[];
+}
+
+async function obtenerTareas(): Promise<TareasResumen> {
+  const resumen: TareasResumen = { hoy: [], atrasadas: [] };
+  try {
+    const hoy = await cobranzasQuery<{
+      id: number;
+      titulo: string;
+      hora: string | null;
+    }>(
+      `SELECT id, titulo, hora
+         FROM cobranza_tareas
+        WHERE estado IN ('PENDIENTE','EN_PROGRESO')
+          AND fecha_vencimiento = CURDATE()
+        ORDER BY hora IS NULL, hora ASC, prioridad DESC, id ASC
+        LIMIT 20`
+    );
+    resumen.hoy = hoy.map((t) => ({
+      id: t.id,
+      titulo: t.titulo,
+      hora: t.hora ? t.hora.slice(0, 5) : null,
+    }));
+
+    const atrasadas = await cobranzasQuery<{
+      id: number;
+      titulo: string;
+      fecha_vencimiento: string;
+    }>(
+      `SELECT id, titulo, fecha_vencimiento
+         FROM cobranza_tareas
+        WHERE estado IN ('PENDIENTE','EN_PROGRESO')
+          AND fecha_vencimiento < CURDATE()
+        ORDER BY fecha_vencimiento ASC, id ASC
+        LIMIT 10`
+    );
+    resumen.atrasadas = atrasadas.map((t) => ({
+      id: t.id,
+      titulo: t.titulo,
+      fecha:
+        typeof t.fecha_vencimiento === 'string'
+          ? t.fecha_vencimiento.slice(0, 10)
+          : new Date(t.fecha_vencimiento).toISOString().split('T')[0],
+    }));
+  } catch (error) {
+    console.error('[empuje-matutino] Error obteniendo tareas:', error);
+  }
+  return resumen;
+}
+
 function formatMonto(monto: number): string {
   return new Intl.NumberFormat('es-DO', {
     style: 'currency',
@@ -129,9 +181,10 @@ function formatMonto(monto: number): string {
 }
 
 export async function ejecutarEmpujeMatutino(): Promise<void> {
-  const [cartera, alertas] = await Promise.all([
+  const [cartera, alertas, tareas] = await Promise.all([
     obtenerResumenCartera(),
     obtenerAlertas(),
+    obtenerTareas(),
   ]);
 
   const hoy = new Date().toLocaleDateString('es-DO', {
@@ -178,6 +231,28 @@ export async function ejecutarEmpujeMatutino(): Promise<void> {
 
   if (alertas.enviadas_hoy > 0) {
     mensaje += `📤 Ayer se enviaron ${alertas.enviadas_hoy} mensajes\n\n`;
+  }
+
+  if (tareas.hoy.length > 0) {
+    mensaje += `📋 <b>Tus tareas hoy (${tareas.hoy.length}):</b>\n`;
+    for (const t of tareas.hoy.slice(0, 8)) {
+      mensaje += t.hora ? `• ${t.hora} — ${t.titulo}\n` : `• ${t.titulo}\n`;
+    }
+    if (tareas.hoy.length > 8) {
+      mensaje += `• <i>+${tareas.hoy.length - 8} más</i>\n`;
+    }
+    mensaje += `\n`;
+  }
+
+  if (tareas.atrasadas.length > 0) {
+    mensaje += `⏰ <b>Atrasadas (${tareas.atrasadas.length}):</b>\n`;
+    for (const t of tareas.atrasadas.slice(0, 5)) {
+      mensaje += `• ${t.titulo} <i>(vencía ${t.fecha})</i>\n`;
+    }
+    if (tareas.atrasadas.length > 5) {
+      mensaje += `• <i>+${tareas.atrasadas.length - 5} más</i>\n`;
+    }
+    mensaje += `\n`;
   }
 
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://cobros.sguipak.com';

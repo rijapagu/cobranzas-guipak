@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { cobranzasQuery, cobranzasExecute, logAccion } from '@/lib/db/cobranzas';
+import { crearTareaSeguimientoAcuerdo } from '@/lib/cobranzas/auto-tareas';
 
 /**
  * POST /api/portal/[token]/solicitar-acuerdo
@@ -56,6 +57,14 @@ export async function POST(
     await logAccion(null, 'ACUERDO_SOLICITADO_PORTAL', 'acuerdo', result.insertId.toString(), {
       codigo_cliente, ij_inum, monto_propuesto, fecha_propuesta,
     });
+
+    await crearTareaSeguimientoAcuerdo({
+      acuerdoId: result.insertId,
+      codigoCliente: codigo_cliente,
+      ijInum: ij_inum,
+      fechaPrometida: fecha_propuesta,
+      registradoPor: 'PORTAL_CLIENTE',
+    }).catch((err) => console.error('[PORTAL-ACUERDO] auto-tarea fallo:', err));
 
     return NextResponse.json({
       ok: true,

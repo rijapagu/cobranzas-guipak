@@ -14,6 +14,7 @@ import {
   DashboardOutlined,
   SettingOutlined,
   MailOutlined,
+  CalendarOutlined,
 } from "@ant-design/icons";
 
 const { Sider } = Layout;
@@ -68,6 +69,11 @@ const menuItems = [
     key: "/plantillas",
     icon: <MailOutlined />,
     label: "Plantillas",
+  },
+  {
+    key: "/tareas",
+    icon: <CalendarOutlined />,
+    label: "Tareas",
   },
   {
     key: "/configuracion",

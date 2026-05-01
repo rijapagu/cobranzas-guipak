@@ -1,5 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
-import { cobranzasQuery } from '@/lib/db/cobranzas';
+import { cobranzasQuery, cobranzasExecute, logAccion } from '@/lib/db/cobranzas';
 import { softecQuery, testSoftecConnection } from '@/lib/db/softec';
 import { proponerCorreoCliente } from './draft-correo';
 
@@ -87,6 +87,73 @@ export const TOOLS: Anthropic.Tool[] = [
     },
   },
   {
+    name: 'crear_tarea',
+    description:
+      'Crea una tarea/recordatorio en el calendario del equipo. Úsala cuando el usuario diga "recuérdame", "agenda", "anota que mañana hay que...", "cliente me pidió que le llame el viernes". IMPORTANTE: la fecha debe pasarse en formato AAAA-MM-DD. Calcula la fecha tú mismo a partir de la fecha de hoy que aparece al inicio del system prompt. Confirma con el usuario después de crearla.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        titulo: { type: 'string', description: 'Título corto de la tarea' },
+        fecha_vencimiento: {
+          type: 'string',
+          description: 'Fecha en formato AAAA-MM-DD (ej. "2026-05-09"). Calcula tú la fecha relativa.',
+        },
+        hora: {
+          type: 'string',
+          description: 'Hora opcional en formato HH:MM (24h, ej. "10:00"). Omite si no se mencionó.',
+        },
+        tipo: {
+          type: 'string',
+          enum: ['LLAMAR', 'DEPOSITAR_CHEQUE', 'SEGUIMIENTO', 'DOCUMENTO', 'REUNION', 'OTRO'],
+          description: 'Categoría de la tarea',
+        },
+        codigo_cliente: {
+          type: 'string',
+          description: 'Código de cliente Softec (7 dígitos) si la tarea está relacionada a uno',
+        },
+        prioridad: {
+          type: 'string',
+          enum: ['BAJA', 'MEDIA', 'ALTA'],
+          description: 'Prioridad (default MEDIA)',
+        },
+        descripcion: { type: 'string', description: 'Detalles opcionales' },
+      },
+      required: ['titulo', 'fecha_vencimiento'],
+    },
+  },
+  {
+    name: 'listar_tareas',
+    description:
+      'Lista tareas pendientes del equipo. Usa "rango" para filtrar: hoy, mañana, semana (próximos 7 días), atrasadas (vencidas no hechas), todas.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        rango: {
+          type: 'string',
+          enum: ['hoy', 'mañana', 'semana', 'atrasadas', 'todas'],
+          description: 'Rango de fechas. Default "hoy".',
+        },
+        codigo_cliente: {
+          type: 'string',
+          description: 'Filtrar por cliente específico (opcional)',
+        },
+      },
+    },
+  },
+  {
+    name: 'marcar_tarea_hecha',
+    description:
+      'Marca una tarea como completada. Requiere el ID numérico de la tarea (lo obtienes de listar_tareas).',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        tarea_id: { type: 'number', description: 'ID numérico de la tarea' },
+        notas: { type: 'string', description: 'Notas opcionales del cierre' },
+      },
+      required: ['tarea_id'],
+    },
+  },
+  {
     name: 'proponer_correo_cliente',
     description:
       'Genera un draft de correo de cobranza para un cliente y lo deja en cola PENDIENTE de aprobación. NO envía el correo. Devuelve el ID de gestión, el draft completo y los datos del cliente. El bot debe presentar este draft al usuario con botones para aprobar/editar/descartar (CP-02).',
@@ -111,7 +178,8 @@ interface ResultadoTool {
 
 export async function ejecutarTool(
   nombre: string,
-  argumentos: Record<string, unknown>
+  argumentos: Record<string, unknown>,
+  ctx?: { userId?: string; userEmail?: string }
 ): Promise<ResultadoTool> {
   try {
     switch (nombre) {
@@ -135,6 +203,15 @@ export async function ejecutarTool(
 
       case 'buscar_cliente':
         return await buscarCliente(String(argumentos.termino));
+
+      case 'crear_tarea':
+        return await crearTarea(argumentos, ctx);
+
+      case 'listar_tareas':
+        return await listarTareas(argumentos);
+
+      case 'marcar_tarea_hecha':
+        return await marcarTareaHecha(argumentos, ctx);
 
       case 'proponer_correo_cliente': {
         const result = await proponerCorreoCliente(String(argumentos.termino));
@@ -414,4 +491,170 @@ async function buscarCliente(termino: string): Promise<ResultadoTool> {
       })),
     },
   };
+}
+
+// =====================================================================
+// Tareas
+// =====================================================================
+
+function validarFechaIso(s: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) && !isNaN(Date.parse(s));
+}
+
+async function crearTarea(
+  args: Record<string, unknown>,
+  ctx?: { userId?: string; userEmail?: string }
+): Promise<ResultadoTool> {
+  const titulo = String(args.titulo || '').trim();
+  const fecha = String(args.fecha_vencimiento || '').trim();
+  if (!titulo || titulo.length < 2) return { ok: false, error: 'Título inválido' };
+  if (!validarFechaIso(fecha))
+    return { ok: false, error: 'fecha_vencimiento debe ser AAAA-MM-DD' };
+
+  const tipo = String(args.tipo || 'OTRO');
+  const tiposValidos = ['LLAMAR', 'DEPOSITAR_CHEQUE', 'SEGUIMIENTO', 'DOCUMENTO', 'REUNION', 'OTRO'];
+  const tipoFinal = tiposValidos.includes(tipo) ? tipo : 'OTRO';
+
+  const prioridad = String(args.prioridad || 'MEDIA');
+  const prioridadFinal = ['BAJA', 'MEDIA', 'ALTA'].includes(prioridad) ? prioridad : 'MEDIA';
+
+  const hora = args.hora ? String(args.hora) : null;
+  const horaFinal = hora && /^\d{1,2}:\d{2}$/.test(hora) ? hora.padStart(5, '0') + ':00' : null;
+
+  const codigoCliente = args.codigo_cliente ? String(args.codigo_cliente).padStart(7, '0') : null;
+  const descripcion = args.descripcion ? String(args.descripcion) : null;
+  const creadoPor = ctx?.userEmail || `telegram:${ctx?.userId || 'unknown'}`;
+
+  const result = await cobranzasExecute(
+    `INSERT INTO cobranza_tareas
+     (titulo, descripcion, tipo, fecha_vencimiento, hora, codigo_cliente,
+      prioridad, asignada_a, creado_por, origen)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'MANUAL')`,
+    [
+      titulo,
+      descripcion,
+      tipoFinal,
+      fecha,
+      horaFinal,
+      codigoCliente,
+      prioridadFinal,
+      creadoPor,
+      creadoPor,
+    ]
+  );
+
+  const id = (result as { insertId?: number }).insertId;
+  await logAccion(ctx?.userId || null, 'TAREA_CREADA_BOT', 'tarea', String(id), {
+    titulo,
+    fecha,
+    via: 'telegram',
+  });
+
+  return {
+    ok: true,
+    data: {
+      id,
+      titulo,
+      fecha_vencimiento: fecha,
+      hora: horaFinal,
+      tipo: tipoFinal,
+      prioridad: prioridadFinal,
+      codigo_cliente: codigoCliente,
+    },
+  };
+}
+
+async function listarTareas(args: Record<string, unknown>): Promise<ResultadoTool> {
+  const rango = String(args.rango || 'hoy');
+  const codigoCliente = args.codigo_cliente ? String(args.codigo_cliente).padStart(7, '0') : null;
+
+  let where = "estado IN ('PENDIENTE','EN_PROGRESO')";
+  const params: (string | number)[] = [];
+
+  if (rango === 'hoy') {
+    where += ' AND fecha_vencimiento = CURDATE()';
+  } else if (rango === 'mañana' || rango === 'manana') {
+    where += ' AND fecha_vencimiento = DATE_ADD(CURDATE(), INTERVAL 1 DAY)';
+  } else if (rango === 'semana') {
+    where += ' AND fecha_vencimiento BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 7 DAY)';
+  } else if (rango === 'atrasadas') {
+    where += ' AND fecha_vencimiento < CURDATE()';
+  }
+  // 'todas' → sin filtro fecha
+
+  if (codigoCliente) {
+    where += ' AND codigo_cliente = ?';
+    params.push(codigoCliente);
+  }
+
+  const rows = await cobranzasQuery<{
+    id: number;
+    titulo: string;
+    tipo: string;
+    fecha_vencimiento: string;
+    hora: string | null;
+    codigo_cliente: string | null;
+    prioridad: string;
+    estado: string;
+    asignada_a: string | null;
+  }>(
+    `SELECT id, titulo, tipo, fecha_vencimiento, hora, codigo_cliente,
+            prioridad, estado, asignada_a
+       FROM cobranza_tareas
+      WHERE ${where}
+      ORDER BY fecha_vencimiento ASC, hora IS NULL, hora ASC, prioridad DESC, id ASC
+      LIMIT 50`,
+    params
+  );
+
+  return {
+    ok: true,
+    data: {
+      rango,
+      total: rows.length,
+      tareas: rows.map((r) => ({
+        id: r.id,
+        titulo: r.titulo,
+        tipo: r.tipo,
+        fecha: typeof r.fecha_vencimiento === 'string'
+          ? r.fecha_vencimiento.slice(0, 10)
+          : new Date(r.fecha_vencimiento).toISOString().split('T')[0],
+        hora: r.hora ? r.hora.slice(0, 5) : null,
+        codigo_cliente: r.codigo_cliente,
+        prioridad: r.prioridad,
+        estado: r.estado,
+        asignada_a: r.asignada_a,
+      })),
+    },
+  };
+}
+
+async function marcarTareaHecha(
+  args: Record<string, unknown>,
+  ctx?: { userId?: string; userEmail?: string }
+): Promise<ResultadoTool> {
+  const id = Number(args.tarea_id);
+  if (!Number.isFinite(id) || id <= 0) return { ok: false, error: 'tarea_id inválido' };
+
+  const existentes = await cobranzasQuery<{ id: number; titulo: string; estado: string }>(
+    'SELECT id, titulo, estado FROM cobranza_tareas WHERE id = ?',
+    [id]
+  );
+  if (existentes.length === 0) return { ok: false, error: 'Tarea no encontrada' };
+  const t = existentes[0];
+  if (t.estado === 'HECHA') return { ok: true, data: { id, mensaje: 'ya estaba HECHA' } };
+
+  const cerradoPor = ctx?.userEmail || `telegram:${ctx?.userId || 'unknown'}`;
+  const notas = args.notas ? String(args.notas) : null;
+
+  await cobranzasExecute(
+    `UPDATE cobranza_tareas
+        SET estado='HECHA', completada_at=NOW(), completada_por=?, notas_completado=?
+      WHERE id = ?`,
+    [cerradoPor, notas, id]
+  );
+
+  await logAccion(ctx?.userId || null, 'TAREA_HECHA_BOT', 'tarea', String(id), { via: 'telegram' });
+
+  return { ok: true, data: { id, titulo: t.titulo, mensaje: 'Marcada HECHA' } };
 }

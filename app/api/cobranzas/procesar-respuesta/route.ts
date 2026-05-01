@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { cobranzasQuery, cobranzasExecute, logAccion } from '@/lib/db/cobranzas';
 import { generarRespuestaCliente } from '@/lib/claude/client';
 import type { ContextoRespuesta } from '@/lib/claude/prompts';
+import { crearTareaSeguimientoAcuerdo } from '@/lib/cobranzas/auto-tareas';
 
 /**
  * POST /api/cobranzas/procesar-respuesta
@@ -87,7 +88,7 @@ export async function POST(request: NextRequest) {
 
     // Si Claude detectó un acuerdo de pago
     if (respuesta.acuerdo?.fecha) {
-      await cobranzasExecute(
+      const acuerdoResult = await cobranzasExecute(
         `INSERT INTO cobranza_acuerdos
          (codigo_cliente, ij_inum, conversacion_id, monto_prometido, moneda, fecha_prometida, descripcion, capturado_por_ia, registrado_por)
          VALUES (?, ?, ?, ?, ?, ?, ?, 1, 'ia_sistema')`,
@@ -98,6 +99,14 @@ export async function POST(request: NextRequest) {
           respuesta.acuerdo.descripcion || `Acuerdo detectado por IA del mensaje: "${mensaje.substring(0, 100)}"`,
         ]
       );
+
+      await crearTareaSeguimientoAcuerdo({
+        acuerdoId: acuerdoResult.insertId,
+        codigoCliente: cliente.codigo,
+        ijInum: factura.ij_inum,
+        fechaPrometida: respuesta.acuerdo.fecha,
+        registradoPor: 'ia_sistema',
+      }).catch((err) => console.error('[PROCESAR-RESP] auto-tarea fallo:', err));
     }
 
     // Si Claude detectó una disputa
