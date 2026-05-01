@@ -3,7 +3,7 @@
 > **Vista única de qué está hecho y qué falta.**
 > Para historia detallada → `PROGRESS.md`
 > Para retomar trabajo → `HANDOFF_PROXIMA_SESION.md`
-> Última actualización: **30 abril 2026**
+> Última actualización: **1 mayo 2026**
 
 ---
 
@@ -12,9 +12,9 @@
 | Indicador | Valor |
 |---|---|
 | Fases completas | 9 de 10 (90%) |
-| Fase 10 (Agente Proactivo) | ~75% |
+| Fase 10 (Agente Proactivo) | ~85% |
 | Sistema en producción | ✅ Sí |
-| Listo para uso real diario | ⚠️ Parcial (faltan tareas/calendario y validación end-to-end) |
+| Listo para uso real diario | ⚠️ Falta validación end-to-end con clientes reales |
 | Cobertura tests automatizados | 0% (solo pruebas manuales) |
 
 ---
@@ -68,14 +68,27 @@
 - [x] Cliente `lib/email/client.ts` con nodemailer
 - [x] Endpoint `/api/cobranzas/configuracion/probar` para validar SMTP
 
-### Bot Telegram (Capa A + B + B+)
+### Bot Telegram (Capa A + B + B+ + Tareas)
 - [x] Bot `@CobrosGuipakBot` en grupo "Cobros Guipak"
 - [x] Webhook configurado: `/api/webhooks/telegram`
 - [x] Auth por `telegram_user_id` → tabla `cobranza_telegram_usuarios`
-- [x] Capa A: empuje matutino con resumen de cartera
+- [x] Capa A: empuje matutino con resumen de cartera + tareas del día ✨ *act. 1-may*
 - [x] Capa B: 7 herramientas (tool use) — buscar cliente, estado cobros, etc.
 - [x] Capa B+: bot propone correos con botones de aprobación inline
-- [x] Cron diario 8 AM AST agendado en Dokploy ✨ *nuevo 30-abr*
+- [x] Cron diario 8 AM AST agendado en Dokploy
+- [x] **3 tools de tareas: crear_tarea, listar_tareas, marcar_tarea_hecha** ✨ *nuevo 1-may*
+- [x] **Parseo de fechas relativas con tabla precomputada de 14 días** ✨ *nuevo 1-may*
+
+### Tareas y Calendario (Fase 10 — extensión) ✨ *nuevo 1-may*
+- [x] Migración 013: tabla `cobranza_tareas`
+- [x] API `/api/cobranzas/tareas` (GET con filtros + POST)
+- [x] API `/api/cobranzas/tareas/[id]` (GET/PUT/DELETE soft)
+- [x] UI `/tareas` con vista calendario mensual + lista del día (locale es_ES)
+- [x] Drawer crear/editar con DatePicker, TimePicker, tipo, prioridad, cliente
+- [x] Bot Telegram crea/lista/marca hecha por lenguaje natural
+- [x] Auto-tarea SEGUIMIENTO al día siguiente de toda fecha_prometida en acuerdos
+  (idempotente; engachada en portal y procesar-respuesta)
+- [x] Empuje matutino con secciones "Tus tareas hoy" y "Atrasadas"
 
 ### Documentación
 - [x] CLAUDE.md (instrucciones para agentes)
@@ -100,20 +113,17 @@
 
 ## 🔴 PENDIENTE — Alta prioridad (siguiente sesión)
 
-### Tareas y Calendario (próximo gran feature)
-- [ ] Migración 013: tabla `cobranza_tareas`
-- [ ] API `/api/cobranzas/tareas` (CRUD + filtros)
-- [ ] UI `/tareas` con vista calendario mensual + lista del día
-- [ ] Bot Telegram: tools `crear_tarea`, `listar_tareas`, `marcar_tarea_hecha`
-- [ ] Parser de fechas relativas con Claude ("viernes", "mañana", "el lunes")
-- [ ] Auto-tareas desde acuerdos de pago
-- [ ] Integrar tareas del día en empuje matutino
-
-### Validación end-to-end con clientes reales
-- [ ] Probar conversación completa: cliente real responde WA → cae en cola → supervisor responde → cliente recibe
-- [ ] Validar `cobranza_conversaciones` se actualiza correctamente con respuestas
-- [ ] Validar `cobranza_acuerdos` se crea cuando cliente promete fecha
+### Validación end-to-end con clientes reales (PRÓXIMA SESIÓN)
+- [ ] Probar conversación completa: cliente real responde WA → cola → supervisor → cliente recibe
+- [ ] Validar `cobranza_conversaciones` se actualiza con respuestas
+- [ ] Validar `cobranza_acuerdos` se crea cuando cliente promete fecha en WA
+- [ ] **Validar auto-tarea de seguimiento aparece al día siguiente del acuerdo**
+- [ ] **Validar que el empuje matutino del día siguiente lista las tareas correctamente**
 - [ ] UI `/conversaciones` mostrando hilos activos por cliente
+
+### Slash commands del bot
+- [ ] `/tareas`, `/hoy`, `/mañana`, `/semana` → atajos a `listar_tareas`
+- [ ] Hoy responden "Comando no reconocido"
 
 ### Bug fixes pendientes
 - [ ] Settings de Evolution UI (POST /settings/set/) devuelve 500 — workaround manual via UI Evolution
@@ -206,8 +216,8 @@
 
 | # | Sesión | Foco |
 |---|---|---|
-| 1 | Próxima | **Tareas y Calendario** (cubre necesidad inmediata operativa) |
-| 2 | +1 | Validación end-to-end WA con clientes reales + UI conversaciones |
+| 1 | Próxima | **Validación end-to-end WA con clientes reales** + UI conversaciones + auto-tareas en vivo |
+| 2 | +1 | Slash commands bot + plantillas WhatsApp |
 | 3 | +2 | Capa D — Cadencias automáticas (sistema empuja, no solo responde) |
 | 4 | +3 | Reportes y dashboard ejecutivo |
 | 5 | +4 | Iniciar camino Cloud API Meta en serio |
@@ -222,15 +232,15 @@ El sistema estará **listo para entregar a Daria + cobradores sin tu intervenci�
 - [x] WhatsApp operacional
 - [x] Plantillas configurables
 - [x] Bot Telegram para supervisor
-- [ ] **Tareas/calendario funcional**
+- [x] **Tareas/calendario funcional** ✨ *cerrado 1-may*
 - [ ] **Cadencias automáticas**
 - [ ] **Reportes para gerencia**
 - [ ] **Validado con clientes reales 1 semana sin issues mayores**
 - [ ] Tests unitarios > 50% cobertura crítica
 - [ ] Backups + monitoring activos
 
-**Faltan ~5 puntos para llegar.** Ritmo actual: ~1 punto por sesión = **~5-6 semanas más**.
+**Faltan ~4 puntos para llegar.** Ritmo actual: ~1 punto por sesión = **~4-5 semanas más**.
 
 ---
 
-*Última actualización: 30-abr-2026, sesión Opus 4.7 1M*
+*Última actualización: 1-may-2026, sesión Sonnet 4.7 1M*

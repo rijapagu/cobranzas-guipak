@@ -1,12 +1,12 @@
 # HANDOFF — Próxima sesión
 
 > **Documento de continuidad. Léelo completo antes de codear.**
-> Última sesión cerrada: **30 abril 2026**
-> Estado: Capa A + B + B+ + Plantillas conectadas + Evolution + Cron diario ✅ — En producción
+> Última sesión cerrada: **1 mayo 2026**
+> Estado: Tareas y Calendario en producción ✅ — Sistema operativo end-to-end
 
 ---
 
-## 📍 Estado actual al cierre (30-abr-2026)
+## 📍 Estado actual al cierre (1-may-2026)
 
 ### En producción funcionando ✅
 - App: `https://cobros.sguipak.com`
@@ -14,57 +14,75 @@
 - Empuje matutino: agendado en Dokploy → corre **diario 8:00 AM AST** (12:00 UTC)
 - WhatsApp via Evolution: número **8098536995** vinculado, webhook activo
 - 22 plantillas de correo (4 categorías) conectadas al flujo
+- **Tareas y Calendario** ✨ *nuevo 1-may* — UI `/tareas`, bot crea/lista/marca hecha por NL,
+  auto-tareas desde acuerdos de pago, integradas al empuje matutino
 
 ### Commits en esta sesión
 
 | Commit | Descripción |
 |---|---|
-| `2208239` | feat(fase10): conectar plantillas al flujo de generación de correos |
-| `5747c74` | fix(fase10): simplificar migración 012 para auto-runner |
-| `75e305a` | fix(migrate): usar pool.query en lugar de execute para soportar DDL |
-| `48341fe` | fix(whatsapp): soportar formato LID de WhatsApp en webhook |
+| `ed8c7b9` | feat(tareas): agregar sistema de tareas y calendario |
+| `be3d652` | fix(tareas): evitar shift de timezone al renderizar fechas |
+| `d7ba084` | fix(tareas): calendario en español + bot resuelve fechas relativas correctamente |
 
 ---
 
-## ✅ Lo que cerramos en la sesión 30-abr
+## ✅ Lo que cerramos en la sesión 1-may
 
-### 1) Plantillas (22 modelos) en producción
-- Migración `db/migrations/012_plantillas_22_modelos.sql` aplicada
-- Columna `categoria` ENUM agregada (SECUENCIA, BUEN_CLIENTE, PROMESA_ROTA, ESTADO_CUENTA)
-- 22 plantillas insertadas en orden cadencia: VERDE -3 → ROJO 60 días
-- UI `/plantillas` con tabs por categoría
-- `lib/templates/render.ts` — sustitución de `{{variables}}` con aliases retrocompat
-- `lib/templates/seleccionar.ts` — lookup por segmento+día+categoría
-- **Generar cola** (`app/api/cobranzas/generar-cola/route.ts`) usa enfoque A: render directo, fallback a Claude
-- **Bot Telegram draft** (`lib/telegram/draft-correo.ts`) usa enfoque B: render + refinamiento opcional con Claude
-- Migración runner del endpoint `/api/internal/admin/migrate` ahora usa `pool.query` (no prepared) para soportar DDL
+### 1) Migración 013 + tabla `cobranza_tareas`
+- Schema con tipo (LLAMAR/DEPOSITAR_CHEQUE/SEGUIMIENTO/DOCUMENTO/REUNION/OTRO)
+- Estado (PENDIENTE/EN_PROGRESO/HECHA/CANCELADA), prioridad, asignación
+- Origen (MANUAL/ACUERDO_PAGO/CADENCIA) + `origen_ref` para idempotencia
+- Auditoría: `completada_at`, `completada_por`, `notas_completado`
+- Aplicada en prod via `/api/internal/admin/migrate`
 
-### 2) EvolutionAPI conectado (problema mayor resuelto)
-- Diagnóstico: instancia anterior estaba con `integration: EVOLUTION` (incorrecto)
-- Borrada y recreada con `integration: WHATSAPP-BAILEYS`
-- Imagen Evolution actualizada de `homolog v2.3.6 buggy` → `evoapicloud/evolution-api:homolog` working
-- Número conectado: **18098536995** (Amel Aquino Flota)
-- Webhook configurado: `https://cobros.sguipak.com/api/webhooks/whatsapp`
-- Eventos suscritos: `MESSAGES_UPSERT`, `MESSAGES_UPDATE`, `CONNECTION_UPDATE`, `SEND_MESSAGE`
-- Test envío UTF-8 (tildes, emojis): ✅ funcional desde Node fetch
-- Test recepción: ✅ mensaje "Test Guipak" llegó correctamente
+### 2) API CRUD `/api/cobranzas/tareas`
+- `GET` con filtros: `desde`, `hasta`, `estado`, `cliente`, `asignada_a`, `origen`, `incluir_completadas`
+- `POST` para crear (Zod validation, default `asignada_a` = sesión)
+- `GET/PUT/DELETE /[id]` — PUT auto-sella `completada_at` cuando estado pasa a HECHA/CANCELADA
+- DELETE es soft (estado → CANCELADA)
+- Todas las acciones loggean en `cobranza_logs`
 
-### 3) Webhook fix LID (formato nuevo de WhatsApp)
-- WhatsApp introdujo Linked Identifier (LID): `remoteJid` viene como `XXXXXXX@lid` sin número
-- El número real está en `key.remoteJidAlt`
-- Helper `extraerNumero()` en `app/api/webhooks/whatsapp/route.ts` resuelve los dos formatos
-- Mensajes LID sin `remoteJidAlt` resoluble se loguean como `WA_HUERFANO` para asignación manual
-- 7/7 casos pasaron en tests locales
+### 3) UI `/tareas`
+- Vista calendario mensual antd (locale `es_ES`, dayjs `es`)
+- Panel lateral "Tareas del día" con badge "Atrasadas (N)" arriba si hay
+- Vista "Lista" alternativa
+- Drawer crear/editar con DatePicker, TimePicker, Select de tipo/prioridad
+- Acciones: Hecha / Editar / Cancelar
+- Sidebar: nuevo item "Tareas" con icono 📅
 
-### 4) Cron empuje matutino agendado en Dokploy
-- **Ubicación:** Dokploy → cobranzas-guipak → tab Schedules
-- **Schedule:** `0 12 * * *` (12:00 UTC = 8:00 AM AST)
-- **Shell:** `sh` (NO bash — el contenedor Alpine no tiene bash)
-- **Command:**
-  ```sh
-  wget -qO- --post-data='' --header='x-internal-secret: c8021d7acd666dc798aac543d862b9bf4effce96e1391d88ce8b7d468bec1894' https://cobros.sguipak.com/api/internal/cron/empuje-matutino
-  ```
-- Validado manualmente con ▶️ Play: ✅ resumen llegó al grupo Telegram
+### 4) Bot Telegram con 3 tools nuevas
+- `crear_tarea(titulo, fecha_vencimiento, hora?, tipo?, codigo_cliente?, prioridad?)`
+- `listar_tareas(rango: hoy|mañana|semana|atrasadas|todas, codigo_cliente?)`
+- `marcar_tarea_hecha(tarea_id, notas?)`
+- **Fix clave de fechas relativas**: en vez de pedirle a Claude que calcule
+  ("viernes + 3 días"), el system prompt ahora inyecta una **tabla precomputada
+  de los próximos 14 días** con su nombre en español. Claude solo hace lookup.
+- Validado end-to-end: "el lunes" → lun 4 may, "pasado mañana" → dom 3 may,
+  "en 3 días" → lun 4 may, "el viernes que viene" → vie 8 may.
+- Resuelve clientes por nombre parcial automáticamente antes de crear tarea
+  (ej. "llamar a Master Clean" → busca código `0000593` y lo asocia).
+
+### 5) Auto-tareas desde acuerdos de pago
+- Helper `lib/cobranzas/auto-tareas.ts` → `crearTareaSeguimientoAcuerdo()`
+- Idempotente por `(origen='ACUERDO_PAGO', origen_ref=acuerdo_id)`
+- Engachada en 2 sitios:
+  - `app/api/portal/[token]/solicitar-acuerdo/route.ts` (acuerdos del portal cliente)
+  - `app/api/cobranzas/procesar-respuesta/route.ts` (acuerdos detectados por IA en WA/email)
+- Tarea SEGUIMIENTO al día siguiente de la `fecha_prometida`
+
+### 6) Empuje matutino con tareas
+- `lib/queue/jobs/empuje-matutino.ts` agrega 2 secciones nuevas:
+  - "📋 Tus tareas hoy (N): • HH:MM — título"
+  - "⏰ Atrasadas (N): • título *(vencía YYYY-MM-DD)*"
+- Si no hay tareas, las secciones simplemente se omiten
+
+### Bugs encontrados y corregidos en esta sesión
+- 🐛 Timezone shift al renderizar fechas en calendario UI (cliente UTC-4 perdía un día)
+  → fix tomando primeros 10 chars del string si ya viene `YYYY-MM-DD`
+- 🐛 Bot ponía fechas en día equivocado ("lunes 5 mayo" cuando 5 mayo era martes)
+  → fix con tabla precomputada de 14 días
+- 🐛 Calendario en inglés (Sun Mon Tue) → fix con `ConfigProvider` + `dayjs/locale/es`
 
 ---
 
@@ -72,132 +90,68 @@
 
 ### 🔴 Alta prioridad
 
-#### 1. Tareas / Calendario / Recordatorios (próximo gran feature)
+#### 1. Validación end-to-end con clientes reales (próxima sesión sugerida)
+- [ ] Probar conversación completa: cliente real responde WA → cae en cola → supervisor responde → cliente recibe
+- [ ] Validar `cobranza_conversaciones` se actualiza con respuestas
+- [ ] Validar `cobranza_acuerdos` se crea cuando cliente promete fecha en WA
+  - Y validar que la auto-tarea de seguimiento aparece al día siguiente
+- [ ] UI `/conversaciones` mostrando hilos activos por cliente
+- [ ] Validar que el empuje matutino del día siguiente lista las tareas correctamente
 
-Pedido por el usuario al cerrar sesión 30-abr. Necesitan crear y consultar tareas tipo:
-- "Hoy llamar a Master Clean"
-- "Mañana depositar cheque de Universidad por RD$50,000"
-- "Cliente X dice que le llame el viernes"
+#### 2. Slash command `/tareas` en bot
+- Hoy si escribes `/tareas` el bot responde "Comando no reconocido"
+- Agregar handler en `app/api/webhooks/telegram/route.ts` que mapea `/tareas` → `listar_tareas(rango: 'todas')`
+- También `/hoy`, `/mañana`, `/semana` como atajos
 
-**Diseño propuesto:**
+#### 3. Bug: Settings de Evolution (UI) dan 500
+- Endpoint `POST /settings/set/AsistenteGuipak` retorna 500 con error de Prisma
+- Workaround: configurar manualmente desde la UI de Evolution
+- Fix permanente: subir a `evoapicloud/evolution-api:latest` cuando salga estable post-2.3.7
 
-**1.1 — Migración 013_cobranza_tareas.sql:**
-```sql
-CREATE TABLE cobranza_tareas (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  titulo VARCHAR(200) NOT NULL,
-  descripcion TEXT NULL,
-  tipo ENUM('LLAMAR','DEPOSITAR_CHEQUE','SEGUIMIENTO','DOCUMENTO','REUNION','OTRO') NOT NULL DEFAULT 'OTRO',
-  fecha_vencimiento DATE NOT NULL,
-  hora TIME NULL,
-  -- Relacionada con cliente o factura (opcional)
-  codigo_cliente VARCHAR(20) NULL,
-  ij_inum INT NULL,
-  -- Estado
-  estado ENUM('PENDIENTE','EN_PROGRESO','HECHA','CANCELADA') NOT NULL DEFAULT 'PENDIENTE',
-  prioridad ENUM('BAJA','MEDIA','ALTA') NOT NULL DEFAULT 'MEDIA',
-  -- Quién y cuándo
-  asignada_a VARCHAR(100) NULL,           -- email del usuario o telegram_user_id
-  creado_por VARCHAR(100) NOT NULL,
-  -- Auto-generadas
-  origen ENUM('MANUAL','ACUERDO_PAGO','CADENCIA') NOT NULL DEFAULT 'MANUAL',
-  origen_ref VARCHAR(50) NULL,            -- ID del acuerdo/cadencia que la generó
-  -- Auditoría
-  completada_at DATETIME NULL,
-  completada_por VARCHAR(100) NULL,
-  notas_completado TEXT NULL,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  INDEX idx_fecha_estado (fecha_vencimiento, estado),
-  INDEX idx_cliente (codigo_cliente),
-  INDEX idx_asignada (asignada_a, estado)
-);
-```
-
-**1.2 — API + UI:**
-- `GET/POST /api/cobranzas/tareas` — listar (con filtros fecha/estado/cliente), crear
-- `GET/PUT/DELETE /api/cobranzas/tareas/[id]` — editar, completar, cancelar
-- `app/(dashboard)/tareas/page.tsx`:
-  - Vista calendario mensual (usar `antd Calendar`)
-  - Vista lista del día con check para marcar como hecha
-  - Form de crear/editar con select de cliente desde Softec
-
-**1.3 — Bot Telegram con lenguaje natural:**
-
-Agregar tools en `lib/telegram/tools.ts`:
-- `crear_tarea(titulo, fecha, tipo?, cliente?, hora?)`
-- `listar_tareas(rango: 'hoy'|'semana'|'mes')`
-- `marcar_tarea_hecha(tarea_id, notas?)`
-
-Comandos esperados del bot:
-```
-@CobrosGuipakBot recordame llamar a Master Clean el viernes a las 10
-@CobrosGuipakBot mañana hay que depositar cheque de Universidad por 250,000
-@CobrosGuipakBot qué tengo hoy
-@CobrosGuipakBot mis tareas semana
-```
-
-Claude parsea fechas relativas ("viernes", "mañana", "el lunes 5") con prompt cuidadoso. Confirma antes de guardar.
-
-**1.4 — Auto-tareas desde acuerdos:**
-
-Cuando se registra un `cobranza_acuerdo` con `fecha_promesa`:
-- Crear automáticamente una tarea tipo `SEGUIMIENTO`:
-  - título: "Verificar pago prometido de [cliente]"
-  - fecha_vencimiento: día siguiente al `fecha_promesa`
-  - origen: `ACUERDO_PAGO`, origen_ref: ID del acuerdo
-
-**1.5 — Integrar al empuje matutino:**
-
-`lib/queue/jobs/empuje-matutino.ts` debe agregar sección al mensaje de Telegram:
-
-```
-📋 Tus tareas hoy (3):
-• 09:00 — Llamar a Master Clean
-• Verificar pago prometido de Universidad
-• Depositar cheque de XX por RD$50,000
-
-📋 Atrasadas (1):
-• Llamar a Cliente Y (vencía ayer)
-```
-
-**Esfuerzo estimado:** ~2.5 horas de trabajo limpio.
-
-#### 2. Bug: Settings de Evolution (UI) dan 500
-- Endpoint `POST /settings/set/AsistenteGuipak` retorna 500 con error de Prisma `integrationSession.update`
-- Probable bug del tag `homolog` que estamos usando
-- Settings deseados: `rejectCall: true`, `groupsIgnore: true`, `msgCall` con respuesta automática
-- **Workaround:** configurar manualmente desde la UI de Evolution (puede que sí funcione por panel)
-- **Fix permanente:** subir a `evoapicloud/evolution-api:latest` cuando salga estable post-2.3.7
-
-#### 3. WhatsApp del flujo de cobranzas usa Claude (no plantillas)
+#### 4. WhatsApp del flujo de cobranzas usa Claude (no plantillas)
 - `lib/claude/prompts.ts` genera mensaje WA con Claude
 - Las 22 plantillas son solo email
-- Si quieres plantillas para WA también, agregar columna `canal ENUM('EMAIL','WHATSAPP')` a `cobranza_plantillas_email` o crear tabla aparte `cobranza_plantillas_whatsapp`
+- Si quieres plantillas para WA: agregar columna `canal ENUM('EMAIL','WHATSAPP')` a `cobranza_plantillas_email`
+  o crear tabla aparte `cobranza_plantillas_whatsapp`
 
 ### 🟡 Media prioridad
 
-#### 4. Capa C — Bot pregunta datos faltantes al grupo
-Ver detalle en sesión anterior. Función `validarDatosClienteCompletos(clienteId, canal)` + tool `pedir_dato_faltante(cliente_id, campo)`. Requiere `Privacy Mode` del bot deshabilitado en BotFather.
+#### 5. Capa C — Bot pregunta datos faltantes al grupo
+- Función `validarDatosClienteCompletos(clienteId, canal)` + tool `pedir_dato_faltante(cliente_id, campo)`
+- Requiere `Privacy Mode` del bot deshabilitado en BotFather
 
-#### 5. Capa D — Cadencias automáticas worker BullMQ
-Tabla `cobranza_cadencias` ya tiene 5 cadencias por defecto. Worker en `lib/queue/worker.ts` ya construido pero sin agendar. Si se quiere correr automático: levantar nuevo servicio Compose en Dokploy con `command: npm run worker`.
+#### 6. Capa D — Cadencias automáticas (worker BullMQ)
+- Tabla `cobranza_cadencias` ya tiene 5 cadencias por defecto
+- Worker en `lib/queue/worker.ts` ya construido pero sin agendar
+- Si se quiere correr automático: levantar nuevo servicio Compose en Dokploy con `command: npm run worker`
 
-#### 6. UI Plantillas — mejoras nice-to-have
+#### 7. UI Tareas — mejoras nice-to-have
+- [ ] Filtros: por tipo, por cliente, por asignado
+- [ ] Vista semanal (no solo mensual)
+- [ ] Notificación push 30 min antes de tarea con hora
+- [ ] Recurrencia (ej. "todos los lunes a las 9 AM")
+- [ ] Drag & drop para mover tarea de día
+
+#### 8. UI Plantillas — mejoras nice-to-have
 - Preview en vivo del correo con datos ficticios
 - Botón "Test send" a tu propio email
 - Duplicar plantilla
 - Estadísticas de uso
 
+#### 9. Reportes y dashboard ejecutivo
+- Cobrado este mes vs meta
+- Cartera por segmento (gráfico evolutivo histórico)
+- Top 10 morosos
+- Efectividad por plantilla (% que generaron pago)
+- Productividad por cobrador
+- Tareas completadas vs creadas (productividad operativa)
+
 ### 🟢 Baja prioridad / largo plazo
 
-#### 7. Capa E — Memoria semántica (3-6 meses)
-#### 8. WhatsApp Cloud API oficial de Meta
-- Ricardo lleva meses intentando sacar la verificación. Tema de Meta Business Manager:
-  - Verificación de dominio
-  - Verificación de identidad legal
-  - Documentos del negocio
-- Si se logra: cero riesgo de bans, plantillas pre-aprobadas, mejor entregabilidad
+#### 10. Capa E — Memoria semántica (3-6 meses)
+#### 11. WhatsApp Cloud API oficial de Meta
+- Verificación de dominio + identidad legal en Meta Business Manager
+- Migrar de Evolution a Cloud API (cero riesgo de bans, plantillas pre-aprobadas)
 
 ---
 
@@ -206,9 +160,11 @@ Tabla `cobranza_cadencias` ya tiene 5 cadencias por defecto. Worker en `lib/queu
 1. **`ANTHROPIC_API_KEY` shell pisa `.env.local` en dev local** — usar `unset ANTHROPIC_API_KEY ANTHROPIC_BASE_URL` antes de `npm run dev`
 2. **PowerShell 5.1 muy restringido** — usar Bash o Node directamente
 3. **MASTER CLEAN no tiene email** — cliente 0000593 sin email. Agregar en Clientes si quieres email
-4. **`.env.local` no se replicó al worktree** — al crear nuevo worktree, hay que copiar manualmente con `cp /e/IA/cobranzas-guipak/.env.local .env.local`
-5. **Settings Evolution UI bug 500** — ver pendiente #2 arriba
+4. **`.env.local` no se replicó al worktree** — al crear nuevo worktree, copiar manualmente con `cp /e/IA/cobranzas-guipak/.env.local .env.local`
+5. **Settings Evolution UI bug 500** — ver pendiente #3 arriba
 6. **`syncFullHistory: false`** en Evolution — bien para arrancar, pero significa que mensajes anteriores al pareo no se importan
+7. **Slow filesystem en E:\ para dev server** — `next dev` se queda atorado compilando middleware en worktrees. Workaround: testear contra MySQL directo + typecheck + push a prod. El issue NO afecta al deploy ni a runtime — solo a `npm run dev` local.
+8. **Slash commands del bot no implementados** — `/tareas`, `/hoy`, etc. responden "Comando no reconocido". Hay que escribir prosa.
 
 ---
 
@@ -231,30 +187,32 @@ unset ANTHROPIC_API_KEY ANTHROPIC_BASE_URL
 npm run dev
 ```
 
-App local en `http://localhost:3000`.
+App local en `http://localhost:3000` (o 3001 si 3000 está ocupado).
+
+⚠️ Si el dev server se queda en "Compiling middleware...", probablemente sea el FS lento. Para validar cambios: aplica migración con `mysql` directo, corre `npx tsc --noEmit`, pushea a master y prueba en prod.
 
 ---
 
-## 📂 Archivos clave de la sesión 30-abr
+## 📂 Archivos clave de la sesión 1-may
 
 ### Backend
-- `db/migrations/012_plantillas_22_modelos.sql` — 22 plantillas + categoria
-- `lib/templates/render.ts` — render de variables
-- `lib/templates/seleccionar.ts` — selector por segmento/día/categoría
-- `lib/db/cobranzas.ts` — agregada `cobranzasQueryRaw()` para DDL
-- `app/api/internal/admin/migrate/route.ts` — usa `pool.query`
-
-### API Routes
-- `app/api/cobranzas/plantillas/route.ts` — sort por cadencia + categoria
-- `app/api/cobranzas/plantillas/[id]/route.ts` — acepta categoria
-- `app/api/cobranzas/generar-cola/route.ts` — enfoque A
-- `app/api/webhooks/whatsapp/route.ts` — fix LID
+- `db/migrations/013_cobranza_tareas.sql` — tabla cobranza_tareas
+- `lib/cobranzas/auto-tareas.ts` — helper idempotente para auto-tareas
+- `app/api/cobranzas/tareas/route.ts` — GET (filtros), POST
+- `app/api/cobranzas/tareas/[id]/route.ts` — GET/PUT/DELETE
+- `app/api/portal/[token]/solicitar-acuerdo/route.ts` — engancha auto-tarea
+- `app/api/cobranzas/procesar-respuesta/route.ts` — engancha auto-tarea
 
 ### Bot
-- `lib/telegram/draft-correo.ts` — enfoque B (render + refinamiento Claude)
+- `lib/telegram/tools.ts` — 3 tools nuevas (crear_tarea, listar_tareas, marcar_tarea_hecha)
+- `lib/telegram/agent.ts` — tabla precomputada de 14 días en system prompt
 
 ### UI
-- `app/(dashboard)/plantillas/page.tsx` — tabs por categoría, campo categoría en form
+- `app/(dashboard)/tareas/page.tsx` — calendario, lista, drawer
+- `components/layout/Sidebar.tsx` — item "Tareas"
+
+### Empuje matutino
+- `lib/queue/jobs/empuje-matutino.ts` — secciones "Tus tareas hoy" y "Atrasadas"
 
 ---
 
@@ -275,14 +233,12 @@ EVOLUTION_NUMERO_VINCULADO=18098536995
 
 ## 🚀 Para retomar — prompt sugerido
 
-> Lee `HANDOFF_PROXIMA_SESION.md` y `PROGRESS.md`. Estamos en Cobranzas Guipak, post-Fase 10.
+> Lee `HANDOFF_PROXIMA_SESION.md` y `CHECKLIST.md`. Estamos en Cobranzas Guipak, post-Tareas.
 >
-> Lo que cerramos en la sesión 30-abr: 22 plantillas en prod, EvolutionAPI conectado, fix LID del webhook, cron empuje matutino agendado en Dokploy.
+> Lo que cerramos en la sesión 1-may: sistema de Tareas y Calendario completo (migración 013, API CRUD, UI calendario en español, bot crea/lista/marca hecha por NL, auto-tareas desde acuerdos, integradas al empuje matutino).
 >
-> Hoy quiero arrancar **Tareas y Calendario** (sección "Pendientes alta prioridad #1" del handoff) — el sistema de recordatorios y agenda.
->
-> Antes de codear, levanta el entorno local y verifica que todo está OK. Luego repasamos el plan de la migración 013 + UI + bot integration.
+> Hoy quiero arrancar **Validación end-to-end con clientes reales** (sección "Pendientes alta prioridad #1" del handoff) — probar el ciclo completo: cliente real responde WA → cola → supervisor → cliente recibe → si promete pago, se crea acuerdo + auto-tarea de seguimiento.
 
 ---
 
-*Última actualización: 30-abr-2026, sesión Opus 4.7 1M*
+*Última actualización: 1-may-2026, sesión Sonnet 4.7 1M*

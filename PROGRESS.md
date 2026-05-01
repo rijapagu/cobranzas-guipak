@@ -9,10 +9,10 @@
 
 | Campo | Detalle |
 |---|---|
-| **Fase actual** | Fase 10 — Agente Proactivo Telegram (Capa A + B ✅) |
-| **Próxima fase** | Capa C: captura interactiva de datos + Capa D: cadencias |
-| **Última actualización** | 29 Abril 2026 |
-| **Progreso general** | ██████████ 97% |
+| **Fase actual** | Fase 10 — Agente Proactivo Telegram (Capa A + B + Plantillas + Tareas ✅) |
+| **Próxima fase** | Validación end-to-end con clientes reales + Capa C/D |
+| **Última actualización** | 1 Mayo 2026 |
+| **Progreso general** | ██████████ 98% |
 | **Repo GitHub** | https://github.com/rijapagu/cobranzas-guipak (público) |
 | **Producción** | https://cobros.sguipak.com |
 | **VPS** | srv869155 — 31.97.131.17 (Dokploy) |
@@ -33,7 +33,7 @@
 | 7 | Agente IA respuestas entrantes | ✅ Completada | 100% |
 | 8 | Portal cliente + Documentación | ✅ Completada | 100% |
 | 9 | KPIs, alertas y refinamiento | ✅ Completada | 100% |
-| 10 | Agente Proactivo Telegram (Capa A + B + Plantillas) | 🟢 En curso | 65% |
+| 10 | Agente Proactivo Telegram (Capa A + B + Plantillas + Tareas) | 🟢 En curso | 85% |
 
 ---
 
@@ -417,3 +417,30 @@ INTERNAL_CRON_SECRET=...
 ---
 
 *Versión: 4.0 — 11 Abril 2026*
+
+---
+
+## Sesión 1 Mayo 2026 — Tareas y Calendario
+
+### Entregado ✅
+- **Migración 013** `cobranza_tareas`: schema con tipo/estado/prioridad/origen, asignación, auditoría de cierre. Aplicada en prod.
+- **API CRUD `/api/cobranzas/tareas`**: GET con filtros (rango fecha, estado, cliente, asignado, origen), POST, GET/PUT/DELETE por ID. PUT auto-sella `completada_at` cuando estado pasa a HECHA/CANCELADA. DELETE soft.
+- **UI `/tareas`**: vista calendario mensual antd (locale es_ES, dayjs es), panel "Tareas del día", banner "Atrasadas (N)", vista lista alternativa, drawer crear/editar.
+- **Bot Telegram con 3 tools nuevas** (`crear_tarea`, `listar_tareas`, `marcar_tarea_hecha`). Resuelve clientes por nombre parcial automáticamente. Todas las acciones loggean en `cobranza_logs`.
+- **Tabla precomputada de 14 días en system prompt** — eliminó el bug de aritmética de fechas en Claude. Validado: "el lunes" → lun 4 may, "pasado mañana" → dom 3 may, "en 3 días" → lun 4 may, "el viernes que viene" → vie 8 may.
+- **Auto-tareas SEGUIMIENTO** al día siguiente de toda `fecha_prometida` en acuerdos. Helper `lib/cobranzas/auto-tareas.ts` idempotente por `(origen, origen_ref)`. Engachada en portal (`/api/portal/[token]/solicitar-acuerdo`) y procesar-respuesta IA.
+- **Empuje matutino** ahora incluye secciones "📋 Tus tareas hoy (N)" y "⏰ Atrasadas (N)".
+
+### Bugs encontrados y corregidos
+| Commit | Bug | Fix |
+|---|---|---|
+| `be3d652` | Calendario UI mostraba tareas un día antes (cliente UTC-4 perdía día al parsear ISO Z) | Tomar primeros 10 chars del string si ya viene `YYYY-MM-DD` |
+| `d7ba084` | Bot ponía "lunes 5 mayo" cuando 5 mayo era martes | Tabla precomputada de 14 días en system prompt + ConfigProvider con locale es_ES |
+
+### Commits
+- `ed8c7b9` feat(tareas): agregar sistema de tareas y calendario
+- `be3d652` fix(tareas): evitar shift de timezone al renderizar fechas en calendario
+- `d7ba084` fix(tareas): calendario en español + bot resuelve fechas relativas correctamente
+
+### Próximo
+**Validación end-to-end con clientes reales** — probar ciclo: cliente WA → cola → supervisor → cliente recibe → si promete pago, valida que se cree el acuerdo + auto-tarea de seguimiento + que aparezca en empuje matutino del día siguiente.
