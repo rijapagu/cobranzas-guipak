@@ -79,11 +79,17 @@ Esto nunca cambia. No importa qué funcionalidad se esté desarrollando.
 ## Dos bases de datos — nunca confundirlas
 
 ### DB 1 — Softec (SOLO LECTURA — NUNCA ESCRIBIR)
-- Host: a confirmar con ingeniero
-- Base: guipak
-- Usuario: usuario de solo lectura
+- Host: `45.32.218.224` (Vultr, MySQL 5.7.25)
+- Base: `guipak`
+- Usuario: `cobranzas_ro@31.97.131.17` — restringido por IP del VPS srv869155
 - **PROHIBIDO cualquier INSERT, UPDATE, DELETE**
-- Tablas relevantes: `ijnl`, `ijnl_pay`, `irjnl`, `icust`, `icontacts`
+- La app **NO accede a tablas crudas**. Solo a vistas `v_cobr_*`:
+  - `v_cobr_ijnl` (proyección segura de `ijnl`)
+  - `v_cobr_icust` (proyección segura de `icust`)
+  - `v_cobr_irjnl` (proyección segura de `irjnl`)
+  - `v_cobr_ijnl_pay` (proyección segura de `ijnl_pay`)
+- Setup del usuario y vistas: `scripts/setup-softec-cobranzas-readonly.sql`
+- Ver CRITICAL_POINTS.md CP-01 para detalle de las 3 capas de defensa.
 
 ### DB 2 — Cobranzas (lectura y escritura)
 - Host: localhost (Docker en mismo VPS)

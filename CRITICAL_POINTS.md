@@ -9,20 +9,39 @@
 
 **Descripción:** La base de datos de Softec (ERP) nunca debe ser modificada desde este sistema.
 
-**Implementación:**
-- El usuario MySQL de Softec tiene permisos SOLO de SELECT
-- La conexión en `lib/db/softec.ts` NO debe tener métodos de escritura
-- Cualquier función que use `softecDb` solo puede llamar `.query()` con SELECT
-- Los datos enriquecidos (teléfonos, emails adicionales) se guardan en `cobranzas_guipak`, NUNCA en Softec
+**Defensa en profundidad — tres capas:**
+
+1. **A nivel motor MySQL (la más fuerte):**
+   - Usuario `cobranzas_ro@31.97.131.17` con `GRANT SELECT` solo sobre vistas `v_cobr_*`.
+   - Restringido por IP — solo conecta desde el VPS srv869155.
+   - No tiene acceso a tablas crudas (`ijnl`, `icust`, etc.).
+   - Setup en: `scripts/setup-softec-cobranzas-readonly.sql`.
+
+2. **A nivel de pool (`lib/db/softec.ts`):**
+   - `multipleStatements: false` — bloquea inyección de queries múltiples.
+   - No expone función de escritura (no hay `softecExecute`, solo `softecQuery`).
+
+3. **A nivel de query (regex):**
+   - Strip de comentarios SQL (`/* */`, `--`, `#`) antes de validar.
+   - Solo se permiten queries que empiezan por `SELECT|WITH|SHOW|EXPLAIN|DESCRIBE`.
+   - Rechaza si aparecen keywords de escritura (`INSERT|UPDATE|DELETE|CALL|LOAD|SET|...`)
+     en cualquier punto del query.
+
+**Implementación en código:**
+- Las queries usan vistas `v_cobr_*`, NO las tablas crudas (`ijnl`, `icust`, `irjnl`, `ijnl_pay`).
+- Los datos enriquecidos (teléfonos, emails adicionales) se guardan en `cobranzas_guipak`, NUNCA en Softec.
 
 **Verificación:**
 ```typescript
 // ✅ CORRECTO
-const result = await softecDb.query('SELECT * FROM ijnl WHERE ...');
+const result = await softecQuery('SELECT * FROM v_cobr_ijnl WHERE ...');
 
-// ❌ PROHIBIDO — nunca debe existir esto
-await softecDb.query('UPDATE icust SET IC_EMAIL = ...');
-await softecDb.query('INSERT INTO ...');
+// ❌ PROHIBIDO — la app no debe tocar tablas crudas
+await softecQuery('SELECT * FROM ijnl WHERE ...');  // falla por ERROR 1142
+
+// ❌ PROHIBIDO — el guard rechaza esto
+await softecQuery('UPDATE v_cobr_icust SET IC_EMAIL = ...');
+await softecQuery('/* comentario */ INSERT INTO ...');
 ```
 
 **Consecuencia si se rompe:** Corrupción del ERP de producción de Guipak.
