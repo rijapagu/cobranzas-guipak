@@ -35,8 +35,8 @@ export async function GET(
           p.IJ_DATE           AS fecha_recibo,
           p.IJ_TOT            AS total_recibo,
           p.IJ_DESCR          AS referencia_pago
-        FROM irjnl r
-        LEFT JOIN ijnl_pay p
+        FROM v_cobr_irjnl r
+        LEFT JOIN v_cobr_ijnl_pay p
           ON  p.IJ_LOCAL  = r.IR_PLOCAL
           AND p.IJ_RECNUM = r.IR_RECNUM
         WHERE

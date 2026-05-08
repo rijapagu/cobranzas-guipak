@@ -258,8 +258,8 @@ async function consultarSaldoCliente(termino: string): Promise<ResultadoTool> {
       DATEDIFF(CURDATE(), f.IJ_DUEDATE) AS dias_vencida,
       f.IJ_TOT AS monto_total,
       (f.IJ_TOT - f.IJ_TOTAPPL) AS saldo
-    FROM ijnl f
-    INNER JOIN icust c ON c.IC_CODE = f.IJ_CCODE AND c.IC_STATUS = 'A'
+    FROM v_cobr_ijnl f
+    INNER JOIN v_cobr_icust c ON c.IC_CODE = f.IJ_CCODE AND c.IC_STATUS = 'A'
     WHERE ${filtro}
       AND f.IJ_TYPEDOC = 'IN' AND f.IJ_INVTORF = 'T' AND f.IJ_PAID = 'F'
       AND (f.IJ_TOT - f.IJ_TOTAPPL) > 0
@@ -312,7 +312,7 @@ async function estadoCobrosHoy(): Promise<ResultadoTool> {
         END AS segmento,
         COUNT(*) AS num,
         SUM(f.IJ_TOT - f.IJ_TOTAPPL) AS saldo
-      FROM ijnl f
+      FROM v_cobr_ijnl f
       WHERE f.IJ_TYPEDOC='IN' AND f.IJ_INVTORF='T' AND f.IJ_PAID='F' AND (f.IJ_TOT - f.IJ_TOTAPPL) > 0
       GROUP BY segmento
     `);
@@ -322,7 +322,7 @@ async function estadoCobrosHoy(): Promise<ResultadoTool> {
       cartera_total += Number(s.saldo);
     }
     const tc = await softecQuery<{ total: number }>(
-      `SELECT COUNT(DISTINCT IJ_CCODE) AS total FROM ijnl WHERE IJ_TYPEDOC='IN' AND IJ_INVTORF='T' AND IJ_PAID='F' AND (IJ_TOT - IJ_TOTAPPL) > 0`
+      `SELECT COUNT(DISTINCT IJ_CCODE) AS total FROM v_cobr_ijnl WHERE IJ_TYPEDOC='IN' AND IJ_INVTORF='T' AND IJ_PAID='F' AND (IJ_TOT - IJ_TOTAPPL) > 0`
     );
     total_clientes = Number(tc[0]?.total) || 0;
   }
@@ -469,8 +469,8 @@ async function buscarCliente(termino: string): Promise<ResultadoTool> {
        c.IC_NAME AS nombre,
        COALESCE(SUM(f.IJ_TOT - f.IJ_TOTAPPL), 0) AS saldo,
        COUNT(f.IJ_INUM) AS facturas
-     FROM icust c
-     LEFT JOIN ijnl f ON f.IJ_CCODE = c.IC_CODE
+     FROM v_cobr_icust c
+     LEFT JOIN v_cobr_ijnl f ON f.IJ_CCODE = c.IC_CODE
        AND f.IJ_TYPEDOC='IN' AND f.IJ_INVTORF='T' AND f.IJ_PAID='F' AND (f.IJ_TOT - f.IJ_TOTAPPL) > 0
      WHERE c.IC_STATUS='A' AND (c.IC_NAME LIKE ? OR c.IC_CODE = ?)
      GROUP BY c.IC_CODE, c.IC_NAME

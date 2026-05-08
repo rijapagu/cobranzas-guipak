@@ -1,6 +1,6 @@
 /**
  * Lógica de matching de conciliación bancaria.
- * Compara líneas del extracto contra Softec (irjnl).
+ * Compara líneas del extracto contra Softec (v_cobr_irjnl).
  * CP-05: Cuentas desconocidas siempre requieren asignación manual.
  */
 
@@ -65,7 +65,7 @@ async function matchContraSoftecReal(
   // Match: monto exacto + fecha ±3 días
   const pagos = await softecQuery<SoftecPago>(
     `SELECT IR_RECNUM, IR_CCODE, IR_PDATE, IR_AMTPAID
-     FROM irjnl
+     FROM v_cobr_irjnl
      WHERE IR_CCODE = ?
        AND IR_AMTPAID = ?
        AND ABS(DATEDIFF(?, IR_PDATE)) <= 3

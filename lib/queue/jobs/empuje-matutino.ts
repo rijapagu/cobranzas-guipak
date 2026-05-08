@@ -40,7 +40,7 @@ async function obtenerResumenCartera(): Promise<ResumenCartera | null> {
         COUNT(*) AS num_facturas,
         COUNT(DISTINCT f.IJ_CCODE) AS num_clientes,
         SUM(f.IJ_TOT - f.IJ_TOTAPPL) AS saldo_total
-      FROM ijnl f
+      FROM v_cobr_ijnl f
       WHERE f.IJ_TYPEDOC = 'IN' AND f.IJ_INVTORF = 'T' AND f.IJ_PAID = 'F'
         AND (f.IJ_TOT - f.IJ_TOTAPPL) > 0
       GROUP BY segmento
@@ -66,7 +66,7 @@ async function obtenerResumenCartera(): Promise<ResumenCartera | null> {
 
     const totalClientes = await softecQuery<{ total: number }>(`
       SELECT COUNT(DISTINCT f.IJ_CCODE) AS total
-      FROM ijnl f
+      FROM v_cobr_ijnl f
       WHERE f.IJ_TYPEDOC = 'IN' AND f.IJ_INVTORF = 'T' AND f.IJ_PAID = 'F'
         AND (f.IJ_TOT - f.IJ_TOTAPPL) > 0
     `);

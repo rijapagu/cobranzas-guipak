@@ -121,11 +121,11 @@ async function queryCarteraReal(): Promise<FacturaVencida[]> {
         WHEN DATEDIFF(CURDATE(), f.IJ_DUEDATE) > 30              THEN 'ROJO'
         ELSE 'VERDE'
       END                                                 AS segmento_riesgo
-    FROM ijnl f
-    INNER JOIN icust c
+    FROM v_cobr_ijnl f
+    INNER JOIN v_cobr_icust c
       ON  c.IC_CODE   = f.IJ_CCODE
       AND c.IC_STATUS = 'A'
-    LEFT JOIN irjnl r
+    LEFT JOIN v_cobr_irjnl r
       ON  r.IR_FLOCAL  = f.IJ_LOCAL
       AND r.IR_FTYPDOC = f.IJ_TYPEDOC
       AND r.IR_FINUM   = f.IJ_INUM

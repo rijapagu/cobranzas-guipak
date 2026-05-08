@@ -45,8 +45,8 @@ export async function GET(request: NextRequest) {
           c.IC_EMAIL AS 'Email',
           c.IC_PHONE AS 'Teléfono',
           c.IC_ARCONTC AS 'Contacto Cobros'
-        FROM ijnl f
-        INNER JOIN icust c ON c.IC_CODE = f.IJ_CCODE AND c.IC_STATUS = 'A'
+        FROM v_cobr_ijnl f
+        INNER JOIN v_cobr_icust c ON c.IC_CODE = f.IJ_CCODE AND c.IC_STATUS = 'A'
         WHERE f.IJ_TYPEDOC = 'IN' AND f.IJ_INVTORF = 'T' AND f.IJ_PAID = 'F'
           AND (f.IJ_TOT - f.IJ_TOTAPPL) > 0
           AND f.IJ_DUEDATE < CURDATE()

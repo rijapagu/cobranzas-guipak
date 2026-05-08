@@ -57,7 +57,7 @@ export async function enviarGestion(gestionId: number): Promise<ResultadoEnvio> 
   );
   if (horasCache > 4) {
     const saldo = await softecQuery<{ saldo: number }>(
-      "SELECT (IJ_TOT - IJ_TOTAPPL) AS saldo FROM ijnl WHERE IJ_INUM = ? AND IJ_TYPEDOC='IN' AND IJ_INVTORF='T' LIMIT 1",
+      "SELECT (IJ_TOT - IJ_TOTAPPL) AS saldo FROM v_cobr_ijnl WHERE IJ_INUM = ? AND IJ_TYPEDOC='IN' AND IJ_INVTORF='T' LIMIT 1",
       [gestion.ij_inum]
     );
     const saldoActual = Number(saldo[0]?.saldo) || 0;
@@ -73,7 +73,7 @@ export async function enviarGestion(gestionId: number): Promise<ResultadoEnvio> 
   // Buscar email del cliente
   const codigo = String(gestion.codigo_cliente).trim();
   const clienteSoftec = await softecQuery<{ email: string | null; nombre: string }>(
-    "SELECT IC_EMAIL AS email, IC_NAME AS nombre FROM icust WHERE IC_CODE = ? LIMIT 1",
+    "SELECT IC_EMAIL AS email, IC_NAME AS nombre FROM v_cobr_icust WHERE IC_CODE = ? LIMIT 1",
     [codigo]
   );
 

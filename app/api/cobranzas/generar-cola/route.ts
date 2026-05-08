@@ -209,8 +209,8 @@ async function queryCarteraSoftec(): Promise<FacturaVencida[]> {
         WHEN DATEDIFF(CURDATE(), f.IJ_DUEDATE) > 30 THEN 'ROJO'
         ELSE 'VERDE'
       END AS segmento_riesgo
-    FROM ijnl f
-    INNER JOIN icust c ON c.IC_CODE = f.IJ_CCODE AND c.IC_STATUS = 'A'
+    FROM v_cobr_ijnl f
+    INNER JOIN v_cobr_icust c ON c.IC_CODE = f.IJ_CCODE AND c.IC_STATUS = 'A'
     WHERE f.IJ_TYPEDOC = 'IN' AND f.IJ_INVTORF = 'T' AND f.IJ_PAID = 'F'
       AND f.IJ_DUEDATE < CURDATE() AND (f.IJ_TOT - f.IJ_TOTAPPL) > 0
     ORDER BY DATEDIFF(CURDATE(), f.IJ_DUEDATE) DESC

@@ -76,7 +76,7 @@ async function probarSoftec(): Promise<{ ok: boolean; mensaje: string; detalle?:
     const [rows] = await pool.execute(`
       SELECT COUNT(*) as facturas, COUNT(DISTINCT IJ_CCODE) as clientes,
              ROUND(SUM(IJ_TOT - IJ_TOTAPPL), 2) as cartera
-      FROM ijnl
+      FROM v_cobr_ijnl
       WHERE IJ_TYPEDOC = 'IN' AND IJ_INVTORF = 'T' AND IJ_PAID = 'F'
         AND (IJ_TOT - IJ_TOTAPPL) > 0 AND IJ_DUEDATE < CURDATE()
     `);

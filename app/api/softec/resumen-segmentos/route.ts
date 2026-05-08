@@ -24,7 +24,7 @@ export async function GET() {
           COUNT(*)                        AS num_facturas,
           COUNT(DISTINCT f.IJ_CCODE)      AS num_clientes,
           SUM(f.IJ_TOT - f.IJ_TOTAPPL)   AS saldo_total
-        FROM ijnl f
+        FROM v_cobr_ijnl f
         WHERE
           f.IJ_TYPEDOC  = 'IN'
           AND f.IJ_INVTORF = 'T'

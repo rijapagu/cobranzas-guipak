@@ -71,8 +71,8 @@ export async function GET(request: NextRequest) {
           c.IC_SLSCODE AS vendedor,
           COUNT(f.IJ_INUM) AS total_facturas_pendientes,
           SUM(f.IJ_TOT - f.IJ_TOTAPPL) AS saldo_total
-        FROM icust c
-        INNER JOIN ijnl f ON f.IJ_CCODE = c.IC_CODE
+        FROM v_cobr_icust c
+        INNER JOIN v_cobr_ijnl f ON f.IJ_CCODE = c.IC_CODE
         WHERE c.IC_STATUS = 'A'
           AND f.IJ_TYPEDOC = 'IN'
           AND f.IJ_INVTORF = 'T'

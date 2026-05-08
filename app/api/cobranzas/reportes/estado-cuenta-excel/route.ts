@@ -38,8 +38,8 @@ export async function GET(request: NextRequest) {
           f.IJ_TOTAPPL AS 'Pagado',
           (f.IJ_TOT - f.IJ_TOTAPPL) AS 'Saldo',
           f.IJ_CURRENC AS 'Moneda'
-        FROM ijnl f
-        INNER JOIN icust c ON c.IC_CODE = f.IJ_CCODE
+        FROM v_cobr_ijnl f
+        INNER JOIN v_cobr_icust c ON c.IC_CODE = f.IJ_CCODE
         WHERE f.IJ_CCODE = ?
           AND f.IJ_TYPEDOC = 'IN' AND f.IJ_INVTORF = 'T' AND f.IJ_PAID = 'F'
           AND (f.IJ_TOT - f.IJ_TOTAPPL) > 0

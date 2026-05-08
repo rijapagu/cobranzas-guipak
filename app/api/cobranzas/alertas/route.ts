@@ -111,8 +111,8 @@ export async function GET() {
           COUNT(*) AS facturas,
           SUM(f.IJ_TOT - f.IJ_TOTAPPL) AS saldo,
           MAX(DATEDIFF(CURDATE(), f.IJ_DUEDATE)) AS max_dias
-        FROM ijnl f
-        INNER JOIN icust c ON c.IC_CODE = f.IJ_CCODE AND c.IC_STATUS = 'A'
+        FROM v_cobr_ijnl f
+        INNER JOIN v_cobr_icust c ON c.IC_CODE = f.IJ_CCODE AND c.IC_STATUS = 'A'
         WHERE f.IJ_TYPEDOC = 'IN' AND f.IJ_INVTORF = 'T' AND f.IJ_PAID = 'F'
           AND (f.IJ_TOT - f.IJ_TOTAPPL) > 0
           AND DATEDIFF(CURDATE(), f.IJ_DUEDATE) > 30

@@ -90,7 +90,7 @@ export async function POST(
       const softecOk = await testSoftecConnection();
       if (softecOk) {
         const saldoRows = await softecQuery<{ saldo: number }>(
-          `SELECT (IJ_TOT - IJ_TOTAPPL) as saldo FROM ijnl
+          `SELECT (IJ_TOT - IJ_TOTAPPL) as saldo FROM v_cobr_ijnl
            WHERE IJ_INUM = ? AND IJ_TYPEDOC = 'IN' AND IJ_INVTORF = 'T'
            LIMIT 1`,
           [g.ij_inum]
@@ -231,7 +231,7 @@ async function obtenerContactoCliente(codigoCliente: string): Promise<ClienteCon
   const softecOk = await testSoftecConnection();
   if (softecOk) {
     const clientes = await softecQuery<{ IC_PHONE: string; IC_EMAIL: string }>(
-      'SELECT IC_PHONE, IC_EMAIL FROM icust WHERE IC_CODE = ? LIMIT 1',
+      'SELECT IC_PHONE, IC_EMAIL FROM v_cobr_icust WHERE IC_CODE = ? LIMIT 1',
       [codigoCliente]
     );
     if (clientes.length > 0) {

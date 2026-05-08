@@ -86,8 +86,8 @@ export async function proponerCorreoCliente(
        c.IC_ARCONTC          AS contacto_cobros,
        c.IC_EMAIL            AS email,
        c.IC_PHONE            AS telefono
-     FROM ijnl f
-     INNER JOIN icust c ON c.IC_CODE = f.IJ_CCODE AND c.IC_STATUS='A'
+     FROM v_cobr_ijnl f
+     INNER JOIN v_cobr_icust c ON c.IC_CODE = f.IJ_CCODE AND c.IC_STATUS='A'
      WHERE ${filtro}
        AND f.IJ_TYPEDOC='IN' AND f.IJ_INVTORF='T' AND f.IJ_PAID='F'
        AND (f.IJ_TOT - f.IJ_TOTAPPL) > 0

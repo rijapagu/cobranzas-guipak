@@ -89,7 +89,7 @@ export async function GET() {
           COUNT(*) AS num_facturas,
           COUNT(DISTINCT f.IJ_CCODE) AS num_clientes,
           SUM(f.IJ_TOT - f.IJ_TOTAPPL) AS saldo_total
-        FROM ijnl f
+        FROM v_cobr_ijnl f
         WHERE f.IJ_TYPEDOC = 'IN' AND f.IJ_INVTORF = 'T' AND f.IJ_PAID = 'F'
           AND (f.IJ_TOT - f.IJ_TOTAPPL) > 0
         GROUP BY segmento
@@ -118,8 +118,8 @@ export async function GET() {
           c.IC_NAME AS nombre,
           SUM(f.IJ_TOT - f.IJ_TOTAPPL) AS saldo,
           COUNT(*) AS facturas
-        FROM ijnl f
-        INNER JOIN icust c ON c.IC_CODE = f.IJ_CCODE AND c.IC_STATUS = 'A'
+        FROM v_cobr_ijnl f
+        INNER JOIN v_cobr_icust c ON c.IC_CODE = f.IJ_CCODE AND c.IC_STATUS = 'A'
         WHERE f.IJ_TYPEDOC = 'IN' AND f.IJ_INVTORF = 'T' AND f.IJ_PAID = 'F'
           AND (f.IJ_TOT - f.IJ_TOTAPPL) > 0
           AND f.IJ_DUEDATE < CURDATE()
@@ -137,8 +137,8 @@ export async function GET() {
       // DSO = (CxC / Ventas últimos 90 días) × 90
       const dsoData = await softecQuery<{ cxc: number; ventas_90: number }>(`
         SELECT
-          (SELECT SUM(IJ_TOT - IJ_TOTAPPL) FROM ijnl WHERE IJ_TYPEDOC='IN' AND IJ_INVTORF='T' AND IJ_PAID='F' AND (IJ_TOT - IJ_TOTAPPL) > 0) AS cxc,
-          (SELECT SUM(IJ_TOT) FROM ijnl WHERE IJ_TYPEDOC='IN' AND IJ_INVTORF='T' AND IJ_DATE >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)) AS ventas_90
+          (SELECT SUM(IJ_TOT - IJ_TOTAPPL) FROM v_cobr_ijnl WHERE IJ_TYPEDOC='IN' AND IJ_INVTORF='T' AND IJ_PAID='F' AND (IJ_TOT - IJ_TOTAPPL) > 0) AS cxc,
+          (SELECT SUM(IJ_TOT) FROM v_cobr_ijnl WHERE IJ_TYPEDOC='IN' AND IJ_INVTORF='T' AND IJ_DATE >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)) AS ventas_90
       `);
       if (dsoData[0] && Number(dsoData[0].ventas_90) > 0) {
         kpis.dso = Math.round((Number(dsoData[0].cxc) / Number(dsoData[0].ventas_90)) * 90);
@@ -147,8 +147,8 @@ export async function GET() {
       // Clientes sin contacto
       const sinContacto = await softecQuery<{ total: number }>(`
         SELECT COUNT(DISTINCT c.IC_CODE) AS total
-        FROM icust c
-        INNER JOIN ijnl f ON f.IJ_CCODE = c.IC_CODE
+        FROM v_cobr_icust c
+        INNER JOIN v_cobr_ijnl f ON f.IJ_CCODE = c.IC_CODE
         WHERE c.IC_STATUS = 'A' AND f.IJ_TYPEDOC = 'IN' AND f.IJ_INVTORF = 'T' AND f.IJ_PAID = 'F'
           AND (f.IJ_TOT - f.IJ_TOTAPPL) > 0
           AND (c.IC_EMAIL IS NULL OR TRIM(c.IC_EMAIL) = '')
