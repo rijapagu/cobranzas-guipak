@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { Layout } from "antd";
 import Sidebar from "@/components/layout/Sidebar";
 import Header from "@/components/layout/Header";
+import AsistenteChat from "@/components/asistente/AsistenteChat";
 
 const { Content } = Layout;
 
@@ -48,6 +49,7 @@ export default function DashboardLayout({
           {children}
         </Content>
       </Layout>
+      <AsistenteChat />
     </Layout>
   );
 }
