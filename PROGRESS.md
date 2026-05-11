@@ -11,7 +11,7 @@
 |---|---|
 | **Fase actual** | Fase 10 — Agente Proactivo Telegram ✅ COMPLETADA (Capas A+B+C+D) |
 | **Próxima fase** | Validación end-to-end con clientes reales · Worker en Dokploy |
-| **Última actualización** | 11 Mayo 2026 |
+| **Última actualización** | 11 Mayo 2026 (sesión 2) |
 | **Progreso general** | ██████████ 100% |
 | **Repo GitHub** | https://github.com/rijapagu/cobranzas-guipak (público) |
 | **Producción** | https://cobros.sguipak.com |
@@ -557,3 +557,69 @@ validar las 4 pantallas, confirmar que la cola excluye a los 58 clientes
 cubiertos, confirmar que el empuje matutino muestra neto, y verificar el
 portal con un cliente cubierto. Detalle completo en
 `PENDIENTE_USUARIO.md`.
+
+---
+
+## Sesión 11-Mayo-2026 (sesión 2) — Mejoras UX + Prompt editable + Envío manual facturas
+
+### Completado
+
+#### Memoria Capa 1 + WhatsApp + PDF (de sesión anterior, desplegado)
+- Tabla `cobranza_memoria_cliente` — memoria estructurada por cliente
+- Bot tools: `consultar_memoria_cliente`, `guardar_memoria_cliente`
+- `proponer_whatsapp_cliente` — propuestas WhatsApp con misma cola de aprobación
+- `downloadPdfBuffer()` — descarga PDF de Google Drive
+- Adjunto PDF automático en emails de cobranza (best-effort)
+- Link PDF en mensajes WhatsApp
+- Inyección de memoria en refinamiento de mensajes
+
+#### Widget Asistente en Dashboard
+- Componente `AsistenteChat.tsx` — chat flotante bottom-right
+- Misma IA que el bot de Telegram (reusa `procesarMensajeBot`)
+- Cards de gestiones pendientes con botones Aprobar/Descartar inline
+- Auto-carga pendientes al abrir, badge con contador
+- Acciones rápidas: Estado, Pendientes, Limpiar
+- API: `POST /api/cobranzas/asistente/chat`
+
+#### Correcciones UI
+- Widget renombrado "Simpre" → **"Asistente"**
+- Icono cambiado `RobotOutlined` → **`MessageOutlined`** (chat)
+- Reportes: búsqueda Estado de Cuenta ahora acepta **nombre o código** (AutoComplete con API)
+
+#### Prompt del agente editable desde Configuración
+- Tabla `cobranza_configuracion` — key-value para settings persistentes
+- API: `GET/PUT /api/cobranzas/configuracion/prompt` (ADMIN only)
+- Sección "Prompt del Agente (IA)" en página Configuración
+- Editor monoespaciado con contador de caracteres
+- Botón "Resetear a predeterminado"
+- `agent.ts` lee prompt desde DB, fallback al hardcoded
+
+#### Envío manual de facturas PDF (Feature C)
+- Botón "Enviar" en tabla de Gestión Documental
+- Modal con selector Email/WhatsApp + destinatario
+- API: `POST /api/cobranzas/documentos/enviar`
+- Email: descarga PDF de Drive y lo adjunta
+- WhatsApp: envía mensaje con link al PDF
+
+#### Migraciones ejecutadas en producción
+- `016_configuracion.sql` — tabla `cobranza_configuracion` ✅
+- `015_memoria_cliente.sql` — tabla `cobranza_memoria_cliente` ✅
+
+### Archivos nuevos/modificados
+- `lib/db/configuracion.ts` — helper getConfig/setConfig
+- `app/api/cobranzas/configuracion/prompt/route.ts` — API prompt
+- `app/api/cobranzas/documentos/enviar/route.ts` — API envío manual
+- `app/api/cobranzas/asistente/chat/route.ts` — API chat web
+- `components/asistente/AsistenteChat.tsx` — widget chat
+- `lib/telegram/draft-whatsapp.ts` — propuestas WhatsApp
+- `lib/telegram/agent.ts` — prompt dinámico desde DB
+- `lib/telegram/tools.ts` — 3 tools nuevos (WhatsApp, memoria)
+- `lib/telegram/enviar-gestion.ts` — envío WhatsApp + PDF adjunto
+- `lib/drive/client.ts` — downloadPdfBuffer()
+- `lib/email/sender.ts` — EmailAttachment support
+- `app/(dashboard)/configuracion/page.tsx` — sección prompt
+- `app/(dashboard)/documentos/page.tsx` — botón enviar
+- `app/(dashboard)/reportes/page.tsx` — AutoComplete nombre
+- `app/(dashboard)/layout.tsx` — AsistenteChat integrado
+- `db/migrations/015_memoria_cliente.sql`
+- `db/migrations/016_configuracion.sql`
