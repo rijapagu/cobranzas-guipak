@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth/session';
 import { cobranzasQuery } from '@/lib/db/cobranzas';
 import { softecQuery, testSoftecConnection } from '@/lib/db/softec';
+import { obtenerSaldoAFavorPorCliente } from '@/lib/cobranzas/saldo-favor';
 
 interface Alerta {
   tipo: 'PROMESA_VENCIDA' | 'FACTURA_SIN_GESTION' | 'PAGO_SIN_REGISTRAR' | 'ESCALADO' | 'CLIENTE_NUEVO_MORA';
@@ -122,13 +123,29 @@ export async function GET() {
         LIMIT 10
       `);
 
+      // CP-15: ajustar por saldo a favor del cliente. Si el cliente está
+      // cubierto por anticipos (favor >= pendiente), no generamos alerta.
+      const codigosSinGestion = sinGestion.map(s => String(s.codigo_cliente).trim());
+      const saldosFavor = codigosSinGestion.length > 0
+        ? await obtenerSaldoAFavorPorCliente(codigosSinGestion)
+        : new Map<string, number>();
+
       sinGestion.forEach(s => {
+        const codigo = String(s.codigo_cliente).trim();
+        const bruto = Number(s.saldo) || 0;
+        const favor = saldosFavor.get(codigo) ?? 0;
+        const neto = Math.max(0, bruto - favor);
+        // Si está cubierto por anticipo, no es alerta.
+        if (favor >= bruto && bruto > 0) return;
+        const detalleSaldo = favor > 0
+          ? `Saldo neto: RD$${neto.toLocaleString()} (bruto RD$${bruto.toLocaleString()} - a favor RD$${favor.toLocaleString()})`
+          : `Saldo total: RD$${bruto.toLocaleString()}`;
         alertas.push({
           tipo: 'FACTURA_SIN_GESTION',
           prioridad: s.max_dias > 60 ? 'alta' : 'media',
           titulo: `${s.nombre_cliente}: ${s.facturas} facturas 30+ días`,
-          detalle: `Saldo total: RD$${s.saldo.toLocaleString()}. Factura más antigua: ${s.max_dias} días vencida.`,
-          codigo_cliente: s.codigo_cliente,
+          detalle: `${detalleSaldo}. Factura más antigua: ${s.max_dias} días vencida.`,
+          codigo_cliente: codigo,
           fecha: new Date().toISOString(),
         });
       });

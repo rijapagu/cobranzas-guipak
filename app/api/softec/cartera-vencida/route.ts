@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { softecQuery, testSoftecConnection } from '@/lib/db/softec';
 import { cobranzasQuery } from '@/lib/db/cobranzas';
+import { ajustarSaldoClientes } from '@/lib/cobranzas/saldo-favor';
 import { getMockCartera } from '@/lib/mock/cartera-mock';
 import type { FacturaVencida, CarteraResponse, SegmentoRiesgo } from '@/lib/types/cartera';
 
@@ -60,11 +61,59 @@ export async function GET(request: NextRequest) {
       facturas = facturas.filter((f) => f.saldo_pendiente <= montoMax);
     }
 
+    // CP-15: ajustar por saldo a favor del cliente (anticipos / recibos sin
+    // aplicar). Solo aplica con datos reales — el mock no tiene la dimensión.
+    let saldosClientes:
+      | Record<string, {
+          saldo_pendiente: number;
+          saldo_a_favor: number;
+          saldo_neto: number;
+          cubierto_por_anticipo: boolean;
+        }>
+      | undefined;
+    let totalAFavor = 0;
+    let totalNeto = 0;
+    if (softecOk && facturas.length > 0) {
+      const pendientePorCliente = new Map<string, number>();
+      for (const f of facturas) {
+        const codigo = String(f.codigo_cliente).trim();
+        pendientePorCliente.set(
+          codigo,
+          (pendientePorCliente.get(codigo) ?? 0) + (Number(f.saldo_pendiente) || 0)
+        );
+      }
+      const ajustes = await ajustarSaldoClientes(
+        Array.from(pendientePorCliente.entries()).map(([codigo_cliente, saldo_pendiente]) => ({
+          codigo_cliente,
+          saldo_pendiente,
+        }))
+      );
+      saldosClientes = {};
+      for (const a of ajustes) {
+        saldosClientes[a.codigo_cliente] = {
+          saldo_pendiente: a.saldo_pendiente,
+          saldo_a_favor: a.saldo_a_favor,
+          saldo_neto: a.saldo_neto,
+          cubierto_por_anticipo: a.cubierto_por_anticipo,
+        };
+        totalAFavor += a.saldo_a_favor;
+        totalNeto += a.saldo_neto;
+      }
+      // Marcar flag en cada factura cuyo cliente esté cubierto.
+      facturas = facturas.map((f) => {
+        const s = saldosClientes![String(f.codigo_cliente).trim()];
+        return s ? { ...f, cubierto_por_anticipo: s.cubierto_por_anticipo } : f;
+      });
+    }
+
     const response: CarteraResponse = {
       facturas,
       total: facturas.length,
       modo: softecOk ? 'live' : 'mock',
       ultima_consulta: new Date().toISOString(),
+      saldos_clientes: saldosClientes,
+      total_a_favor: saldosClientes ? totalAFavor : undefined,
+      total_neto: saldosClientes ? totalNeto : undefined,
     };
 
     return NextResponse.json(response);
@@ -126,9 +175,9 @@ async function queryCarteraReal(): Promise<FacturaVencida[]> {
       ON  c.IC_CODE   = f.IJ_CCODE
       AND c.IC_STATUS = 'A'
     LEFT JOIN v_cobr_irjnl r
-      ON  r.IR_FLOCAL  = f.IJ_LOCAL
-      AND r.IR_FTYPDOC = f.IJ_TYPEDOC
-      AND r.IR_FINUM   = f.IJ_INUM
+      ON  r.IR_LOCAL   = f.IJ_LOCAL
+      AND r.IR_SINORIN = f.IJ_SINORIN
+      AND r.IR_INUM    = f.IJ_INUM
       AND r.IR_CCODE   = f.IJ_CCODE
     WHERE
       f.IJ_TYPEDOC    = 'IN'
