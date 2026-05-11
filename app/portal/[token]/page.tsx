@@ -55,7 +55,15 @@ interface PortalData {
   cliente: { codigo: string; nombre: string };
   facturas: FacturaPortal[];
   acuerdos: AcuerdoPago[];
-  resumen: { total_facturas: number; saldo_total: number };
+  resumen: {
+    total_facturas: number;
+    saldo_total: number;
+    // CP-15: el endpoint ya devuelve estos campos cuando hay datos reales.
+    saldo_a_favor?: number;
+    saldo_neto?: number;
+    cubierto_por_anticipo?: boolean;
+    mensaje?: string | null;
+  };
   modo: "live" | "mock";
 }
 
@@ -244,9 +252,27 @@ export default function PortalClientePage() {
           />
         )}
 
-        {/* Resumen */}
+        {/* CP-15: mensaje claro cuando hay anticipos. Si el saldo a favor
+            cubre todo el pendiente o lo reduce, mostramos un Alert visible
+            para que el cliente no perciba el portal como un cobro injusto. */}
+        {data.resumen.mensaje && (
+          <Alert
+            message={
+              data.resumen.cubierto_por_anticipo
+                ? "Saldo cubierto por anticipo"
+                : "Tienes saldo a favor"
+            }
+            description={data.resumen.mensaje}
+            type={data.resumen.cubierto_por_anticipo ? "success" : "info"}
+            showIcon
+            style={{ marginBottom: 16 }}
+          />
+        )}
+
+        {/* Resumen — CP-15: tres tarjetas (facturas + bruto / a favor / neto)
+            cuando hay anticipo. Sin anticipo, las dos originales. */}
         <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
-          <Col xs={24} sm={12}>
+          <Col xs={24} sm={(data.resumen.saldo_a_favor ?? 0) > 0.01 ? 6 : 12}>
             <Card>
               <Statistic
                 title="Facturas Pendientes"
@@ -256,18 +282,68 @@ export default function PortalClientePage() {
               />
             </Card>
           </Col>
-          <Col xs={24} sm={12}>
+          <Col xs={24} sm={(data.resumen.saldo_a_favor ?? 0) > 0.01 ? 6 : 12}>
             <Card>
               <Statistic
-                title="Saldo Total Pendiente"
+                title="Saldo Total"
                 value={data.resumen.saldo_total}
                 prefix={<DollarOutlined />}
                 precision={2}
-                valueStyle={{ color: "#cf1322" }}
+                valueStyle={{ color: "#cf1322", fontSize: 18 }}
                 formatter={(val) => formatMonto(Number(val))}
               />
+              <Text type="secondary" style={{ fontSize: 11 }}>
+                Suma de tus facturas pendientes
+              </Text>
             </Card>
           </Col>
+          {(data.resumen.saldo_a_favor ?? 0) > 0.01 && (
+            <>
+              <Col xs={24} sm={6}>
+                <Card>
+                  <Statistic
+                    title="Saldo a Favor"
+                    value={data.resumen.saldo_a_favor ?? 0}
+                    prefix={<DollarOutlined />}
+                    precision={2}
+                    valueStyle={{ color: "#1890ff", fontSize: 18 }}
+                    formatter={(val) => formatMonto(Number(val))}
+                  />
+                  <Text type="secondary" style={{ fontSize: 11 }}>
+                    Anticipos sin aplicar
+                  </Text>
+                </Card>
+              </Col>
+              <Col xs={24} sm={6}>
+                <Card
+                  style={{
+                    borderColor: data.resumen.cubierto_por_anticipo
+                      ? "#52c41a"
+                      : undefined,
+                  }}
+                >
+                  <Statistic
+                    title="Saldo a Pagar"
+                    value={data.resumen.saldo_neto ?? data.resumen.saldo_total}
+                    prefix={<DollarOutlined />}
+                    precision={2}
+                    valueStyle={{
+                      color: data.resumen.cubierto_por_anticipo
+                        ? "#52c41a"
+                        : "#cf1322",
+                      fontSize: 18,
+                    }}
+                    formatter={(val) => formatMonto(Number(val))}
+                  />
+                  <Text type="secondary" style={{ fontSize: 11 }}>
+                    {data.resumen.cubierto_por_anticipo
+                      ? "Cubierto por tus anticipos"
+                      : "Después de aplicar el saldo a favor"}
+                  </Text>
+                </Card>
+              </Col>
+            </>
+          )}
         </Row>
 
         {/* Acuerdos de pago activos */}
