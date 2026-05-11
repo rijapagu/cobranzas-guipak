@@ -10,14 +10,21 @@ interface EnvioEmailResult {
   error?: string;
 }
 
+export interface EmailAttachment {
+  filename: string;
+  content: Buffer;
+  contentType: string;
+}
+
 /**
- * Envía un email via SMTP.
+ * Envía un email via SMTP con adjuntos opcionales.
  * Si no hay credenciales SMTP, retorna mock exitoso.
  */
 export async function enviarEmail(
   to: string,
   subject: string,
-  body: string
+  body: string,
+  attachments?: EmailAttachment[]
 ): Promise<EnvioEmailResult> {
   const host = process.env.SMTP_HOST;
   const port = Number(process.env.SMTP_PORT) || 587;
@@ -47,6 +54,11 @@ export async function enviarEmail(
       subject,
       text: body,
       html: body.replace(/\n/g, '<br>'),
+      attachments: attachments?.map((a) => ({
+        filename: a.filename,
+        content: a.content,
+        contentType: a.contentType,
+      })),
     });
 
     return {

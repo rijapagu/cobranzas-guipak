@@ -96,6 +96,30 @@ export function isDriveMock(): boolean {
 }
 
 /**
+ * Descarga el contenido de un PDF de Drive como Buffer.
+ * Retorna null si no hay credenciales, el archivo no existe, o falla la descarga.
+ */
+export async function downloadPdfBuffer(googleDriveId: string): Promise<Buffer | null> {
+  if (isMock) return null;
+
+  try {
+    const token = await getAccessToken();
+    const res = await fetch(
+      `https://www.googleapis.com/drive/v3/files/${googleDriveId}?alt=media`,
+      {
+        headers: { Authorization: `Bearer ${token}` },
+        signal: AbortSignal.timeout(15000),
+      }
+    );
+    if (!res.ok) return null;
+    const arrayBuffer = await res.arrayBuffer();
+    return Buffer.from(arrayBuffer);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Verifica que el archivo existe y es un PDF.
  */
 export async function verifyPdf(googleDriveId: string): Promise<{ exists: boolean; name?: string }> {

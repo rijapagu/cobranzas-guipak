@@ -6,6 +6,7 @@ import {
   ajustarSaldoCliente,
 } from '@/lib/cobranzas/saldo-favor';
 import { proponerCorreoCliente } from './draft-correo';
+import { proponerWhatsAppCliente } from './draft-whatsapp';
 
 /**
  * Definición de herramientas que Claude puede invocar desde el bot de Telegram.
@@ -224,6 +225,72 @@ export const TOOLS: Anthropic.Tool[] = [
       properties: {},
     },
   },
+  {
+    name: 'proponer_whatsapp_cliente',
+    description:
+      'Genera un draft de mensaje WhatsApp de cobranza para un cliente y lo deja en cola PENDIENTE de aprobación. NO envía el mensaje. Si hay factura en Drive, incluye el link. Si devuelve destinatario_telefono=null, el cliente no tiene WhatsApp registrado — pide el número y llama a guardar_dato_cliente con campo="whatsapp".',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        termino: {
+          type: 'string',
+          description: 'Código de cliente (ej. "0000274") o nombre parcial',
+        },
+      },
+      required: ['termino'],
+    },
+  },
+  {
+    name: 'consultar_memoria_cliente',
+    description:
+      'Consulta la memoria estructurada del asistente sobre un cliente: patrón de pago, canal efectivo, contacto real, mejor momento de contacto, notas del equipo. Úsala antes de proponer un correo o WhatsApp para personalizar la gestión.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        codigo_cliente: {
+          type: 'string',
+          description: 'Código del cliente (7 dígitos, ej. "0000274")',
+        },
+      },
+      required: ['codigo_cliente'],
+    },
+  },
+  {
+    name: 'guardar_memoria_cliente',
+    description:
+      'Guarda o actualiza la memoria del asistente sobre un cliente: patrón de pago, canal que ha funcionado mejor, nombre del contacto real, mejor momento para llamar, notas libres. Solo actualiza los campos que se proporcionan.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        codigo_cliente: {
+          type: 'string',
+          description: 'Código del cliente (7 dígitos)',
+        },
+        patron_pago: {
+          type: 'string',
+          description: 'Descripción del patrón de pago observado (ej. "paga a fin de mes", "siempre necesita recordatorio")',
+        },
+        canal_efectivo: {
+          type: 'string',
+          enum: ['EMAIL', 'WHATSAPP', 'LLAMADA', 'OTRO'],
+          description: 'Canal que ha respondido mejor',
+        },
+        contacto_real: {
+          type: 'string',
+          description: 'Nombre real del contacto de cobros (puede diferir del registrado en Softec)',
+        },
+        mejor_momento: {
+          type: 'string',
+          description: 'Cuándo es mejor contactar (ej. "lunes por la mañana", "después de las 3pm")',
+        },
+        notas_daria: {
+          type: 'string',
+          description: 'Notas libres del equipo de cobros sobre este cliente',
+        },
+      },
+      required: ['codigo_cliente'],
+    },
+  },
 ];
 
 interface ResultadoTool {
@@ -290,6 +357,17 @@ export async function ejecutarTool(
 
       case 'estado_cadencias':
         return await estadoCadencias();
+
+      case 'proponer_whatsapp_cliente': {
+        const result = await proponerWhatsAppCliente(String(argumentos.termino));
+        return { ok: result.ok, data: result };
+      }
+
+      case 'consultar_memoria_cliente':
+        return await consultarMemoriaCliente(String(argumentos.codigo_cliente));
+
+      case 'guardar_memoria_cliente':
+        return await guardarMemoriaCliente(argumentos, ctx);
 
       default:
         return { ok: false, error: `Tool desconocida: ${nombre}` };
@@ -997,6 +1075,89 @@ async function estadoCadencias(): Promise<ResultadoTool> {
         : null,
     },
   };
+}
+
+// =====================================================================
+// Capa 1 — Memoria estructurada del cliente
+// =====================================================================
+
+async function consultarMemoriaCliente(codigoCliente: string): Promise<ResultadoTool> {
+  const codigo = codigoCliente.trim().padStart(7, '0');
+  const rows = await cobranzasQuery<{
+    patron_pago: string | null;
+    canal_efectivo: string | null;
+    contacto_real: string | null;
+    mejor_momento: string | null;
+    notas_daria: string | null;
+    ultima_actualizacion: string;
+  }>(
+    'SELECT patron_pago, canal_efectivo, contacto_real, mejor_momento, notas_daria, ultima_actualizacion FROM cobranza_memoria_cliente WHERE codigo_cliente = ?',
+    [codigo]
+  );
+
+  if (rows.length === 0) {
+    return { ok: true, data: { codigo_cliente: codigo, tiene_memoria: false } };
+  }
+
+  return {
+    ok: true,
+    data: {
+      codigo_cliente: codigo,
+      tiene_memoria: true,
+      ...rows[0],
+    },
+  };
+}
+
+async function guardarMemoriaCliente(
+  args: Record<string, unknown>,
+  ctx?: { userId?: string; userEmail?: string }
+): Promise<ResultadoTool> {
+  const codigo = String(args.codigo_cliente || '').trim().padStart(7, '0');
+  if (codigo.replace(/[^0-9]/g, '').length === 0) {
+    return { ok: false, error: 'codigo_cliente inválido' };
+  }
+
+  const campos: Record<string, string | null> = {};
+  if (args.patron_pago !== undefined) campos.patron_pago = args.patron_pago ? String(args.patron_pago) : null;
+  if (args.canal_efectivo !== undefined) campos.canal_efectivo = args.canal_efectivo ? String(args.canal_efectivo) : null;
+  if (args.contacto_real !== undefined) campos.contacto_real = args.contacto_real ? String(args.contacto_real) : null;
+  if (args.mejor_momento !== undefined) campos.mejor_momento = args.mejor_momento ? String(args.mejor_momento) : null;
+  if (args.notas_daria !== undefined) campos.notas_daria = args.notas_daria ? String(args.notas_daria) : null;
+
+  if (Object.keys(campos).length === 0) {
+    return { ok: false, error: 'No se proporcionó ningún campo para actualizar' };
+  }
+
+  const actualizadoPor = ctx?.userEmail || `telegram:${ctx?.userId || 'unknown'}`;
+  campos.actualizado_por = actualizadoPor;
+
+  const existente = await cobranzasQuery<{ id: number }>(
+    'SELECT id FROM cobranza_memoria_cliente WHERE codigo_cliente = ?',
+    [codigo]
+  );
+
+  if (existente.length > 0) {
+    const sets = Object.keys(campos).map((k) => `\`${k}\` = ?`).join(', ');
+    await cobranzasExecute(
+      `UPDATE cobranza_memoria_cliente SET ${sets} WHERE codigo_cliente = ?`,
+      [...Object.values(campos), codigo]
+    );
+  } else {
+    const colsExtra = Object.keys(campos).map((k) => `\`${k}\``).join(', ');
+    const vals = Object.values(campos);
+    await cobranzasExecute(
+      `INSERT INTO cobranza_memoria_cliente (codigo_cliente, ${colsExtra}) VALUES (?, ${vals.map(() => '?').join(', ')})`,
+      [codigo, ...vals]
+    );
+  }
+
+  await logAccion(ctx?.userId || null, 'MEMORIA_CLIENTE_GUARDADA', 'cliente', codigo, {
+    campos: Object.keys(campos).filter((k) => k !== 'actualizado_por'),
+    via: 'telegram',
+  });
+
+  return { ok: true, data: { codigo_cliente: codigo, campos_guardados: Object.keys(campos).filter((k) => k !== 'actualizado_por') } };
 }
 
 async function marcarTareaHecha(
