@@ -15,6 +15,7 @@ import {
   SettingOutlined,
   MailOutlined,
   CalendarOutlined,
+  ThunderboltOutlined,
 } from "@ant-design/icons";
 
 const { Sider } = Layout;
@@ -69,6 +70,11 @@ const menuItems = [
     key: "/plantillas",
     icon: <MailOutlined />,
     label: "Plantillas",
+  },
+  {
+    key: "/cadencias",
+    icon: <ThunderboltOutlined />,
+    label: "Cadencias",
   },
   {
     key: "/tareas",
