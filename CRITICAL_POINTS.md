@@ -275,16 +275,154 @@ if (!auth) {
 
 ---
 
-## Checklist antes de cada PR/commit
+## ⚠️ CP-13 — JOIN factura↔pago por IR_PLOCAL/IR_PTYPDOC/IR_RECNUM (no IR_F*)
 
-- [ ] ¿Algún query sobre `ijnl` omite `IJ_INVTORF = 'T'` o `IJ_TYPEDOC = 'IN'`? → **NO hacer commit**
-- [ ] ¿Algún endpoint envía mensaje sin verificar `estado = 'APROBADO'`? → **NO hacer commit**
-- [ ] ¿Alguna función escribe en Softec? → **NO hacer commit**
-- [ ] ¿Se procesa automáticamente una cuenta bancaria desconocida? → **NO hacer commit**
-- [ ] ¿Se genera mensaje para factura en disputa? → **NO hacer commit**
-- [ ] ¿Se usa datos de Softec con caché de más de 4 horas para enviar? → **NO hacer commit**
-- [ ] ¿La acción queda registrada en `cobranza_logs`? → Si no → **agregar antes del commit**
+**Descripción:** Para cruzar un recibo (`ijnl_pay`) con sus aplicaciones (`irjnl`), usar las columnas que apuntan al **recibo**: `IR_PLOCAL`, `IR_PTYPDOC`, `IR_RECNUM`. No usar las columnas `IR_F*` (que apuntan a la factura) porque en Guipak vienen vacías/inconsistentes a nivel de pago.
+
+**Implementación:**
+```sql
+LEFT JOIN v_cobr_irjnl r
+    ON  r.IR_PLOCAL  = pay.IJ_LOCAL
+    AND r.IR_PTYPDOC = pay.IJ_SINORIN
+    AND r.IR_RECNUM  = pay.IJ_RECNUM
+```
+
+**Donde se aplica:** todo cálculo de "saldo a favor" del cliente y cualquier reporte que necesite saber cuánto de un recibo ya fue aplicado.
+
+**Documentado en:** `lib/cobranzas/saldo-favor.ts` (JSDoc del helper).
+
+**Consecuencia si se rompe:** el saldo a favor se calcula con datos inconsistentes (IR_F* a veces tiene NULL, a veces el número correcto). Resultado: aplicación parcial mal calculada, sobrecobros o subcobros aleatorios.
 
 ---
 
-*Versión: 1.0 — Abril 2026*
+## ⚠️ CP-14 — No usar IJ_ONLPAID ni montos desglosados de recibos
+
+**Descripción:** Para calcular "cuánto se aplicó a una factura" o "cuánto queda sin aplicar de un recibo", usar siempre `IR_AMTPAID` agregado de `v_cobr_irjnl`. **No usar** `IJ_ONLPAID` ni desglosados de `v_cobr_ijnl_pay` que no estén alineados con el JOIN de CP-13.
+
+**Razón:** `IJ_ONLPAID` y otros campos a nivel `ijnl_pay` reportan totales que no siempre cuadran contra la suma real de aplicaciones — son metadata cacheada por Softec que se desincroniza con notas de crédito y aplicaciones reversadas.
+
+**Patrón correcto:**
+```sql
+SELECT pay.IJ_TOT - IFNULL(ap.aplicado, 0) AS sin_aplicar
+FROM v_cobr_ijnl_pay pay
+LEFT JOIN (
+  SELECT IR_PLOCAL, IR_PTYPDOC, IR_RECNUM, SUM(IR_AMTPAID) AS aplicado
+  FROM v_cobr_irjnl
+  GROUP BY IR_PLOCAL, IR_PTYPDOC, IR_RECNUM
+) ap ON  ap.IR_PLOCAL=pay.IJ_LOCAL
+     AND ap.IR_PTYPDOC=pay.IJ_SINORIN
+     AND ap.IR_RECNUM=pay.IJ_RECNUM
+```
+
+**Documentado en:** `lib/cobranzas/saldo-favor.ts` (JSDoc del helper) y validado contra el endpoint `/api/cobranzas/clientes/[codigo]/estado-cuenta` el 8-may-2026.
+
+**Consecuencia si se rompe:** el "saldo a favor" del cliente queda desfasado entre vistas; el helper, dashboard y portal reportan números distintos.
+
+---
+
+## ⛔ CP-15 — Restar saldo a favor del cliente en todo agregado de cartera; excluir cubiertos de cobranza
+
+**Descripción:** Toda cifra de cartera vencida que se presente a un humano (dashboard, portal, reportes, bot, empuje matutino) debe descontar el "saldo a favor" del cliente (recibos sin aplicar a facturas). Si el saldo a favor cubre o supera el pendiente bruto del cliente, ese cliente **no debe recibir cobranza** — la acción correcta es que contabilidad aplique el anticipo.
+
+**Decisión de producto (10-may-2026):** opción B — excluir de la cola de cobranza a los clientes con saldo a favor ≥ pendiente; sus facturas siguen visibles en cartera, marcadas con el badge "Cubierta por anticipo". Esto evita cobrar a clientes que ya pagaron de más.
+
+**Evidencia (validada contra Softec producción 10-may-2026):**
+
+| Métrica | Valor |
+|---|---|
+| Cartera bruta (sumando `IJ_TOT - IJ_TOTAPPL`) | **$31.45M** |
+| Saldo a favor global (sumando recibos sin aplicar) | $8.43M |
+| **Saldo a favor aplicable** (limitado al pendiente de cada cliente) | **$3.94M** |
+| Cartera neta cobrable (bruto − aplicable) | **$27.51M** |
+| Sobrecobro reportado al usuario | **14.6%** |
+| **Clientes con saldo a favor ≥ pendiente** | **58** (esperado 57, tolerancia ±3) |
+
+**Top casos validados:**
+
+| Cliente | Pendiente | Saldo a favor | Estado |
+|---|---|---|---|
+| `CG0029` SENADO | $187,620 | $263,599 | Cubierto |
+| Universidad Católica `0000997` | (parcial) | $1,313,414 | A favor parcial |
+| Tribunal Constitucional | (parcial) | (significativo) | A favor parcial |
+| MICM | (parcial) | (significativo) | A favor parcial |
+| `SR0017` | (parcial) | $277,699 | A favor parcial |
+
+**Fórmula recomendada:**
+
+```typescript
+saldo_neto = max(0, pendiente_bruto - saldo_a_favor);
+cubierto_por_anticipo = saldo_a_favor >= pendiente_bruto && pendiente_bruto > 0;
+```
+
+**Helper canónico:** `lib/cobranzas/saldo-favor.ts`. Tres exports:
+- `obtenerSaldoAFavorPorCliente(codigos?)` — `Map<codigo, monto_a_favor>`. Una sola query con sub-agregado por recibo (filtra recibos con `sin_aplicar > 0.01`).
+- `ajustarSaldoCliente(saldoBruto, saldoFavor)` — calcula `saldo_neto` y `cubierto_por_anticipo`.
+- `ajustarSaldoClientes(pendientesPorCliente)` — atajo combinado para listas.
+
+**Fundamento técnico:** depende de CP-13 (JOIN correcto recibo↔aplicación) y CP-14 (no usar `IJ_ONLPAID` ni desglosados). Si se rompe alguno de esos, CP-15 también se rompe.
+
+**14 superficies corregidas (10-11 may 2026):**
+
+| # | Superficie | Commit |
+|---|---|---|
+| 1 | `/api/softec/cartera-vencida` | `336808c` |
+| 2 | `/api/softec/resumen-segmentos` | `336808c` |
+| 3 | `/api/cobranzas/dashboard` | `336808c` |
+| 4 | `/api/cobranzas/clientes` | `336808c` |
+| 5 | `/api/cobranzas/alertas` | `336808c` |
+| 6 | `/api/cobranzas/reportes/cartera-excel` | `336808c` |
+| 7 | `/api/cobranzas/reportes/estado-cuenta-excel` | `92be701` |
+| 8 | `/api/portal/[token]` | `8602b97` |
+| 9 | `/api/cobranzas/generar-cola` | `291eb6c` |
+| 10 | bot Telegram tool `consultar_saldo_cliente` | `4fe33a3` |
+| 11 | bot Telegram tool `estado_cobros_hoy` | `4fe33a3` |
+| 12 | bot Telegram tool `buscar_cliente` | `4fe33a3` |
+| 13 | bot Telegram tool `proponer_correo_cliente` (bloqueo CP-15) | `4fe33a3` |
+| 14 | job `lib/queue/jobs/empuje-matutino.ts` (mensaje Telegram diario) | `4fe33a3` |
+
+**UI:**
+- Dashboard `/`: tres cards de cartera (bruta / a favor / neta). Commit `ed63e2c`.
+- Cartera `/cartera`: fila opcional con totales globales si hay anticipos; columnas "A favor (cliente)" y "Neto (cliente)" en la tabla; badge "Cubierta por anticipo". Commit `ed63e2c`.
+- Clientes `/clientes`: columna "Saldo Neto" como primaria (sorter default desc), columna "A favor" intermedia, badge "Cubierto por anticipo". Commit `ed63e2c`.
+- Portal cliente: alert success/info con mensaje pre-formateado; resumen de 2 a 4 cards cuando hay anticipo. Commit `d7bcaee`.
+
+**Smoke tests:**
+- `scripts/test-saldo-favor.ts` — 22 asserts del helper contra Softec real.
+- `scripts/test-saldo-favor-telegram.ts` — 10 asserts del flujo telegram + empuje matutino.
+
+**Verificación al escribir código nuevo:**
+```typescript
+// ✅ CORRECTO — usar el helper
+import { ajustarSaldoCliente } from '@/lib/cobranzas/saldo-favor';
+const ajuste = ajustarSaldoCliente(saldoBruto, saldoFavor);
+mostrarAlUsuario(ajuste.saldo_neto);
+
+// ❌ PROHIBIDO en agregados que se presenten al humano
+const total = await softecQuery(`SELECT SUM(IJ_TOT - IJ_TOTAPPL) FROM v_cobr_ijnl ...`);
+mostrarAlUsuario(total);  // ← sobrecobra ~14.6%
+```
+
+**Excepciones permitidas:** el bruto sigue siendo correcto y útil como:
+- Cifra contable estándar (DSO se queda con bruto — métrica de la disciplina contable).
+- Subtítulo discreto en cards/tablas cuando se quiere mostrar también la cifra bruta.
+- Suma de "Saldo factura" a nivel de fila individual (saldo de la factura ≠ saldo del cliente).
+
+**Consecuencia si se rompe:** se vuelven a sobrecobrar facturas a clientes que ya pagaron de más; el dashboard infla la cartera; el bot avisa de "$31M pendientes" cuando lo cobrable real es $27.5M; clientes cubiertos reciben correos de cobranza injustos y se quejan.
+
+---
+
+## Checklist antes de cada PR/commit
+
+- [ ] ¿Algún query sobre `ijnl` omite `IJ_INVTORF = 'T'` o `IJ_TYPEDOC = 'IN'`? → **NO hacer commit** (CP-04)
+- [ ] ¿Algún endpoint envía mensaje sin verificar `estado = 'APROBADO'`? → **NO hacer commit** (CP-02)
+- [ ] ¿Alguna función escribe en Softec? → **NO hacer commit** (CP-01)
+- [ ] ¿Se procesa automáticamente una cuenta bancaria desconocida? → **NO hacer commit** (CP-05)
+- [ ] ¿Se genera mensaje para factura en disputa? → **NO hacer commit** (CP-03)
+- [ ] ¿Se usa datos de Softec con caché de más de 4 horas para enviar? → **NO hacer commit** (CP-06)
+- [ ] ¿La acción queda registrada en `cobranza_logs`? → Si no → **agregar antes del commit** (CP-08)
+- [ ] ¿Algún cálculo de saldo cliente que se muestre al usuario suma `IJ_TOT - IJ_TOTAPPL` sin pasar por `ajustarSaldoCliente()` / `obtenerSaldoAFavorPorCliente()`? → **NO hacer commit** (CP-15)
+- [ ] ¿Algún JOIN de recibo↔aplicación usa `IR_F*` en lugar de `IR_PLOCAL/IR_PTYPDOC/IR_RECNUM`? → **NO hacer commit** (CP-13)
+
+---
+
+*Versión: 1.1 — 11 Mayo 2026*
