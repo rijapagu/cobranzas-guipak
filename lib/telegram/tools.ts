@@ -1,6 +1,10 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { cobranzasQuery, cobranzasExecute, logAccion } from '@/lib/db/cobranzas';
 import { softecQuery, testSoftecConnection } from '@/lib/db/softec';
+import {
+  obtenerSaldoAFavorPorCliente,
+  ajustarSaldoCliente,
+} from '@/lib/cobranzas/saldo-favor';
 import { proponerCorreoCliente } from './draft-correo';
 
 /**
@@ -276,6 +280,11 @@ async function consultarSaldoCliente(termino: string): Promise<ResultadoTool> {
   const cliente = String(facturas[0].cliente).trim();
   const codigo = String(facturas[0].codigo).trim();
 
+  // CP-15: descontar saldo a favor del cliente (recibos sin aplicar).
+  const saldosFavor = await obtenerSaldoAFavorPorCliente([codigo]);
+  const saldoFavor = saldosFavor.get(codigo) ?? 0;
+  const ajuste = ajustarSaldoCliente(totalSaldo, saldoFavor);
+
   return {
     ok: true,
     data: {
@@ -283,6 +292,9 @@ async function consultarSaldoCliente(termino: string): Promise<ResultadoTool> {
       codigo,
       total_facturas: facturas.length,
       saldo_total: totalSaldo,
+      saldo_a_favor: ajuste.saldo_a_favor,
+      saldo_neto: ajuste.saldo_neto,
+      cubierto_por_anticipo: ajuste.cubierto_por_anticipo,
       facturas: facturas.map((f) => ({
         factura: f.factura,
         fecha_vence: new Date(f.fecha_vence).toISOString().split('T')[0],
@@ -297,6 +309,9 @@ async function estadoCobrosHoy(): Promise<ResultadoTool> {
   const softecOk = await testSoftecConnection();
 
   let cartera_total = 0;
+  let cartera_a_favor = 0;
+  let cartera_neta = 0;
+  let clientes_cubiertos = 0;
   let total_facturas = 0;
   let total_clientes = 0;
   const segmentos: Record<string, number> = { VERDE: 0, AMARILLO: 0, NARANJA: 0, ROJO: 0 };
@@ -325,6 +340,32 @@ async function estadoCobrosHoy(): Promise<ResultadoTool> {
       `SELECT COUNT(DISTINCT IJ_CCODE) AS total FROM v_cobr_ijnl WHERE IJ_TYPEDOC='IN' AND IJ_INVTORF='T' AND IJ_PAID='F' AND (IJ_TOT - IJ_TOTAPPL) > 0`
     );
     total_clientes = Number(tc[0]?.total) || 0;
+
+    // CP-15: descontar saldo a favor por cliente para reportar bruto vs neto.
+    const pendientesPorCliente = await softecQuery<{
+      codigo_cliente: string;
+      pendiente: number;
+    }>(`
+      SELECT IJ_CCODE AS codigo_cliente, SUM(IJ_TOT - IJ_TOTAPPL) AS pendiente
+        FROM v_cobr_ijnl
+       WHERE IJ_TYPEDOC='IN' AND IJ_INVTORF='T' AND IJ_PAID='F'
+         AND (IJ_TOT - IJ_TOTAPPL) > 0
+       GROUP BY IJ_CCODE
+    `);
+    const codigos = pendientesPorCliente.map((p) => String(p.codigo_cliente).trim());
+    const saldosFavor = await obtenerSaldoAFavorPorCliente(codigos);
+    let aFavorAplicable = 0;
+    let netoAcumulado = 0;
+    for (const r of pendientesPorCliente) {
+      const codigo = String(r.codigo_cliente).trim();
+      const pendiente = Number(r.pendiente) || 0;
+      const favor = saldosFavor.get(codigo) ?? 0;
+      aFavorAplicable += Math.min(pendiente, favor);
+      netoAcumulado += Math.max(0, pendiente - favor);
+      if (favor >= pendiente && pendiente > 0) clientes_cubiertos += 1;
+    }
+    cartera_a_favor = Math.round(aFavorAplicable * 100) / 100;
+    cartera_neta = Math.round(netoAcumulado * 100) / 100;
   }
 
   const pendientes = await cobranzasQuery<{ total: number }>(
@@ -341,6 +382,9 @@ async function estadoCobrosHoy(): Promise<ResultadoTool> {
     ok: true,
     data: {
       cartera_total,
+      cartera_a_favor,
+      cartera_neta,
+      clientes_cubiertos,
       total_facturas,
       total_clientes,
       por_segmento: segmentos,
@@ -479,16 +523,37 @@ async function buscarCliente(termino: string): Promise<ResultadoTool> {
     [`%${termino}%`, termino.padStart(7, '0')]
   );
 
+  // CP-15: enriquecer con saldo a favor y reordenar por saldo neto. Solo
+  // consulta el helper si hay resultados con saldo > 0; si todos vienen en
+  // cero (clientes sin facturas), no tiene sentido el query.
+  const codigosConPendiente = rows
+    .filter((r) => Number(r.saldo) > 0)
+    .map((r) => String(r.codigo).trim());
+  const saldosFavor = await obtenerSaldoAFavorPorCliente(codigosConPendiente);
+
+  const clientes = rows
+    .map((r) => {
+      const codigo = String(r.codigo).trim();
+      const saldoBruto = Number(r.saldo);
+      const favor = saldosFavor.get(codigo) ?? 0;
+      const ajuste = ajustarSaldoCliente(saldoBruto, favor);
+      return {
+        codigo,
+        nombre: String(r.nombre).trim(),
+        saldo_pendiente: saldoBruto,
+        saldo_a_favor: ajuste.saldo_a_favor,
+        saldo_neto: ajuste.saldo_neto,
+        cubierto_por_anticipo: ajuste.cubierto_por_anticipo,
+        facturas_pendientes: Number(r.facturas),
+      };
+    })
+    .sort((a, b) => b.saldo_neto - a.saldo_neto);
+
   return {
     ok: true,
     data: {
-      total: rows.length,
-      clientes: rows.map((r) => ({
-        codigo: String(r.codigo).trim(),
-        nombre: String(r.nombre).trim(),
-        saldo_pendiente: Number(r.saldo),
-        facturas_pendientes: Number(r.facturas),
-      })),
+      total: clientes.length,
+      clientes,
     },
   };
 }
