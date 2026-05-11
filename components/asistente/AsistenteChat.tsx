@@ -11,7 +11,7 @@ import {
   message as antMessage,
 } from "antd";
 import {
-  RobotOutlined,
+  MessageOutlined,
   SendOutlined,
   CloseOutlined,
   CheckCircleOutlined,
@@ -277,7 +277,7 @@ export default function AsistenteChat() {
         {
           type: "bot",
           id: uid(),
-          html: "👋 ¡Hola! Soy <b>Simpre</b>, tu asistente de cobranzas.<br/>Cargando gestiones pendientes…",
+          html: "👋 ¡Hola! Soy tu <b>Asistente</b> de cobranzas.<br/>Cargando gestiones pendientes…",
         },
       ]);
       cargarPendientes();
@@ -374,11 +374,11 @@ export default function AsistenteChat() {
               type="primary"
               shape="round"
               size="large"
-              icon={<RobotOutlined />}
+              icon={<MessageOutlined />}
               onClick={handleOpen}
               style={styles.floatBtn}
             >
-              Simpre
+              Asistente
             </Button>
           </Badge>
         </Tooltip>
@@ -390,8 +390,8 @@ export default function AsistenteChat() {
           {/* Header */}
           <div style={styles.header}>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <RobotOutlined style={{ fontSize: 18 }} />
-              <span style={{ fontWeight: 700, fontSize: 15 }}>Simpre</span>
+              <MessageOutlined style={{ fontSize: 18 }} />
+              <span style={{ fontWeight: 700, fontSize: 15 }}>Asistente</span>
               {pendingCount > 0 && (
                 <Badge
                   count={pendingCount}
@@ -460,7 +460,7 @@ export default function AsistenteChat() {
               <div style={styles.bubbleBot}>
                 <Spin size="small" />
                 <span style={{ marginLeft: 8, color: "#999", fontSize: 12 }}>
-                  Simpre está pensando…
+                  Asistente está pensando…
                 </span>
               </div>
             )}

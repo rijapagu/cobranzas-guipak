@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef, useCallback } from "react";
 import {
   Typography,
   Card,
@@ -9,7 +9,7 @@ import {
   Button,
   Space,
   DatePicker,
-  Input,
+  AutoComplete,
   message,
   Divider,
 } from "antd";
@@ -35,6 +35,34 @@ export default function ReportesPage() {
   ]);
   const [clienteEstadoCuenta, setClienteEstadoCuenta] = useState("");
   const [clienteVisualizando, setClienteVisualizando] = useState<string | null>(null);
+  const [opcionesClientes, setOpcionesClientes] = useState<{ value: string; label: React.ReactNode }[]>([]);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const buscarClientes = useCallback((texto: string) => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    setClienteEstadoCuenta(texto);
+    if (texto.trim().length < 2) {
+      setOpcionesClientes([]);
+      return;
+    }
+    debounceRef.current = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/cobranzas/clientes?busqueda=${encodeURIComponent(texto.trim())}`);
+        const data = await res.json();
+        const opciones = (data.clientes || []).slice(0, 10).map((c: { codigo_cliente: string; nombre_cliente: string }) => ({
+          value: c.codigo_cliente,
+          label: (
+            <span>
+              <strong>{c.codigo_cliente}</strong> — {c.nombre_cliente}
+            </span>
+          ),
+        }));
+        setOpcionesClientes(opciones);
+      } catch {
+        setOpcionesClientes([]);
+      }
+    }, 300);
+  }, []);
 
   const descargarReporte = async (url: string, nombre: string) => {
     setDownloading(nombre);
@@ -167,11 +195,14 @@ export default function ReportesPage() {
               de cuenta en Softec.
             </Paragraph>
             <Space direction="vertical" style={{ width: "100%" }}>
-              <Input
-                placeholder="Código del cliente (ej: CG0006)"
+              <AutoComplete
+                placeholder="Código o nombre del cliente"
                 value={clienteEstadoCuenta}
-                onChange={(e) => setClienteEstadoCuenta(e.target.value)}
-                onPressEnter={verEstadoCuenta}
+                options={opcionesClientes}
+                onSearch={buscarClientes}
+                onSelect={(val: string) => setClienteEstadoCuenta(val)}
+                onChange={(val: string) => setClienteEstadoCuenta(val)}
+                style={{ width: "100%" }}
                 allowClear
               />
               <Space style={{ width: "100%" }}>
