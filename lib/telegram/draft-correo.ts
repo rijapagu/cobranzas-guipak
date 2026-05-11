@@ -208,6 +208,19 @@ export async function proponerCorreoCliente(
   const diasVencido = Number(f.dias_vencido);
   const segmento = calcularSegmento(diasVencido);
 
+  // Capa 1: cargar memoria del cliente para personalización
+  const memoriaRows = await cobranzasQuery<{
+    patron_pago: string | null;
+    canal_efectivo: string | null;
+    contacto_real: string | null;
+    mejor_momento: string | null;
+    notas_daria: string | null;
+  }>(
+    'SELECT patron_pago, canal_efectivo, contacto_real, mejor_momento, notas_daria FROM cobranza_memoria_cliente WHERE codigo_cliente = ?',
+    [codigoCliente]
+  );
+  const memoria = memoriaRows[0] || null;
+
   let asunto = '';
   let mensajeEmail = '';
 
@@ -218,7 +231,7 @@ export async function proponerCorreoCliente(
     });
 
     if (plantilla) {
-      const contacto = f.contacto_cobros ? String(f.contacto_cobros).trim() : '';
+      const contacto = (memoria?.contacto_real || f.contacto_cobros) ? String(memoria?.contacto_real || f.contacto_cobros).trim() : '';
       const rendered = renderPlantilla(
         { asunto: plantilla.asunto, cuerpo: plantilla.cuerpo },
         {
@@ -236,7 +249,7 @@ export async function proponerCorreoCliente(
       mensajeEmail = rendered.cuerpo;
 
       // Refinamiento opcional con Claude (solo si hay API key — best-effort)
-      const refinado = await refinarConClaude(asunto, mensajeEmail, segmento);
+      const refinado = await refinarConClaude(asunto, mensajeEmail, segmento, memoria);
       if (refinado) {
         asunto = refinado.asunto;
         mensajeEmail = refinado.cuerpo;
@@ -245,7 +258,7 @@ export async function proponerCorreoCliente(
       // Fallback: Claude genera todo
       const generado = await generarMensajeCobranza({
         nombre_cliente: nombreCliente,
-        contacto_cobros: f.contacto_cobros ? String(f.contacto_cobros).trim() : '',
+        contacto_cobros: memoria?.contacto_real || (f.contacto_cobros ? String(f.contacto_cobros).trim() : ''),
         codigo_cliente: codigoCliente,
         numero_factura: f.ij_inum,
         ncf_fiscal: f.ncf_fiscal ? String(f.ncf_fiscal).trim() : '',
@@ -312,16 +325,25 @@ export async function proponerCorreoCliente(
   };
 }
 
+interface MemoriaCliente {
+  patron_pago: string | null;
+  canal_efectivo: string | null;
+  contacto_real: string | null;
+  mejor_momento: string | null;
+  notas_daria: string | null;
+}
+
 /**
  * Toma una plantilla ya renderizada y le pide a Claude que ajuste el tono
- * para sonar más natural manteniendo el contenido factual idéntico.
+ * para sonar más natural, opcionalmente usando la memoria del cliente.
  * Devuelve null si no hay API key o si Claude falla — el caller usa la
  * plantilla cruda como fallback.
  */
 async function refinarConClaude(
   asunto: string,
   cuerpo: string,
-  segmento: SegmentoRiesgo
+  segmento: SegmentoRiesgo,
+  memoria?: MemoriaCliente | null
 ): Promise<{ asunto: string; cuerpo: string } | null> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) return null;
@@ -332,11 +354,20 @@ async function refinarConClaude(
     : segmento === 'NARANJA' ? 'formal y directo'
     : 'firme y serio sin amenazas';
 
+  const contextoMemoria = memoria
+    ? `\nCONTEXTO DEL CLIENTE (úsalo para personalizar, sin inventar datos):
+${memoria.patron_pago ? `- Patrón de pago: ${memoria.patron_pago}` : ''}
+${memoria.canal_efectivo ? `- Canal efectivo: ${memoria.canal_efectivo}` : ''}
+${memoria.mejor_momento ? `- Mejor momento de contacto: ${memoria.mejor_momento}` : ''}
+${memoria.notas_daria ? `- Notas del equipo: ${memoria.notas_daria}` : ''}`.trim()
+    : '';
+
   const prompt = `Eres asistente de cobranzas de Suministros Guipak (República Dominicana).
 
 Recibes una plantilla de correo ya redactada. Tu tarea: ajustar el tono para que suene natural y profesional, manteniendo el contenido factual EXACTAMENTE IGUAL.
 
 Tono objetivo: ${tonoHint}.
+${contextoMemoria}
 
 REGLAS ESTRICTAS:
 - NO inventes hechos nuevos, datos, fechas, montos, números de factura.

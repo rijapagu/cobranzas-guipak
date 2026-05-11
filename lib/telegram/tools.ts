@@ -6,6 +6,7 @@ import {
   ajustarSaldoCliente,
 } from '@/lib/cobranzas/saldo-favor';
 import { proponerCorreoCliente } from './draft-correo';
+import { proponerWhatsAppCliente } from './draft-whatsapp';
 
 /**
  * Definición de herramientas que Claude puede invocar desde el bot de Telegram.
@@ -196,6 +197,100 @@ export const TOOLS: Anthropic.Tool[] = [
       required: ['codigo_cliente', 'campo', 'valor'],
     },
   },
+  {
+    name: 'listar_clientes_sin_datos',
+    description:
+      'Lista los clientes de la cartera vencida que tienen datos de contacto incompletos: sin email y/o sin WhatsApp. Úsalo cuando el usuario quiera saber a quiénes le falta completar datos antes de poder enviarles gestiones de cobranza.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        faltante: {
+          type: 'string',
+          enum: ['email', 'whatsapp', 'cualquiera'],
+          description: 'Filtrar por tipo de dato faltante. Default "cualquiera".',
+        },
+        limite: {
+          type: 'number',
+          description: 'Cantidad máxima a retornar (default 15)',
+        },
+      },
+    },
+  },
+  {
+    name: 'estado_cadencias',
+    description:
+      'Muestra el estado del sistema de cadencias automáticas: cuántas facturas tienen cadencia activa, cuántas se procesaron en el último run, las cadencias configuradas y cuántas facturas estarán listas para accionar hoy.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {},
+    },
+  },
+  {
+    name: 'proponer_whatsapp_cliente',
+    description:
+      'Genera un draft de mensaje WhatsApp de cobranza para un cliente y lo deja en cola PENDIENTE de aprobación. NO envía el mensaje. Si hay factura en Drive, incluye el link. Si devuelve destinatario_telefono=null, el cliente no tiene WhatsApp registrado — pide el número y llama a guardar_dato_cliente con campo="whatsapp".',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        termino: {
+          type: 'string',
+          description: 'Código de cliente (ej. "0000274") o nombre parcial',
+        },
+      },
+      required: ['termino'],
+    },
+  },
+  {
+    name: 'consultar_memoria_cliente',
+    description:
+      'Consulta la memoria estructurada del asistente sobre un cliente: patrón de pago, canal efectivo, contacto real, mejor momento de contacto, notas del equipo. Úsala antes de proponer un correo o WhatsApp para personalizar la gestión.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        codigo_cliente: {
+          type: 'string',
+          description: 'Código del cliente (7 dígitos, ej. "0000274")',
+        },
+      },
+      required: ['codigo_cliente'],
+    },
+  },
+  {
+    name: 'guardar_memoria_cliente',
+    description:
+      'Guarda o actualiza la memoria del asistente sobre un cliente: patrón de pago, canal que ha funcionado mejor, nombre del contacto real, mejor momento para llamar, notas libres. Solo actualiza los campos que se proporcionan.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        codigo_cliente: {
+          type: 'string',
+          description: 'Código del cliente (7 dígitos)',
+        },
+        patron_pago: {
+          type: 'string',
+          description: 'Descripción del patrón de pago observado (ej. "paga a fin de mes", "siempre necesita recordatorio")',
+        },
+        canal_efectivo: {
+          type: 'string',
+          enum: ['EMAIL', 'WHATSAPP', 'LLAMADA', 'OTRO'],
+          description: 'Canal que ha respondido mejor',
+        },
+        contacto_real: {
+          type: 'string',
+          description: 'Nombre real del contacto de cobros (puede diferir del registrado en Softec)',
+        },
+        mejor_momento: {
+          type: 'string',
+          description: 'Cuándo es mejor contactar (ej. "lunes por la mañana", "después de las 3pm")',
+        },
+        notas_daria: {
+          type: 'string',
+          description: 'Notas libres del equipo de cobros sobre este cliente',
+        },
+      },
+      required: ['codigo_cliente'],
+    },
+  },
 ];
 
 interface ResultadoTool {
@@ -253,6 +348,26 @@ export async function ejecutarTool(
           String(argumentos.valor),
           ctx
         );
+
+      case 'listar_clientes_sin_datos':
+        return await listarClientesSinDatos(
+          String(argumentos.faltante || 'cualquiera') as 'email' | 'whatsapp' | 'cualquiera',
+          Number(argumentos.limite) || 15
+        );
+
+      case 'estado_cadencias':
+        return await estadoCadencias();
+
+      case 'proponer_whatsapp_cliente': {
+        const result = await proponerWhatsAppCliente(String(argumentos.termino));
+        return { ok: result.ok, data: result };
+      }
+
+      case 'consultar_memoria_cliente':
+        return await consultarMemoriaCliente(String(argumentos.codigo_cliente));
+
+      case 'guardar_memoria_cliente':
+        return await guardarMemoriaCliente(argumentos, ctx);
 
       default:
         return { ok: false, error: `Tool desconocida: ${nombre}` };
@@ -770,6 +885,279 @@ async function guardarDatoCliente(
   });
 
   return { ok: true, data: { codigo_cliente: codigo, campo, valor: valorTrimmed } };
+}
+
+// =====================================================================
+// Capa C — Clientes sin datos de contacto
+// =====================================================================
+
+async function listarClientesSinDatos(
+  faltante: 'email' | 'whatsapp' | 'cualquiera',
+  limite: number
+): Promise<ResultadoTool> {
+  const softecOk = await testSoftecConnection();
+  if (!softecOk) return { ok: false, error: 'Sin conexión a Softec' };
+
+  // Obtener clientes con facturas vencidas desde Softec
+  const clientesSoftec = await softecQuery<{
+    codigo: string;
+    nombre: string;
+    email_softec: string | null;
+    telefono_softec: string | null;
+    saldo_bruto: number;
+    facturas: number;
+  }>(`
+    SELECT
+      c.IC_CODE  AS codigo,
+      c.IC_NAME  AS nombre,
+      c.IC_EMAIL AS email_softec,
+      c.IC_PHONE AS telefono_softec,
+      SUM(f.IJ_TOT - f.IJ_TOTAPPL) AS saldo_bruto,
+      COUNT(f.IJ_INUM) AS facturas
+    FROM v_cobr_ijnl f
+    INNER JOIN v_cobr_icust c ON c.IC_CODE = f.IJ_CCODE AND c.IC_STATUS = 'A'
+    WHERE f.IJ_TYPEDOC = 'IN' AND f.IJ_INVTORF = 'T' AND f.IJ_PAID = 'F'
+      AND (f.IJ_TOT - f.IJ_TOTAPPL) > 0
+      AND DATEDIFF(CURDATE(), f.IJ_DUEDATE) > 0
+    GROUP BY c.IC_CODE, c.IC_NAME, c.IC_EMAIL, c.IC_PHONE
+    ORDER BY saldo_bruto DESC
+    LIMIT 200
+  `);
+
+  if (clientesSoftec.length === 0) {
+    return { ok: true, data: { total: 0, clientes: [] } };
+  }
+
+  // Datos enriquecidos locales
+  const codigos = clientesSoftec.map((c) => String(c.codigo).trim());
+  const enriqRows = await cobranzasQuery<{
+    codigo_cliente: string;
+    email: string | null;
+    whatsapp: string | null;
+  }>(
+    `SELECT codigo_cliente, email, whatsapp
+     FROM cobranza_clientes_enriquecidos
+     WHERE codigo_cliente IN (${codigos.map(() => '?').join(',')})`,
+    codigos
+  );
+  const enriqMap = new Map(enriqRows.map((r) => [String(r.codigo_cliente).trim(), r]));
+
+  // CP-15: saldos a favor
+  const codigosConPendiente = clientesSoftec
+    .filter((c) => Number(c.saldo_bruto) > 0)
+    .map((c) => String(c.codigo).trim());
+  const saldosFavor = await obtenerSaldoAFavorPorCliente(codigosConPendiente);
+
+  const resultado: {
+    codigo: string;
+    nombre: string;
+    saldo_neto: number;
+    facturas: number;
+    falta_email: boolean;
+    falta_whatsapp: boolean;
+  }[] = [];
+
+  for (const c of clientesSoftec) {
+    const codigo = String(c.codigo).trim();
+    const enriq = enriqMap.get(codigo);
+
+    const tieneEmail = !!(
+      (c.email_softec && c.email_softec.trim()) ||
+      (enriq?.email && enriq.email.trim())
+    );
+    const tieneWhatsapp = !!(
+      (c.telefono_softec && c.telefono_softec.trim()) ||
+      (enriq?.whatsapp && enriq.whatsapp.trim())
+    );
+
+    const faltaEmail = !tieneEmail;
+    const faltaWhatsapp = !tieneWhatsapp;
+
+    const pasaFiltro =
+      faltante === 'cualquiera'
+        ? faltaEmail || faltaWhatsapp
+        : faltante === 'email'
+        ? faltaEmail
+        : faltaWhatsapp;
+
+    if (!pasaFiltro) continue;
+
+    const saldoBruto = Number(c.saldo_bruto) || 0;
+    const favor = saldosFavor.get(codigo) ?? 0;
+    const saldoNeto = Math.max(0, saldoBruto - favor);
+
+    resultado.push({
+      codigo,
+      nombre: String(c.nombre).trim(),
+      saldo_neto: saldoNeto,
+      facturas: Number(c.facturas),
+      falta_email: faltaEmail,
+      falta_whatsapp: faltaWhatsapp,
+    });
+  }
+
+  // Ordenar por saldo neto desc y cortar
+  resultado.sort((a, b) => b.saldo_neto - a.saldo_neto);
+  const paginado = resultado.slice(0, limite);
+
+  return {
+    ok: true,
+    data: {
+      total: resultado.length,
+      mostrados: paginado.length,
+      filtro: faltante,
+      clientes: paginado,
+    },
+  };
+}
+
+// =====================================================================
+// Capa D — Estado del sistema de cadencias
+// =====================================================================
+
+async function estadoCadencias(): Promise<ResultadoTool> {
+  // Configuración activa
+  const cadenciasConfig = await cobranzasQuery<{
+    segmento: string;
+    dia_desde_vencimiento: number;
+    accion: string;
+    requiere_aprobacion: number;
+  }>(
+    'SELECT segmento, dia_desde_vencimiento, accion, requiere_aprobacion FROM cobranza_cadencias WHERE activa=1 ORDER BY dia_desde_vencimiento ASC'
+  );
+
+  // Último run
+  const ultimoRun = await cobranzasQuery<{ detalle: string; created_at: string }>(
+    "SELECT detalle, created_at FROM cobranza_logs WHERE accion='CADENCIAS_HORARIAS' ORDER BY created_at DESC LIMIT 1"
+  );
+
+  // Facturas con estado de cadencia registrado
+  const conEstado = await cobranzasQuery<{ total: number }>(
+    'SELECT COUNT(*) AS total FROM cobranza_factura_cadencia_estado'
+  );
+
+  // Facturas pausadas individualmente
+  const pausadas = await cobranzasQuery<{ total: number }>(
+    'SELECT COUNT(*) AS total FROM cobranza_factura_cadencia_estado WHERE pausada_hasta > NOW()'
+  );
+
+  // Stats del último run (extraído del JSON en detalle)
+  let statsUltimoRun: Record<string, number> | null = null;
+  if (ultimoRun[0]?.detalle) {
+    try {
+      statsUltimoRun = JSON.parse(ultimoRun[0].detalle) as Record<string, number>;
+    } catch { /* ignorar parse errors */ }
+  }
+
+  // Gestiones generadas por cadencias en las últimas 24h
+  const generadasHoy = await cobranzasQuery<{ total: number }>(
+    "SELECT COUNT(*) AS total FROM cobranza_gestiones WHERE creado_por='cadencias' AND created_at >= NOW() - INTERVAL 24 HOUR"
+  );
+
+  return {
+    ok: true,
+    data: {
+      cadencias_activas: cadenciasConfig.length,
+      configuracion: cadenciasConfig.map((c) => ({
+        segmento: c.segmento,
+        dia: c.dia_desde_vencimiento,
+        accion: c.accion,
+        aprobacion: c.requiere_aprobacion ? 'manual' : 'auto',
+      })),
+      facturas_con_estado: Number(conEstado[0]?.total) || 0,
+      facturas_pausadas: Number(pausadas[0]?.total) || 0,
+      gestiones_generadas_24h: Number(generadasHoy[0]?.total) || 0,
+      ultimo_run: ultimoRun[0]
+        ? {
+            fecha: ultimoRun[0].created_at,
+            stats: statsUltimoRun,
+          }
+        : null,
+    },
+  };
+}
+
+// =====================================================================
+// Capa 1 — Memoria estructurada del cliente
+// =====================================================================
+
+async function consultarMemoriaCliente(codigoCliente: string): Promise<ResultadoTool> {
+  const codigo = codigoCliente.trim().padStart(7, '0');
+  const rows = await cobranzasQuery<{
+    patron_pago: string | null;
+    canal_efectivo: string | null;
+    contacto_real: string | null;
+    mejor_momento: string | null;
+    notas_daria: string | null;
+    ultima_actualizacion: string;
+  }>(
+    'SELECT patron_pago, canal_efectivo, contacto_real, mejor_momento, notas_daria, ultima_actualizacion FROM cobranza_memoria_cliente WHERE codigo_cliente = ?',
+    [codigo]
+  );
+
+  if (rows.length === 0) {
+    return { ok: true, data: { codigo_cliente: codigo, tiene_memoria: false } };
+  }
+
+  return {
+    ok: true,
+    data: {
+      codigo_cliente: codigo,
+      tiene_memoria: true,
+      ...rows[0],
+    },
+  };
+}
+
+async function guardarMemoriaCliente(
+  args: Record<string, unknown>,
+  ctx?: { userId?: string; userEmail?: string }
+): Promise<ResultadoTool> {
+  const codigo = String(args.codigo_cliente || '').trim().padStart(7, '0');
+  if (codigo.replace(/[^0-9]/g, '').length === 0) {
+    return { ok: false, error: 'codigo_cliente inválido' };
+  }
+
+  const campos: Record<string, string | null> = {};
+  if (args.patron_pago !== undefined) campos.patron_pago = args.patron_pago ? String(args.patron_pago) : null;
+  if (args.canal_efectivo !== undefined) campos.canal_efectivo = args.canal_efectivo ? String(args.canal_efectivo) : null;
+  if (args.contacto_real !== undefined) campos.contacto_real = args.contacto_real ? String(args.contacto_real) : null;
+  if (args.mejor_momento !== undefined) campos.mejor_momento = args.mejor_momento ? String(args.mejor_momento) : null;
+  if (args.notas_daria !== undefined) campos.notas_daria = args.notas_daria ? String(args.notas_daria) : null;
+
+  if (Object.keys(campos).length === 0) {
+    return { ok: false, error: 'No se proporcionó ningún campo para actualizar' };
+  }
+
+  const actualizadoPor = ctx?.userEmail || `telegram:${ctx?.userId || 'unknown'}`;
+  campos.actualizado_por = actualizadoPor;
+
+  const existente = await cobranzasQuery<{ id: number }>(
+    'SELECT id FROM cobranza_memoria_cliente WHERE codigo_cliente = ?',
+    [codigo]
+  );
+
+  if (existente.length > 0) {
+    const sets = Object.keys(campos).map((k) => `\`${k}\` = ?`).join(', ');
+    await cobranzasExecute(
+      `UPDATE cobranza_memoria_cliente SET ${sets} WHERE codigo_cliente = ?`,
+      [...Object.values(campos), codigo]
+    );
+  } else {
+    const colsExtra = Object.keys(campos).map((k) => `\`${k}\``).join(', ');
+    const vals = Object.values(campos);
+    await cobranzasExecute(
+      `INSERT INTO cobranza_memoria_cliente (codigo_cliente, ${colsExtra}) VALUES (?, ${vals.map(() => '?').join(', ')})`,
+      [codigo, ...vals]
+    );
+  }
+
+  await logAccion(ctx?.userId || null, 'MEMORIA_CLIENTE_GUARDADA', 'cliente', codigo, {
+    campos: Object.keys(campos).filter((k) => k !== 'actualizado_por'),
+    via: 'telegram',
+  });
+
+  return { ok: true, data: { codigo_cliente: codigo, campos_guardados: Object.keys(campos).filter((k) => k !== 'actualizado_por') } };
 }
 
 async function marcarTareaHecha(

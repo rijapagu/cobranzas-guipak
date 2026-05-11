@@ -32,7 +32,9 @@ import {
   EditOutlined,
   ReloadOutlined,
   LinkOutlined,
+  EyeOutlined,
 } from "@ant-design/icons";
+import EstadoCuentaDrawer from "@/components/clientes/EstadoCuentaDrawer";
 import type { ColumnsType } from "antd/es/table";
 
 const { Title, Text } = Typography;
@@ -87,6 +89,7 @@ export default function ClientesPage() {
   const [selectedCliente, setSelectedCliente] = useState<ClienteEnriquecido | null>(null);
   const [saving, setSaving] = useState(false);
   const [generandoToken, setGenerandoToken] = useState(false);
+  const [clienteEstadoCuenta, setClienteEstadoCuenta] = useState<string | null>(null);
   const [form] = Form.useForm();
 
   const fetchClientes = useCallback(async () => {
@@ -315,9 +318,16 @@ export default function ClientesPage() {
     {
       title: "Acciones",
       key: "acciones",
-      width: 180,
+      width: 220,
       render: (_, record) => (
         <Space>
+          <Tooltip title="Ver estado de cuenta">
+            <Button
+              size="small"
+              icon={<EyeOutlined />}
+              onClick={() => setClienteEstadoCuenta(record.codigo_cliente)}
+            />
+          </Tooltip>
           <Button
             size="small"
             icon={<EditOutlined />}
@@ -457,6 +467,11 @@ export default function ClientesPage() {
           </>
         )}
       </Drawer>
+
+      <EstadoCuentaDrawer
+        codigoCliente={clienteEstadoCuenta}
+        onClose={() => setClienteEstadoCuenta(null)}
+      />
     </div>
   );
 }

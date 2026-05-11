@@ -19,8 +19,10 @@ import {
   FileTextOutlined,
   TeamOutlined,
   HistoryOutlined,
+  EyeOutlined,
 } from "@ant-design/icons";
 import dayjs from "dayjs";
+import EstadoCuentaDrawer from "@/components/clientes/EstadoCuentaDrawer";
 
 const { Title, Text, Paragraph } = Typography;
 const { RangePicker } = DatePicker;
@@ -32,6 +34,7 @@ export default function ReportesPage() {
     dayjs(),
   ]);
   const [clienteEstadoCuenta, setClienteEstadoCuenta] = useState("");
+  const [clienteVisualizando, setClienteVisualizando] = useState<string | null>(null);
 
   const descargarReporte = async (url: string, nombre: string) => {
     setDownloading(nombre);
@@ -47,7 +50,6 @@ export default function ReportesPage() {
       const blobUrl = URL.createObjectURL(blob);
       a.href = blobUrl;
 
-      // Extraer nombre del header o usar default
       const disposition = res.headers.get("Content-Disposition");
       const filename = disposition?.match(/filename="(.+)"/)?.[1] || `${nombre}.xlsx`;
       a.download = filename;
@@ -65,13 +67,19 @@ export default function ReportesPage() {
     }
   };
 
+  const verEstadoCuenta = () => {
+    const codigo = clienteEstadoCuenta.trim();
+    if (!codigo) return;
+    setClienteVisualizando(codigo);
+  };
+
   return (
     <div>
       <Title level={4}>
         <FileTextOutlined /> Reportes
       </Title>
       <Paragraph type="secondary">
-        Exporta reportes en formato Excel para análisis externo.
+        Visualiza y exporta reportes en formato Excel para análisis externo.
       </Paragraph>
 
       <Row gutter={[16, 16]}>
@@ -155,30 +163,41 @@ export default function ReportesPage() {
             }
           >
             <Paragraph type="secondary">
-              Facturas pendientes de un cliente específico. Útil para enviar al cliente o
-              para revisión interna.
+              Facturas pendientes de un cliente (vencidas y por vencer), igual que el estado
+              de cuenta en Softec.
             </Paragraph>
             <Space direction="vertical" style={{ width: "100%" }}>
               <Input
-                placeholder="Código del cliente (ej: 0000274)"
+                placeholder="Código del cliente (ej: CG0006)"
                 value={clienteEstadoCuenta}
                 onChange={(e) => setClienteEstadoCuenta(e.target.value)}
+                onPressEnter={verEstadoCuenta}
+                allowClear
               />
-              <Button
-                type="primary"
-                icon={<DownloadOutlined />}
-                loading={downloading === "estado-cuenta"}
-                disabled={!clienteEstadoCuenta.trim()}
-                onClick={() =>
-                  descargarReporte(
-                    `/api/cobranzas/reportes/estado-cuenta-excel?cliente=${clienteEstadoCuenta.trim()}`,
-                    "estado-cuenta"
-                  )
-                }
-                block
-              >
-                Descargar Excel
-              </Button>
+              <Space style={{ width: "100%" }}>
+                <Button
+                  type="primary"
+                  icon={<EyeOutlined />}
+                  disabled={!clienteEstadoCuenta.trim()}
+                  onClick={verEstadoCuenta}
+                  style={{ flex: 1 }}
+                >
+                  Ver en pantalla
+                </Button>
+                <Button
+                  icon={<DownloadOutlined />}
+                  loading={downloading === "estado-cuenta"}
+                  disabled={!clienteEstadoCuenta.trim()}
+                  onClick={() =>
+                    descargarReporte(
+                      `/api/cobranzas/reportes/estado-cuenta-excel?cliente=${clienteEstadoCuenta.trim()}`,
+                      "estado-cuenta"
+                    )
+                  }
+                >
+                  Excel
+                </Button>
+              </Space>
             </Space>
           </Card>
         </Col>
@@ -188,10 +207,15 @@ export default function ReportesPage() {
           <Card title="Información" style={{ height: "100%" }}>
             <Space direction="vertical">
               <div>
-                <Text strong>Formato:</Text> Microsoft Excel (.xlsx)
+                <Text strong>Formato exportación:</Text> Microsoft Excel (.xlsx)
               </div>
               <div>
-                <Text strong>Datos:</Text> Si Softec no está conectado, se usan datos de demostración.
+                <Text strong>Estado de Cuenta:</Text> Muestra todas las facturas pendientes
+                (vencidas y por vencer), igual que Softec.
+              </div>
+              <div>
+                <Text strong>Cartera Vencida:</Text> Solo facturas con días vencido &gt; 0
+                (Dashboard y Cola de Aprobación también usan este criterio).
               </div>
               <Divider />
               <Text type="secondary" style={{ fontSize: 12 }}>
@@ -202,6 +226,12 @@ export default function ReportesPage() {
           </Card>
         </Col>
       </Row>
+
+      {/* Drawer con visualización inline del estado de cuenta */}
+      <EstadoCuentaDrawer
+        codigoCliente={clienteVisualizando}
+        onClose={() => setClienteVisualizando(null)}
+      />
     </div>
   );
 }

@@ -15,22 +15,22 @@ import {
   Button,
   Space,
   Badge,
+  Tooltip,
 } from "antd";
 import {
   DollarOutlined,
   FileTextOutlined,
   WarningOutlined,
-  CheckCircleOutlined,
   ClockCircleOutlined,
-  TeamOutlined,
   SendOutlined,
   MessageOutlined,
-  MailOutlined,
   ReloadOutlined,
   ExclamationCircleOutlined,
   RiseOutlined,
+  EyeOutlined,
 } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
+import EstadoCuentaDrawer from "@/components/clientes/EstadoCuentaDrawer";
 
 const { Title, Text } = Typography;
 
@@ -93,6 +93,7 @@ function formatMontoCompleto(monto: number): string {
 export default function DashboardPage() {
   const [kpis, setKpis] = useState<DashboardKPIs | null>(null);
   const [loading, setLoading] = useState(true);
+  const [clienteSeleccionado, setClienteSeleccionado] = useState<string | null>(null);
 
   const fetchKPIs = useCallback(async () => {
     setLoading(true);
@@ -184,6 +185,21 @@ export default function DashboardPage() {
       key: "facturas",
       align: "center",
       width: 50,
+    },
+    {
+      title: "",
+      key: "ver",
+      width: 36,
+      render: (_, r) => (
+        <Tooltip title="Ver estado de cuenta">
+          <Button
+            type="text"
+            size="small"
+            icon={<EyeOutlined />}
+            onClick={() => setClienteSeleccionado(r.codigo)}
+          />
+        </Tooltip>
+      ),
     },
   ];
 
@@ -359,6 +375,10 @@ export default function DashboardPage() {
               rowKey="codigo"
               pagination={false}
               size="small"
+              onRow={(r) => ({
+                onClick: () => setClienteSeleccionado(r.codigo),
+                style: { cursor: "pointer" },
+              })}
             />
           </Card>
         </Col>
@@ -456,6 +476,11 @@ export default function DashboardPage() {
           </Card>
         </Col>
       </Row>
+
+      <EstadoCuentaDrawer
+        codigoCliente={clienteSeleccionado}
+        onClose={() => setClienteSeleccionado(null)}
+      />
     </div>
   );
 }

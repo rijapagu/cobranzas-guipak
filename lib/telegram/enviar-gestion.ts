@@ -10,6 +10,8 @@
 import { cobranzasQuery, cobranzasExecute, logAccion } from '@/lib/db/cobranzas';
 import { softecQuery } from '@/lib/db/softec';
 import { enviarEmail } from '@/lib/email/sender';
+import { enviarWhatsApp } from '@/lib/evolution/client';
+import { downloadPdfBuffer } from '@/lib/drive/client';
 import { differenceInHours } from 'date-fns';
 
 interface GestionRow {
@@ -22,6 +24,7 @@ interface GestionRow {
   saldo_pendiente: number;
   asunto_email: string | null;
   mensaje_propuesto_email: string | null;
+  mensaje_propuesto_wa: string | null;
   mensaje_final_email: string | null;
   ultima_consulta_softec: string;
 }
@@ -35,7 +38,7 @@ export interface ResultadoEnvio {
 
 export async function enviarGestion(gestionId: number): Promise<ResultadoEnvio> {
   const rows = await cobranzasQuery<GestionRow>(
-    'SELECT id, estado, aprobado_por, canal, codigo_cliente, ij_inum, saldo_pendiente, asunto_email, mensaje_propuesto_email, mensaje_final_email, ultima_consulta_softec FROM cobranza_gestiones WHERE id = ?',
+    'SELECT id, estado, aprobado_por, canal, codigo_cliente, ij_inum, saldo_pendiente, asunto_email, mensaje_propuesto_email, mensaje_propuesto_wa, mensaje_final_email, ultima_consulta_softec FROM cobranza_gestiones WHERE id = ?',
     [gestionId]
   );
 
@@ -70,26 +73,89 @@ export async function enviarGestion(gestionId: number): Promise<ResultadoEnvio> 
     }
   }
 
-  // Buscar email del cliente
   const codigo = String(gestion.codigo_cliente).trim();
-  const clienteSoftec = await softecQuery<{ email: string | null; nombre: string }>(
-    "SELECT IC_EMAIL AS email, IC_NAME AS nombre FROM v_cobr_icust WHERE IC_CODE = ? LIMIT 1",
+  const clienteSoftec = await softecQuery<{ email: string | null; telefono: string | null; nombre: string }>(
+    "SELECT IC_EMAIL AS email, IC_PHONE AS telefono, IC_NAME AS nombre FROM v_cobr_icust WHERE IC_CODE = ? LIMIT 1",
     [codigo]
   );
-
-  let emailDestino = clienteSoftec[0]?.email ? String(clienteSoftec[0].email).trim() : '';
   const nombreCliente = clienteSoftec[0]?.nombre
     ? String(clienteSoftec[0].nombre).trim()
     : codigo;
 
-  if (!emailDestino) {
-    const enr = await cobranzasQuery<{ email: string | null }>(
-      'SELECT email FROM cobranza_clientes_enriquecidos WHERE codigo_cliente = ?',
-      [codigo]
+  const enr = await cobranzasQuery<{ email: string | null; whatsapp: string | null }>(
+    'SELECT email, whatsapp FROM cobranza_clientes_enriquecidos WHERE codigo_cliente = ?',
+    [codigo]
+  );
+  const emailDestino = (clienteSoftec[0]?.email ? String(clienteSoftec[0].email).trim() : '') ||
+    (enr[0]?.email ? enr[0].email.trim() : '');
+  const telefonoDestino = (enr[0]?.whatsapp ? enr[0].whatsapp.trim() : '') ||
+    (clienteSoftec[0]?.telefono ? String(clienteSoftec[0].telefono).trim() : '');
+
+  // Intentar adjuntar PDF de Drive si existe
+  const docRows = await cobranzasQuery<{ google_drive_id: string; nombre_archivo: string | null }>(
+    'SELECT google_drive_id, nombre_archivo FROM cobranza_facturas_documentos WHERE ij_inum = ? LIMIT 1',
+    [gestion.ij_inum]
+  );
+  const docRow = docRows[0] || null;
+
+  if (gestion.canal === 'WHATSAPP') {
+    // ─── Envío WhatsApp ────────────────────────────────────────────
+    if (!telefonoDestino) {
+      await cobranzasExecute(
+        "UPDATE cobranza_gestiones SET estado='FALLIDO', motivo_descarte='SIN_WHATSAPP' WHERE id = ?",
+        [gestionId]
+      );
+      return { ok: false, error: 'Cliente sin número de WhatsApp registrado' };
+    }
+
+    const textoWa = gestion.mensaje_propuesto_wa || '';
+    if (!textoWa) {
+      return { ok: false, error: 'No hay mensaje de WhatsApp en esta gestión' };
+    }
+
+    await logAccion(
+      gestion.aprobado_por,
+      'ENVIAR_WHATSAPP_TELEGRAM',
+      'gestion',
+      String(gestionId),
+      { telefono: telefonoDestino }
     );
-    if (enr[0]?.email) emailDestino = enr[0].email.trim();
+
+    try {
+      // Si hay PDF en Drive, agregar el link de vista al final del mensaje
+      let mensajeFinal = textoWa;
+      if (docRow?.google_drive_id) {
+        const urlPdf = `https://drive.google.com/file/d/${docRow.google_drive_id}/view`;
+        mensajeFinal += `\n\n📄 Factura: ${urlPdf}`;
+      }
+
+      const result = await enviarWhatsApp(telefonoDestino, mensajeFinal);
+
+      await cobranzasExecute(
+        `UPDATE cobranza_gestiones SET estado='ENVIADO', fecha_envio=NOW(), email_message_id=? WHERE id = ?`,
+        [result.messageId || null, gestionId]
+      );
+      await cobranzasExecute(
+        `INSERT INTO cobranza_conversaciones (codigo_cliente, ij_inum, canal, direccion, contenido, gestion_id)
+         VALUES (?, ?, 'WHATSAPP', 'ENVIADO', ?, ?)`,
+        [codigo, gestion.ij_inum, mensajeFinal, gestionId]
+      );
+
+      return {
+        ok: true,
+        destinatario: `${nombreCliente} (${telefonoDestino})`,
+        message_id: result.messageId,
+      };
+    } catch (err) {
+      await cobranzasExecute(
+        "UPDATE cobranza_gestiones SET estado='FALLIDO', motivo_descarte=? WHERE id = ?",
+        [err instanceof Error ? err.message.substring(0, 200) : 'Error', gestionId]
+      );
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
   }
 
+  // ─── Envío Email (default) ─────────────────────────────────────
   if (!emailDestino) {
     await cobranzasExecute(
       "UPDATE cobranza_gestiones SET estado='FALLIDO', motivo_descarte='SIN_EMAIL' WHERE id = ?",
@@ -107,20 +173,29 @@ export async function enviarGestion(gestionId: number): Promise<ResultadoEnvio> 
     'ENVIAR_EMAIL_TELEGRAM',
     'gestion',
     String(gestionId),
-    { email: emailDestino, asunto }
+    { email: emailDestino, asunto, tiene_pdf: !!docRow }
   );
 
   try {
-    const result = await enviarEmail(emailDestino, asunto, cuerpo);
+    // Intentar descargar PDF si existe en Drive (best-effort — no bloquea el envío)
+    let adjuntos: import('@/lib/email/sender').EmailAttachment[] | undefined;
+    if (docRow?.google_drive_id) {
+      const pdfBuffer = await downloadPdfBuffer(docRow.google_drive_id);
+      if (pdfBuffer) {
+        adjuntos = [{
+          filename: docRow.nombre_archivo || `factura-${gestion.ij_inum}.pdf`,
+          content: pdfBuffer,
+          contentType: 'application/pdf',
+        }];
+      }
+    }
+
+    const result = await enviarEmail(emailDestino, asunto, cuerpo, adjuntos);
 
     await cobranzasExecute(
-      `UPDATE cobranza_gestiones
-       SET estado='ENVIADO', fecha_envio=NOW(), email_message_id=?
-       WHERE id = ?`,
+      `UPDATE cobranza_gestiones SET estado='ENVIADO', fecha_envio=NOW(), email_message_id=? WHERE id = ?`,
       [result.messageId || null, gestionId]
     );
-
-    // Registrar en cobranza_conversaciones
     await cobranzasExecute(
       `INSERT INTO cobranza_conversaciones (codigo_cliente, ij_inum, canal, direccion, contenido, gestion_id)
        VALUES (?, ?, 'EMAIL', 'ENVIADO', ?, ?)`,
@@ -137,9 +212,6 @@ export async function enviarGestion(gestionId: number): Promise<ResultadoEnvio> 
       "UPDATE cobranza_gestiones SET estado='FALLIDO', motivo_descarte=? WHERE id = ?",
       [err instanceof Error ? err.message.substring(0, 200) : 'Error', gestionId]
     );
-    return {
-      ok: false,
-      error: err instanceof Error ? err.message : String(err),
-    };
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
 }
