@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { cobranzasQuery, cobranzasExecute } from '@/lib/db/cobranzas';
 import { softecQuery, testSoftecConnection } from '@/lib/db/softec';
+import { obtenerSaldoAFavorPorCliente, ajustarSaldoCliente } from '@/lib/cobranzas/saldo-favor';
 import { getMockCartera } from '@/lib/mock/cartera-mock';
 
 /**
@@ -142,6 +143,29 @@ export async function GET(
     const totalSaldo = facturasConDocs.reduce((sum: number, f: Record<string, unknown>) =>
       sum + Number(f.saldo_pendiente || 0), 0);
 
+    // CP-15: si el cliente tiene saldo a favor (anticipos / recibos sin
+    // aplicar), debemos mostrarle el saldo neto real. Si el saldo a favor
+    // cubre todo el pendiente, generamos un mensaje claro para que NO
+    // perciba el portal como un cobro injusto.
+    let saldoAFavor = 0;
+    if (softecOk) {
+      const favorMap = await obtenerSaldoAFavorPorCliente([codigoCliente]);
+      saldoAFavor = favorMap.get(String(codigoCliente).trim()) ?? 0;
+    }
+    const ajuste = ajustarSaldoCliente(totalSaldo, saldoAFavor);
+
+    let mensaje: string | null = null;
+    if (ajuste.cubierto_por_anticipo) {
+      mensaje =
+        `No tienes pagos pendientes. Tienes RD$${ajuste.saldo_a_favor.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} a favor con nosotros. ` +
+        'Tu equipo de cobranzas aplicará el anticipo a las próximas facturas. ' +
+        'Si necesitas un detalle, escríbenos.';
+    } else if (saldoAFavor > 0.01 && totalSaldo > 0) {
+      mensaje =
+        `Tienes RD$${ajuste.saldo_a_favor.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} a favor que se aplicará a tus facturas pendientes. ` +
+        `Tu saldo neto a pagar es RD$${ajuste.saldo_neto.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}.`;
+    }
+
     return NextResponse.json({
       cliente: {
         codigo: codigoCliente,
@@ -152,6 +176,11 @@ export async function GET(
       resumen: {
         total_facturas: facturasConDocs.length,
         saldo_total: totalSaldo,
+        // CP-15: nuevos campos
+        saldo_a_favor: ajuste.saldo_a_favor,
+        saldo_neto: ajuste.saldo_neto,
+        cubierto_por_anticipo: ajuste.cubierto_por_anticipo,
+        mensaje,
       },
       modo: softecOk ? 'live' : 'mock',
     });
