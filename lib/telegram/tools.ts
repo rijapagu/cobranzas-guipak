@@ -160,7 +160,7 @@ export const TOOLS: Anthropic.Tool[] = [
   {
     name: 'proponer_correo_cliente',
     description:
-      'Genera un draft de correo de cobranza para un cliente y lo deja en cola PENDIENTE de aprobación. NO envía el correo. Devuelve el ID de gestión, el draft completo y los datos del cliente. El bot debe presentar este draft al usuario con botones para aprobar/editar/descartar (CP-02).',
+      'Genera un draft de correo de cobranza para un cliente y lo deja en cola PENDIENTE de aprobación. NO envía el correo. Devuelve el ID de gestión, el draft completo y los datos del cliente. El bot debe presentar este draft al usuario con botones para aprobar/editar/descartar (CP-02). Si devuelve destinatario_email=null, el cliente no tiene email — el bot debe pedir el email al usuario y luego llamar a guardar_dato_cliente antes de presentar los botones de aprobación.',
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -170,6 +170,30 @@ export const TOOLS: Anthropic.Tool[] = [
         },
       },
       required: ['termino'],
+    },
+  },
+  {
+    name: 'guardar_dato_cliente',
+    description:
+      'Guarda o actualiza un dato de contacto faltante de un cliente en la base de datos propia (CP-01: NUNCA modifica Softec). Úsalo cuando el usuario proporcione un email, WhatsApp o nombre de contacto para un cliente que lo tenga en blanco. Confirma siempre con el usuario antes de guardar.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        codigo_cliente: {
+          type: 'string',
+          description: 'Código del cliente en Softec (7 dígitos, ej. "0000593")',
+        },
+        campo: {
+          type: 'string',
+          enum: ['email', 'whatsapp', 'contacto_cobros'],
+          description: 'Qué dato se va a guardar',
+        },
+        valor: {
+          type: 'string',
+          description: 'El valor a guardar (email, número de WhatsApp con código de país, o nombre del contacto)',
+        },
+      },
+      required: ['codigo_cliente', 'campo', 'valor'],
     },
   },
 ];
@@ -221,6 +245,14 @@ export async function ejecutarTool(
         const result = await proponerCorreoCliente(String(argumentos.termino));
         return { ok: result.ok, data: result };
       }
+
+      case 'guardar_dato_cliente':
+        return await guardarDatoCliente(
+          String(argumentos.codigo_cliente),
+          String(argumentos.campo) as 'email' | 'whatsapp' | 'contacto_cobros',
+          String(argumentos.valor),
+          ctx
+        );
 
       default:
         return { ok: false, error: `Tool desconocida: ${nombre}` };
@@ -692,6 +724,52 @@ async function listarTareas(args: Record<string, unknown>): Promise<ResultadoToo
       })),
     },
   };
+}
+
+// =====================================================================
+// Datos de cliente (Capa C)
+// =====================================================================
+
+async function guardarDatoCliente(
+  codigoCliente: string,
+  campo: 'email' | 'whatsapp' | 'contacto_cobros',
+  valor: string,
+  ctx?: { userId?: string; userEmail?: string }
+): Promise<ResultadoTool> {
+  const codigo = codigoCliente.trim().padStart(7, '0');
+  const valorTrimmed = valor.trim();
+  if (!valorTrimmed) return { ok: false, error: 'Valor vacío' };
+
+  const camposPermitidos = ['email', 'whatsapp', 'contacto_cobros'];
+  if (!camposPermitidos.includes(campo)) {
+    return { ok: false, error: `Campo inválido: ${campo}` };
+  }
+
+  const existente = await cobranzasQuery<{ id: number }>(
+    'SELECT id FROM cobranza_clientes_enriquecidos WHERE codigo_cliente = ? LIMIT 1',
+    [codigo]
+  );
+
+  if (existente.length > 0) {
+    await cobranzasExecute(
+      `UPDATE cobranza_clientes_enriquecidos SET \`${campo}\` = ?, actualizado_por = ? WHERE codigo_cliente = ?`,
+      [valorTrimmed, ctx?.userEmail || `telegram:${ctx?.userId}`, codigo]
+    );
+  } else {
+    await cobranzasExecute(
+      `INSERT INTO cobranza_clientes_enriquecidos (codigo_cliente, \`${campo}\`, canal_preferido, actualizado_por)
+       VALUES (?, ?, 'EMAIL', ?)`,
+      [codigo, valorTrimmed, ctx?.userEmail || `telegram:${ctx?.userId}`]
+    );
+  }
+
+  await logAccion(ctx?.userId || null, 'DATO_CLIENTE_GUARDADO_BOT', 'cliente', codigo, {
+    campo,
+    valor: valorTrimmed,
+    via: 'telegram',
+  });
+
+  return { ok: true, data: { codigo_cliente: codigo, campo, valor: valorTrimmed } };
 }
 
 async function marcarTareaHecha(

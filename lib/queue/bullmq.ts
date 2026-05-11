@@ -17,6 +17,7 @@ export const QUEUES = {
 
 export const JOBS = {
   EMPUJE_MATUTINO: 'empuje-matutino',
+  CADENCIAS_HORARIAS: 'cadencias-horarias',
 } as const;
 
 let cronQueue: Queue | null = null;
@@ -57,6 +58,26 @@ export async function scheduleEmpujeMatutino() {
   );
 
   console.log('[BullMQ] Empuje matutino programado: 8:00 AM AST (12:00 UTC)');
+}
+
+export async function scheduleCadenciasHorarias() {
+  const queue = getCronQueue();
+
+  const repeatables = await queue.getRepeatableJobs();
+  for (const job of repeatables) {
+    if (job.name === JOBS.CADENCIAS_HORARIAS) {
+      await queue.removeRepeatableByKey(job.key);
+    }
+  }
+
+  // Cada hora en punto
+  await queue.add(
+    JOBS.CADENCIAS_HORARIAS,
+    {},
+    { repeat: { pattern: '0 * * * *', tz: 'UTC' } }
+  );
+
+  console.log('[BullMQ] Cadencias horarias programadas: 0 * * * *');
 }
 
 export function createCronWorker(

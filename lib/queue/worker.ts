@@ -1,16 +1,22 @@
-import { createCronWorker, scheduleEmpujeMatutino, JOBS } from './bullmq';
+import { createCronWorker, scheduleEmpujeMatutino, scheduleCadenciasHorarias, JOBS } from './bullmq';
 import { ejecutarEmpujeMatutino } from './jobs/empuje-matutino';
+import { ejecutarCadenciasHorarias } from './jobs/cadencias';
 
 async function main() {
   console.log('[Worker] Iniciando worker de cobranzas...');
 
   await scheduleEmpujeMatutino();
+  await scheduleCadenciasHorarias();
 
   const worker = createCronWorker(async (job) => {
     console.log(`[Worker] Procesando job: ${job.name}`);
 
     if (job.name === JOBS.EMPUJE_MATUTINO) {
       await ejecutarEmpujeMatutino();
+    }
+
+    if (job.name === JOBS.CADENCIAS_HORARIAS) {
+      await ejecutarCadenciasHorarias();
     }
   });
 
