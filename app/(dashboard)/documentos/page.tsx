@@ -14,6 +14,7 @@ import {
   Tag,
   Modal,
   Form,
+  Radio,
   message,
 } from "antd";
 import {
@@ -24,6 +25,9 @@ import {
   LinkOutlined,
   FilePdfOutlined,
   ReloadOutlined,
+  SendOutlined,
+  MailOutlined,
+  WhatsAppOutlined,
 } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 
@@ -65,6 +69,10 @@ export default function DocumentosPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [form] = Form.useForm();
+
+  const [enviarModal, setEnviarModal] = useState<Documento | null>(null);
+  const [enviando, setEnviando] = useState(false);
+  const [formEnviar] = Form.useForm();
 
   const fetchDocs = useCallback(async () => {
     setLoading(true);
@@ -121,6 +129,34 @@ export default function DocumentosPage() {
       message.error("Error de conexión");
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const handleEnviarFactura = async (values: { canal: string; destinatario: string }) => {
+    if (!enviarModal) return;
+    setEnviando(true);
+    try {
+      const res = await fetch("/api/cobranzas/documentos/enviar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          documento_id: enviarModal.id,
+          canal: values.canal,
+          destinatario: values.destinatario.trim(),
+        }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        message.success(data.mensaje);
+        setEnviarModal(null);
+        formEnviar.resetFields();
+      } else {
+        message.error(data.error || "Error enviando");
+      }
+    } catch {
+      message.error("Error de conexión");
+    } finally {
+      setEnviando(false);
     }
   };
 
@@ -185,6 +221,17 @@ export default function DocumentosPage() {
             size="small"
           >
             Ver PDF
+          </Button>
+          <Button
+            type="link"
+            icon={<SendOutlined />}
+            size="small"
+            onClick={() => {
+              setEnviarModal(record);
+              formEnviar.setFieldsValue({ canal: "EMAIL", destinatario: "" });
+            }}
+          >
+            Enviar
           </Button>
         </Space>
       ),
@@ -301,6 +348,43 @@ export default function DocumentosPage() {
           <Form.Item name="nombre_archivo" label="Nombre del Archivo (opcional)">
             <Input placeholder="Ej: factura-456.pdf" />
           </Form.Item>
+        </Form>
+      </Modal>
+
+      {/* Modal enviar factura */}
+      <Modal
+        title={
+          enviarModal
+            ? `Enviar Factura IN-${enviarModal.ij_inum} (${enviarModal.codigo_cliente})`
+            : "Enviar Factura"
+        }
+        open={!!enviarModal}
+        onCancel={() => { setEnviarModal(null); formEnviar.resetFields(); }}
+        onOk={() => formEnviar.submit()}
+        confirmLoading={enviando}
+        okText="Enviar"
+      >
+        <Form form={formEnviar} layout="vertical" onFinish={handleEnviarFactura} initialValues={{ canal: "EMAIL" }}>
+          <Form.Item name="canal" label="Canal de envío" rules={[{ required: true }]}>
+            <Radio.Group>
+              <Radio.Button value="EMAIL"><MailOutlined /> Email</Radio.Button>
+              <Radio.Button value="WHATSAPP"><WhatsAppOutlined /> WhatsApp</Radio.Button>
+            </Radio.Group>
+          </Form.Item>
+          <Form.Item
+            name="destinatario"
+            label="Destinatario"
+            rules={[{ required: true, message: "Ingrese email o número de WhatsApp" }]}
+          >
+            <Input placeholder="email@cliente.com o 18091234567" />
+          </Form.Item>
+          {enviarModal && (
+            <div style={{ background: "#f5f5f5", padding: 8, borderRadius: 4, fontSize: 12 }}>
+              <Text type="secondary">
+                Archivo: {enviarModal.nombre_archivo || `factura-${enviarModal.ij_inum}.pdf`}
+              </Text>
+            </div>
+          )}
         </Form>
       </Modal>
     </div>
