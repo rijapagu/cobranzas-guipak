@@ -1,5 +1,10 @@
 /**
  * Tipos del módulo de Cartera Vencida
+ *
+ * CP-15 (10-may-2026): los agregados de cartera deben restar el saldo a favor
+ * del cliente (anticipos / recibos sin aplicar). Por compatibilidad los
+ * campos brutos se mantienen y se agregan campos opcionales con neto y a
+ * favor. Endpoints nuevos deben poblar los opcionales.
  */
 
 export type SegmentoRiesgo = 'VERDE' | 'AMARILLO' | 'NARANJA' | 'ROJO';
@@ -46,6 +51,10 @@ export interface FacturaVencida {
   // Documentación (se cruza con cobranza_facturas_documentos)
   tiene_pdf?: boolean;
   url_pdf?: string | null;
+  // CP-15: indicador a nivel de factura cuando el cliente tiene saldo a
+  // favor que cubre TODO su pendiente bruto. Solo lo poblan los endpoints
+  // que ya cruzaron contra el helper saldo-favor.
+  cubierto_por_anticipo?: boolean;
 }
 
 export interface ResumenSegmento {
@@ -53,6 +62,10 @@ export interface ResumenSegmento {
   num_facturas: number;
   num_clientes: number;
   saldo_total: number;
+  // CP-15: bruto vs neto a nivel de segmento. Opcionales para no romper
+  // consumidores antiguos del tipo.
+  saldo_a_favor?: number;
+  saldo_neto?: number;
 }
 
 export interface FiltrosCartera {
@@ -83,6 +96,18 @@ export interface CarteraResponse {
   total: number;
   modo: 'live' | 'mock';
   ultima_consulta: string;
+  // CP-15: mapa codigo_cliente -> ajuste de saldo (pendiente / a favor /
+  // neto / cubierto). Permite que la UI marque facturas y calcule agregados
+  // sin tocar la DB de nuevo.
+  saldos_clientes?: Record<string, {
+    saldo_pendiente: number;
+    saldo_a_favor: number;
+    saldo_neto: number;
+    cubierto_por_anticipo: boolean;
+  }>;
+  // Total a favor agregado de los clientes con facturas en esta respuesta.
+  total_a_favor?: number;
+  total_neto?: number;
 }
 
 export interface ResumenResponse {
@@ -91,4 +116,7 @@ export interface ResumenResponse {
   total_facturas: number;
   total_clientes: number;
   modo: 'live' | 'mock';
+  // CP-15: agregados ajustados por saldo a favor.
+  total_a_favor?: number;
+  total_neto?: number;
 }
