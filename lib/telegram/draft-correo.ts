@@ -5,6 +5,8 @@
  *
  * CP-02: el correo NO se envía. Solo se crea el draft.
  * CP-10: Claude solo genera texto.
+ * CP-15: si el cliente tiene saldo a favor que cubre su pendiente, NO se
+ *        genera draft (sería injusto cobrar a alguien que ya pagó de más).
  */
 
 import { cobranzasQuery, cobranzasExecute } from '@/lib/db/cobranzas';
@@ -12,6 +14,7 @@ import { softecQuery, testSoftecConnection } from '@/lib/db/softec';
 import { generarMensajeCobranza } from '@/lib/claude/client';
 import { seleccionarPlantilla } from '@/lib/templates/seleccionar';
 import { renderPlantilla } from '@/lib/templates/render';
+import { obtenerSaldoAFavorPorCliente } from '@/lib/cobranzas/saldo-favor';
 import Anthropic from '@anthropic-ai/sdk';
 import type { SegmentoRiesgo } from '@/lib/types/cartera';
 
@@ -49,7 +52,12 @@ export interface DraftCorreoResult {
     | 'FACTURA_EN_DISPUTA'
     | 'YA_HAY_GESTION_PENDIENTE'
     | 'ERROR_GENERAR'
-    | 'CLIENTE_PAUSADO';
+    | 'CLIENTE_PAUSADO'
+    | 'CLIENTE_CUBIERTO_POR_ANTICIPO';
+  // CP-15: cuando se bloquea por anticipo se reportan los montos para que
+  // el bot pueda explicarle al supervisor por qué no se generó el correo.
+  saldo_pendiente?: number;
+  saldo_a_favor?: number;
 }
 
 function calcularSegmento(diasVencido: number): SegmentoRiesgo {
@@ -141,6 +149,33 @@ export async function proponerCorreoCliente(
         error: `Cliente pausado hasta ${pausa[0].pausa_hasta}`,
       };
     }
+  }
+
+  // 3.5. CP-15: verificar que el cliente NO esté cubierto por saldo a favor.
+  // Si los recibos sin aplicar del cliente cubren o superan su pendiente
+  // bruto total, el correo de cobranza es injusto — la acción correcta es
+  // que contabilidad aplique el anticipo, no que se le cobre.
+  const pendienteCliente = await softecQuery<{ pendiente: number }>(
+    `SELECT COALESCE(SUM(IJ_TOT - IJ_TOTAPPL), 0) AS pendiente
+       FROM v_cobr_ijnl
+      WHERE IJ_CCODE = ?
+        AND IJ_TYPEDOC='IN' AND IJ_INVTORF='T' AND IJ_PAID='F'
+        AND (IJ_TOT - IJ_TOTAPPL) > 0`,
+    [codigoCliente]
+  );
+  const pendienteBruto = Number(pendienteCliente[0]?.pendiente) || 0;
+  const saldosFavor = await obtenerSaldoAFavorPorCliente([codigoCliente]);
+  const saldoFavor = saldosFavor.get(codigoCliente) ?? 0;
+  if (saldoFavor >= pendienteBruto && pendienteBruto > 0) {
+    return {
+      ok: false,
+      motivo: 'CLIENTE_CUBIERTO_POR_ANTICIPO',
+      error:
+        'El cliente tiene saldo a favor que cubre todo su pendiente. ' +
+        'Contabilidad debe aplicar el anticipo antes de cobrar.',
+      saldo_pendiente: pendienteBruto,
+      saldo_a_favor: saldoFavor,
+    };
   }
 
   // 4. Verificar gestión PENDIENTE existente para esa factura

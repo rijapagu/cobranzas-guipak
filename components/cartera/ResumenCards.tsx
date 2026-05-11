@@ -1,14 +1,16 @@
 "use client";
 
-import { Card, Col, Row, Statistic, Spin } from "antd";
+import { Card, Col, Row, Statistic, Spin, Typography } from "antd";
 import type { ResumenSegmento, SegmentoRiesgo } from "@/lib/types/cartera";
 import { formatMonto, colorSegmento, bgColorSegmento } from "@/lib/utils/formato";
 
+const { Text } = Typography;
+
 const iconEmoji: Record<SegmentoRiesgo, string> = {
-  ROJO: "\uD83D\uDD34",
-  NARANJA: "\uD83D\uDFE0",
-  AMARILLO: "\uD83D\uDFE1",
-  VERDE: "\uD83D\uDFE2",
+  ROJO: "🔴",
+  NARANJA: "🟠",
+  AMARILLO: "🟡",
+  VERDE: "🟢",
 };
 
 const labelSegmento: Record<SegmentoRiesgo, string> = {
@@ -23,9 +25,23 @@ interface Props {
   loading: boolean;
   filtroActivo?: SegmentoRiesgo | null;
   onClickSegmento: (segmento: SegmentoRiesgo) => void;
+  // CP-15: si el endpoint devuelve totales globales con bruto/a favor/neto,
+  // se renderiza una fila superior con esas tres cifras. Si vienen sin
+  // anticipos, la fila se omite para no añadir ruido.
+  totales?: {
+    bruto: number;
+    a_favor: number;
+    neto: number;
+  };
 }
 
-export default function ResumenCards({ segmentos, loading, filtroActivo, onClickSegmento }: Props) {
+export default function ResumenCards({
+  segmentos,
+  loading,
+  filtroActivo,
+  onClickSegmento,
+  totales,
+}: Props) {
   const orden: SegmentoRiesgo[] = ["ROJO", "NARANJA", "AMARILLO", "VERDE"];
 
   if (loading) {
@@ -36,39 +52,87 @@ export default function ResumenCards({ segmentos, loading, filtroActivo, onClick
     );
   }
 
+  // CP-15: solo mostramos la fila de totales si hay anticipos relevantes
+  // (más de un centavo). Sin anticipos, el bruto y el neto son iguales y
+  // las 3 cards solo añadirían ruido.
+  const hayAnticipos = !!totales && totales.a_favor > 0.01;
+
   return (
-    <Row gutter={[16, 16]}>
-      {orden.map((seg) => {
-        const data = segmentos.find((s) => s.segmento === seg);
-        const isActive = filtroActivo === seg;
-        return (
-          <Col xs={24} sm={12} lg={6} key={seg}>
-            <Card
-              hoverable
-              onClick={() => onClickSegmento(seg)}
-              style={{
-                borderColor: isActive ? colorSegmento(seg) : undefined,
-                borderWidth: isActive ? 2 : 1,
-                background: bgColorSegmento(seg),
-                cursor: "pointer",
-              }}
-            >
+    <>
+      {hayAnticipos && totales && (
+        <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
+          <Col xs={24} sm={8}>
+            <Card>
               <Statistic
-                title={
-                  <span>
-                    {iconEmoji[seg]} {labelSegmento[seg]}
-                  </span>
-                }
-                value={data ? formatMonto(data.saldo_total) : "RD$0.00"}
-                valueStyle={{ color: colorSegmento(seg), fontSize: 20 }}
+                title="Cartera bruta"
+                value={formatMonto(totales.bruto)}
+                valueStyle={{ color: "#cf1322", fontSize: 20 }}
               />
-              <div style={{ marginTop: 8, fontSize: 13, color: "#666" }}>
-                {data?.num_facturas || 0} facturas &middot; {data?.num_clientes || 0} clientes
-              </div>
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                Suma de saldos pendientes
+              </Text>
             </Card>
           </Col>
-        );
-      })}
-    </Row>
+          <Col xs={24} sm={8}>
+            <Card>
+              <Statistic
+                title="Saldo a favor"
+                value={formatMonto(totales.a_favor)}
+                valueStyle={{ color: "#1890ff", fontSize: 20 }}
+              />
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                Anticipos sin aplicar
+              </Text>
+            </Card>
+          </Col>
+          <Col xs={24} sm={8}>
+            <Card>
+              <Statistic
+                title="Cartera neta (cobrable)"
+                value={formatMonto(totales.neto)}
+                valueStyle={{ color: "#cf1322", fontSize: 20 }}
+              />
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                Bruto menos saldo a favor
+              </Text>
+            </Card>
+          </Col>
+        </Row>
+      )}
+
+      <Row gutter={[16, 16]}>
+        {orden.map((seg) => {
+          const data = segmentos.find((s) => s.segmento === seg);
+          const isActive = filtroActivo === seg;
+          return (
+            <Col xs={24} sm={12} lg={6} key={seg}>
+              <Card
+                hoverable
+                onClick={() => onClickSegmento(seg)}
+                style={{
+                  borderColor: isActive ? colorSegmento(seg) : undefined,
+                  borderWidth: isActive ? 2 : 1,
+                  background: bgColorSegmento(seg),
+                  cursor: "pointer",
+                }}
+              >
+                <Statistic
+                  title={
+                    <span>
+                      {iconEmoji[seg]} {labelSegmento[seg]}
+                    </span>
+                  }
+                  value={data ? formatMonto(data.saldo_total) : "RD$0.00"}
+                  valueStyle={{ color: colorSegmento(seg), fontSize: 20 }}
+                />
+                <div style={{ marginTop: 8, fontSize: 13, color: "#666" }}>
+                  {data?.num_facturas || 0} facturas &middot; {data?.num_clientes || 0} clientes
+                </div>
+              </Card>
+            </Col>
+          );
+        })}
+      </Row>
+    </>
   );
 }

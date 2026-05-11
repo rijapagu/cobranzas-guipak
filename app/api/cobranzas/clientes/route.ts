@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth/session';
 import { cobranzasQuery, cobranzasExecute, logAccion } from '@/lib/db/cobranzas';
 import { softecQuery, testSoftecConnection } from '@/lib/db/softec';
+import { obtenerSaldoAFavorPorCliente } from '@/lib/cobranzas/saldo-favor';
 import { getMockCartera } from '@/lib/mock/cartera-mock';
 
 interface ClienteEnriquecido {
@@ -26,7 +27,11 @@ interface ClienteEnriquecido {
   tiene_email: boolean;
   tiene_whatsapp: boolean;
   total_facturas_pendientes: number;
-  saldo_total: number;
+  saldo_total: number;        // bruto (compat)
+  // CP-15: anticipos / recibos sin aplicar.
+  saldo_a_favor: number;
+  saldo_neto: number;
+  cubierto_por_anticipo: boolean;
 }
 
 /**
@@ -94,6 +99,10 @@ export async function GET(request: NextRequest) {
         notas_cobros: null,
         tiene_email: !!r.email_softec?.trim(),
         tiene_whatsapp: !!r.telefono_softec?.trim(),
+        // CP-15: se completa abajo con datos del helper.
+        saldo_a_favor: 0,
+        saldo_neto: Number(r.saldo_total) || 0,
+        cubierto_por_anticipo: false,
       }));
     } else {
       // Mock
@@ -104,6 +113,7 @@ export async function GET(request: NextRequest) {
         if (existing) {
           existing.total_facturas_pendientes++;
           existing.saldo_total += f.saldo_pendiente;
+          existing.saldo_neto = existing.saldo_total; // mock no modela anticipos
         } else {
           clienteMap.set(f.codigo_cliente, {
             codigo_cliente: f.codigo_cliente,
@@ -125,10 +135,32 @@ export async function GET(request: NextRequest) {
             tiene_whatsapp: !!f.telefono,
             total_facturas_pendientes: 1,
             saldo_total: f.saldo_pendiente,
+            saldo_a_favor: 0,
+            saldo_neto: f.saldo_pendiente,
+            cubierto_por_anticipo: false,
           });
         }
       });
       clientesBase = Array.from(clienteMap.values());
+    }
+
+    // CP-15: aplicar saldo a favor por cliente (anticipos / recibos sin aplicar).
+    if (softecOk && clientesBase.length > 0) {
+      const codigos = clientesBase.map(c => String(c.codigo_cliente).trim());
+      const saldosFavor = await obtenerSaldoAFavorPorCliente(codigos);
+      clientesBase = clientesBase.map(c => {
+        const codigo = String(c.codigo_cliente).trim();
+        const favor = saldosFavor.get(codigo) ?? 0;
+        const bruto = Number(c.saldo_total) || 0;
+        const aplicable = Math.min(bruto, favor);
+        const neto = Math.max(0, bruto - favor);
+        return {
+          ...c,
+          saldo_a_favor: aplicable,
+          saldo_neto: neto,
+          cubierto_por_anticipo: favor >= bruto && bruto > 0,
+        };
+      });
     }
 
     // Cruzar con datos enriquecidos

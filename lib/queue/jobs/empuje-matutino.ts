@@ -1,6 +1,7 @@
 import { enviarMensajeGrupo } from '@/lib/telegram/client';
 import { cobranzasQuery } from '@/lib/db/cobranzas';
 import { softecQuery, testSoftecConnection } from '@/lib/db/softec';
+import { obtenerSaldoAFavorPorCliente } from '@/lib/cobranzas/saldo-favor';
 
 interface SegmentoData {
   segmento: string;
@@ -9,10 +10,21 @@ interface SegmentoData {
   saldo_total: number;
 }
 
+/**
+ * CP-15: el resumen matutino se reporta en bruto y neto. La cartera neta
+ * descuenta el saldo a favor de cada cliente (recibos sin aplicar). Los
+ * conteos de facturas y de clientes son brutos a propósito (el supervisor
+ * necesita saber cuántos casos hay sin importar el neto). `clientes_cubiertos`
+ * informa cuántos clientes tienen el pendiente totalmente cubierto por
+ * anticipo y por lo tanto NO deben recibir cobranza.
+ */
 interface ResumenCartera {
   cartera_total: number;
+  cartera_a_favor: number;
+  cartera_neta: number;
   total_facturas: number;
   total_clientes: number;
+  clientes_cubiertos: number;
   por_segmento: Record<'VERDE' | 'AMARILLO' | 'NARANJA' | 'ROJO', number>;
 }
 
@@ -48,12 +60,14 @@ async function obtenerResumenCartera(): Promise<ResumenCartera | null> {
 
     const resumen: ResumenCartera = {
       cartera_total: 0,
+      cartera_a_favor: 0,
+      cartera_neta: 0,
       total_facturas: 0,
       total_clientes: 0,
+      clientes_cubiertos: 0,
       por_segmento: { VERDE: 0, AMARILLO: 0, NARANJA: 0, ROJO: 0 },
     };
 
-    const clientesUnicos = new Set<string>();
     for (const s of segmentos) {
       const seg = s.segmento as keyof ResumenCartera['por_segmento'];
       const facturas = Number(s.num_facturas);
@@ -61,7 +75,6 @@ async function obtenerResumenCartera(): Promise<ResumenCartera | null> {
       resumen.por_segmento[seg] = facturas;
       resumen.total_facturas += facturas;
       resumen.cartera_total += saldo;
-      clientesUnicos.add(seg + ':' + s.num_clientes);
     }
 
     const totalClientes = await softecQuery<{ total: number }>(`
@@ -71,6 +84,40 @@ async function obtenerResumenCartera(): Promise<ResumenCartera | null> {
         AND (f.IJ_TOT - f.IJ_TOTAPPL) > 0
     `);
     resumen.total_clientes = Number(totalClientes[0]?.total) || 0;
+
+    // CP-15: descontar saldo a favor por cliente. El saldo a favor de un
+    // cliente solo cubre su propio pendiente (no se transfiere entre
+    // clientes), y nunca por encima de su pendiente bruto.
+    const pendientesPorCliente = await softecQuery<{
+      codigo_cliente: string;
+      pendiente: number;
+    }>(`
+      SELECT
+        f.IJ_CCODE                    AS codigo_cliente,
+        SUM(f.IJ_TOT - f.IJ_TOTAPPL)  AS pendiente
+      FROM v_cobr_ijnl f
+      WHERE f.IJ_TYPEDOC = 'IN' AND f.IJ_INVTORF = 'T' AND f.IJ_PAID = 'F'
+        AND (f.IJ_TOT - f.IJ_TOTAPPL) > 0
+      GROUP BY f.IJ_CCODE
+    `);
+
+    const codigos = pendientesPorCliente.map((p) => String(p.codigo_cliente).trim());
+    const saldosFavor = await obtenerSaldoAFavorPorCliente(codigos);
+
+    let aFavorAplicable = 0;
+    let netoAcumulado = 0;
+    let cubiertos = 0;
+    for (const r of pendientesPorCliente) {
+      const codigo = String(r.codigo_cliente).trim();
+      const pendiente = Number(r.pendiente) || 0;
+      const favor = saldosFavor.get(codigo) ?? 0;
+      aFavorAplicable += Math.min(pendiente, favor);
+      netoAcumulado += Math.max(0, pendiente - favor);
+      if (favor >= pendiente && pendiente > 0) cubiertos += 1;
+    }
+    resumen.cartera_a_favor = Math.round(aFavorAplicable * 100) / 100;
+    resumen.cartera_neta = Math.round(netoAcumulado * 100) / 100;
+    resumen.clientes_cubiertos = cubiertos;
 
     return resumen;
   } catch (error) {
@@ -198,8 +245,18 @@ export async function ejecutarEmpujeMatutino(): Promise<void> {
   let mensaje = `📊 <b>Resumen de Cobranzas</b>\n<i>${hoy}</i>\n\n`;
 
   if (cartera) {
-    mensaje += `💰 <b>Cartera vencida:</b> ${formatMonto(cartera.cartera_total)}\n`;
-    mensaje += `📄 ${cartera.total_facturas} facturas · 👥 ${cartera.total_clientes} clientes\n\n`;
+    // CP-15: reportar bruto, saldo a favor y neto. El neto es el cobrable
+    // real (resta los anticipos que cada cliente ya entregó).
+    mensaje += `💰 <b>Cartera vencida (bruta):</b> ${formatMonto(cartera.cartera_total)}\n`;
+    if (cartera.cartera_a_favor > 0) {
+      mensaje += `💵 Saldo a favor (anticipos): ${formatMonto(cartera.cartera_a_favor)}\n`;
+      mensaje += `🎯 <b>Cartera neta (cobrable):</b> ${formatMonto(cartera.cartera_neta)}\n`;
+    }
+    mensaje += `📄 ${cartera.total_facturas} facturas · 👥 ${cartera.total_clientes} clientes`;
+    if (cartera.clientes_cubiertos > 0) {
+      mensaje += ` (${cartera.clientes_cubiertos} cubiertos por anticipo)`;
+    }
+    mensaje += `\n\n`;
     mensaje += `<b>Por segmento:</b>\n`;
     mensaje += `🟢 Verde (vence pronto): ${cartera.por_segmento.VERDE}\n`;
     mensaje += `🟡 Amarillo (1-15 días): ${cartera.por_segmento.AMARILLO}\n`;

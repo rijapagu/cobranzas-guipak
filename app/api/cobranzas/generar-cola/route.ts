@@ -7,6 +7,7 @@ import { softecQuery, testSoftecConnection } from '@/lib/db/softec';
 import type { FacturaVencida } from '@/lib/types/cartera';
 import { seleccionarPlantilla } from '@/lib/templates/seleccionar';
 import { renderPlantilla } from '@/lib/templates/render';
+import { obtenerSaldoAFavorPorCliente } from '@/lib/cobranzas/saldo-favor';
 
 /**
  * POST /api/cobranzas/generar-cola
@@ -55,6 +56,41 @@ export async function POST() {
     );
     const pausadoIds = new Set(pausados.map((p) => p.codigo_cliente.trim()));
     facturas = facturas.filter((f) => !pausadoIds.has(f.codigo_cliente.trim()));
+
+    // CP-15: excluir clientes cuyo saldo a favor (anticipos / recibos sin
+    // aplicar) cubre o excede su saldo pendiente bruto. No tiene sentido
+    // mandar cobranza a un cliente al que le debemos dinero — el supervisor
+    // debe aplicar el anticipo. Registramos cuántos se excluyen para
+    // trazabilidad (CP-08).
+    let clientesCubiertosExcluidos = 0;
+    let facturasExcluidasPorCobertura = 0;
+    if (softecOk && facturas.length > 0) {
+      const pendientePorCliente = new Map<string, number>();
+      for (const f of facturas) {
+        const codigo = String(f.codigo_cliente).trim();
+        pendientePorCliente.set(
+          codigo,
+          (pendientePorCliente.get(codigo) ?? 0) + (Number(f.saldo_pendiente) || 0)
+        );
+      }
+      const codigosDeFacturas = Array.from(pendientePorCliente.keys());
+      const saldosFavor = await obtenerSaldoAFavorPorCliente(codigosDeFacturas);
+      const clientesCubiertos = new Set<string>();
+      for (const [codigo, pendiente] of pendientePorCliente.entries()) {
+        const favor = saldosFavor.get(codigo) ?? 0;
+        if (favor >= pendiente && pendiente > 0) {
+          clientesCubiertos.add(codigo);
+        }
+      }
+      if (clientesCubiertos.size > 0) {
+        const facturasAntes = facturas.length;
+        facturas = facturas.filter(
+          (f) => !clientesCubiertos.has(String(f.codigo_cliente).trim())
+        );
+        clientesCubiertosExcluidos = clientesCubiertos.size;
+        facturasExcluidasPorCobertura = facturasAntes - facturas.length;
+      }
+    }
 
     // Limitar a 20 facturas por generación
     const facturasAGenerar = facturas.slice(0, 20);
@@ -169,13 +205,23 @@ export async function POST() {
       'COLA_GENERADA',
       'sistema',
       '0',
-      { facturas_procesadas: facturasAGenerar.length, gestiones_generadas: generadas, modo: softecOk ? 'live' : 'mock' }
+      {
+        facturas_procesadas: facturasAGenerar.length,
+        gestiones_generadas: generadas,
+        // CP-15: trazabilidad de exclusiones por saldo a favor
+        clientes_excluidos_por_saldo_a_favor: clientesCubiertosExcluidos,
+        facturas_excluidas_por_saldo_a_favor: facturasExcluidasPorCobertura,
+        modo: softecOk ? 'live' : 'mock',
+      }
     );
 
     return NextResponse.json({
       message: `Cola generada: ${generadas} gestiones creadas`,
       generadas,
       total_facturas: facturas.length,
+      // CP-15: feedback al UI de cuántos clientes se omitieron por anticipos.
+      clientes_excluidos_por_saldo_a_favor: clientesCubiertosExcluidos,
+      facturas_excluidas_por_saldo_a_favor: facturasExcluidasPorCobertura,
       modo: softecOk ? 'live' : 'mock',
     });
   } catch (error) {

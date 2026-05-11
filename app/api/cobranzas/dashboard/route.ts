@@ -2,11 +2,14 @@ import { NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth/session';
 import { cobranzasQuery } from '@/lib/db/cobranzas';
 import { softecQuery, testSoftecConnection } from '@/lib/db/softec';
+import { obtenerSaldoAFavorPorCliente } from '@/lib/cobranzas/saldo-favor';
 import { getMockCartera } from '@/lib/mock/cartera-mock';
 
 interface DashboardKPIs {
   // Cartera
-  cartera_total: number;
+  cartera_total: number;          // bruto (compat)
+  cartera_total_a_favor: number;  // CP-15: anticipos aplicables
+  cartera_total_neta: number;     // CP-15: bruto - a favor
   total_facturas: number;
   total_clientes: number;
   dso: number;
@@ -25,8 +28,15 @@ interface DashboardKPIs {
   wa_respondidos_mes: number;
   email_enviados_mes: number;
   email_respondidos_mes: number;
-  // Top 10 clientes
-  top_clientes: { codigo: string; nombre: string; saldo: number; facturas: number }[];
+  // Top 10 clientes — CP-15: ordenado por saldo_neto, no por saldo bruto.
+  top_clientes: {
+    codigo: string;
+    nombre: string;
+    saldo: number;          // bruto (compat)
+    saldo_a_favor: number;
+    saldo_neto: number;
+    facturas: number;
+  }[];
   // Alertas
   promesas_vencidas: number;
   facturas_sin_gestion_30d: number;
@@ -49,6 +59,8 @@ export async function GET() {
     const softecOk = await testSoftecConnection();
     const kpis: DashboardKPIs = {
       cartera_total: 0,
+      cartera_total_a_favor: 0,
+      cartera_total_neta: 0,
       total_facturas: 0,
       total_clientes: 0,
       dso: 0,
@@ -106,7 +118,8 @@ export async function GET() {
       kpis.total_clientes = kpis.segmentos.reduce((sum, s) => sum + s.clientes, 0);
       kpis.cartera_total = kpis.segmentos.reduce((sum, s) => sum + s.saldo, 0);
 
-      // Top 10 clientes
+      // Top clientes — CP-15: traemos más candidatos (top 30 por bruto),
+      // restamos saldo a favor, reordenamos por NETO y nos quedamos con 10.
       const top = await softecQuery<{
         codigo: string;
         nombre: string;
@@ -125,14 +138,52 @@ export async function GET() {
           AND f.IJ_DUEDATE < CURDATE()
         GROUP BY c.IC_CODE, c.IC_NAME
         ORDER BY saldo DESC
-        LIMIT 10
+        LIMIT 30
       `);
-      kpis.top_clientes = top.map(t => ({
-        codigo: String(t.codigo).trim(),
-        nombre: String(t.nombre).trim(),
-        saldo: Number(t.saldo),
-        facturas: Number(t.facturas),
-      }));
+      const codigos = top.map(t => String(t.codigo).trim());
+      const saldosFavor = await obtenerSaldoAFavorPorCliente(codigos);
+      kpis.top_clientes = top
+        .map(t => {
+          const codigo = String(t.codigo).trim();
+          const saldoBruto = Number(t.saldo);
+          const favor = saldosFavor.get(codigo) ?? 0;
+          const aplicable = Math.min(saldoBruto, favor);
+          const neto = Math.max(0, saldoBruto - favor);
+          return {
+            codigo,
+            nombre: String(t.nombre).trim(),
+            saldo: saldoBruto,
+            saldo_a_favor: aplicable,
+            saldo_neto: neto,
+            facturas: Number(t.facturas),
+          };
+        })
+        .sort((a, b) => b.saldo_neto - a.saldo_neto)
+        .slice(0, 10);
+
+      // CP-15: cartera neta global. Restamos saldo a favor solo en clientes
+      // que tienen pendiente — no transferimos entre clientes.
+      const clientesPendientes = await softecQuery<{ codigo_cliente: string; pendiente: number }>(`
+        SELECT
+          f.IJ_CCODE AS codigo_cliente,
+          SUM(f.IJ_TOT - f.IJ_TOTAPPL) AS pendiente
+        FROM v_cobr_ijnl f
+        WHERE f.IJ_TYPEDOC = 'IN' AND f.IJ_INVTORF = 'T' AND f.IJ_PAID = 'F'
+          AND (f.IJ_TOT - f.IJ_TOTAPPL) > 0
+        GROUP BY f.IJ_CCODE
+      `);
+      const saldosFavorTodos = await obtenerSaldoAFavorPorCliente();
+      let aFavorAplicable = 0;
+      let netoAcumulado = 0;
+      for (const r of clientesPendientes) {
+        const codigo = String(r.codigo_cliente).trim();
+        const pendiente = Number(r.pendiente) || 0;
+        const favor = saldosFavorTodos.get(codigo) ?? 0;
+        aFavorAplicable += Math.min(pendiente, favor);
+        netoAcumulado += Math.max(0, pendiente - favor);
+      }
+      kpis.cartera_total_a_favor = Math.round(aFavorAplicable * 100) / 100;
+      kpis.cartera_total_neta = Math.round(netoAcumulado * 100) / 100;
 
       // DSO = (CxC / Ventas últimos 90 días) × 90
       const dsoData = await softecQuery<{ cxc: number; ventas_90: number }>(`
@@ -184,12 +235,20 @@ export async function GET() {
       kpis.total_facturas = mockData.length;
       kpis.total_clientes = new Set(mockData.map(f => f.codigo_cliente)).size;
       kpis.cartera_total = mockData.reduce((sum, f) => sum + f.saldo_pendiente, 0);
+      // CP-15: en mock no hay anticipos modelados — neto == bruto, a favor 0.
+      kpis.cartera_total_a_favor = 0;
+      kpis.cartera_total_neta = kpis.cartera_total;
       kpis.dso = 45; // Mock value
 
       kpis.top_clientes = Object.entries(clienteMap)
         .sort(([, a], [, b]) => b.saldo - a.saldo)
         .slice(0, 10)
-        .map(([codigo, data]) => ({ codigo, ...data }));
+        .map(([codigo, data]) => ({
+          codigo,
+          ...data,
+          saldo_a_favor: 0,
+          saldo_neto: data.saldo,
+        }));
 
       kpis.clientes_sin_contacto = mockData.filter(f => !f.email && !f.telefono).length;
     }

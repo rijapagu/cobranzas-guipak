@@ -16,10 +16,24 @@ import TablaCartera from "@/components/cartera/TablaCartera";
 
 const { Title, Text } = Typography;
 
+// CP-15: el endpoint /resumen-segmentos puede traer `total_a_favor` y
+// `total_neto` (campos opcionales para no romper consumers viejos). Si
+// vienen, la fila superior de cartera muestra bruto/a favor/neto.
+interface SaldoCliente {
+  saldo_pendiente: number;
+  saldo_a_favor: number;
+  saldo_neto: number;
+  cubierto_por_anticipo: boolean;
+}
+
 export default function CarteraPage() {
   // Data
   const [facturas, setFacturas] = useState<FacturaVencida[]>([]);
   const [segmentos, setSegmentos] = useState<ResumenSegmento[]>([]);
+  const [totales, setTotales] = useState<
+    { bruto: number; a_favor: number; neto: number } | undefined
+  >(undefined);
+  const [saldosClientes, setSaldosClientes] = useState<Record<string, SaldoCliente>>({});
   const [modo, setModo] = useState<"live" | "mock">("mock");
   const [ultimaConsulta, setUltimaConsulta] = useState<string>("");
 
@@ -38,8 +52,23 @@ export default function CarteraPage() {
       const res = await fetch("/api/softec/resumen-segmentos");
       const data = await res.json();
       setSegmentos(data.segmentos || []);
+      // CP-15: cargar totales globales si el endpoint los devuelve.
+      if (
+        typeof data.total_cartera === "number" &&
+        typeof data.total_a_favor === "number" &&
+        typeof data.total_neto === "number"
+      ) {
+        setTotales({
+          bruto: data.total_cartera,
+          a_favor: data.total_a_favor,
+          neto: data.total_neto,
+        });
+      } else {
+        setTotales(undefined);
+      }
     } catch {
       setSegmentos([]);
+      setTotales(undefined);
     } finally {
       setLoadingResumen(false);
     }
@@ -60,6 +89,7 @@ export default function CarteraPage() {
       const res = await fetch(`/api/softec/cartera-vencida?${params.toString()}`);
       const data = await res.json();
       setFacturas(data.facturas || []);
+      setSaldosClientes(data.saldos_clientes || {});
       setModo(data.modo || "mock");
       setUltimaConsulta(data.ultima_consulta || new Date().toISOString());
 
@@ -68,6 +98,7 @@ export default function CarteraPage() {
       setVendedores(vends as string[]);
     } catch {
       setFacturas([]);
+      setSaldosClientes({});
     } finally {
       setLoadingFacturas(false);
     }
@@ -152,12 +183,13 @@ export default function CarteraPage() {
         />
       )}
 
-      {/* Resumen por segmento */}
+      {/* Resumen por segmento (con totales CP-15 si hay anticipos) */}
       <ResumenCards
         segmentos={segmentos}
         loading={loadingResumen}
         filtroActivo={filtroSegmentoCard}
         onClickSegmento={handleClickSegmento}
+        totales={totales}
       />
 
       {/* Filtros */}
@@ -171,7 +203,11 @@ export default function CarteraPage() {
       </div>
 
       {/* Tabla */}
-      <TablaCartera facturas={facturas} loading={loadingFacturas} />
+      <TablaCartera
+        facturas={facturas}
+        loading={loadingFacturas}
+        saldosClientes={saldosClientes}
+      />
     </div>
   );
 }

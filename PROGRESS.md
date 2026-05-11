@@ -444,3 +444,101 @@ INTERNAL_CRON_SECRET=...
 
 ### Próximo
 **Validación end-to-end con clientes reales** — probar ciclo: cliente WA → cola → supervisor → cliente recibe → si promete pago, valida que se cree el acuerdo + auto-tarea de seguimiento + que aparezca en empuje matutino del día siguiente.
+
+---
+
+## Sesión 10-11 Mayo 2026 — Hallazgo del bug saldo a favor + fix CP-15
+
+### El bug
+
+Mientras se revisaba la cartera del 10-may, se detectó que ningún endpoint
+del sistema descontaba los **recibos sin aplicar** del saldo del cliente.
+Resultado: la cartera reportada al usuario, al bot y al cliente final
+sumaba `IJ_TOT - IJ_TOTAPPL` por factura y nunca restaba el saldo a favor
+que el cliente ya había entregado (recibos en `ijnl_pay` que no estaban
+aplicados a facturas via `irjnl`).
+
+### Dimensión global (validada contra Softec producción 10-may-2026)
+
+| Métrica | Valor |
+|---|---|
+| Cartera bruta | $31.45M |
+| Saldo a favor global | $8.43M |
+| Saldo a favor aplicable (limitado al pendiente de cada cliente) | $3.94M |
+| Cartera neta cobrable | $27.51M |
+| Sobrecobro reportado al usuario | **14.6%** |
+| Clientes con saldo a favor ≥ pendiente bruto | **58** (esperado 57, tolerancia ±3) |
+
+Top casos: SENADO (`CG0029`) cubierto ($263k a favor vs $187k pendiente);
+Universidad Católica (`0000997`) con $1.31M a favor que reducía
+parcialmente su pendiente; Tribunal Constitucional, MICM, `SR0017` con
+anticipos significativos. Para el operador, ver casos completos en
+`CRITICAL_POINTS.md` CP-15.
+
+### Decisión de producto
+
+**Opción B (confirmada por el usuario):** excluir de la cola de cobranza a
+los 58 clientes con saldo a favor ≥ pendiente; sus facturas quedan
+visibles en cartera, marcadas con el badge "Cubierta por anticipo". La
+acción correcta para estos clientes no es cobrar — es que contabilidad
+aplique el anticipo. El bot bloquea automáticamente la generación de
+drafts de correo para ellos.
+
+### Helper central
+
+`lib/cobranzas/saldo-favor.ts` — 3 exports:
+- `obtenerSaldoAFavorPorCliente(codigos?)` — `Map<codigo, monto>`.
+- `ajustarSaldoCliente(saldoBruto, saldoFavor)` — calcula neto / cubierto.
+- `ajustarSaldoClientes(pendientesPorCliente)` — atajo combinado.
+
+Apoyado en CP-13 (JOIN recibo↔aplicación por `IR_PLOCAL/IR_PTYPDOC/IR_RECNUM`, no por `IR_F*`) y CP-14 (no usar `IJ_ONLPAID` ni desglosados; sumar `IR_AMTPAID` agregado).
+
+### Los 8 commits del fix
+
+| # | Commit | Descripción |
+|---|---|---|
+| 1 | `8db0eed` | `feat(cobranzas): helper saldo-favor por cliente (CP-15)` — helper + tipos + smoke `test-saldo-favor.ts` (22 asserts). |
+| 2 | `336808c` | `fix(cobranzas-api): aplicar saldo a favor en endpoints de cartera y dashboard (CP-15)` — 6 endpoints (cartera-vencida, resumen-segmentos, dashboard, clientes, alertas, cartera-excel). |
+| 3 | `8602b97` | `fix(portal): mostrar saldo neto y mensaje claro cuando hay anticipos (CP-15)` — portal cliente backend con mensaje pre-formateado. |
+| 4 | `291eb6c` | `fix(cobranzas-cola): excluir clientes con saldo a favor que cubre pendiente (CP-15)` — opción B en `/api/cobranzas/generar-cola`. |
+| 5 | `4fe33a3` | `fix(telegram): bot y empuje matutino reportan saldo neto, bloquean cobranza a cubiertos (CP-15)` — 3 tools del bot + bloqueo en `proponer_correo_cliente` + empuje matutino. Smoke `test-saldo-favor-telegram.ts` (10 asserts). |
+| 6 | `92be701` | `fix(reportes): estado-cuenta Excel incluye saldo a favor y neto (CP-15)` — 3 columnas nuevas + segunda hoja "Resumen". |
+| 7 | `ed63e2c` | `feat(ui-cobranzas): mostrar saldo neto y badge cubierto por anticipo (CP-15)` — dashboard 3 cards, ResumenCards, tabla cartera, lista clientes. |
+| 8 | `d7bcaee` | `feat(portal-ui): vista clara con bruto/a favor/neto y mensaje (CP-15)` — portal UI con Alert + 4 cards. |
+
+### Pantallas tocadas (UI)
+
+| Superficie | Cambio |
+|---|---|
+| Dashboard `/` | Fila superior con 3 cards (bruta / a favor / neta). KPIs secundarios bajan a segunda fila. Top 10 ordenado por saldo neto. |
+| `/cartera` + `ResumenCards` | Fila opcional con totales globales si hay anticipos; tabla con 2 columnas nuevas (a favor, neto) y badge "Cubierta por anticipo". |
+| `/clientes` | Columna "Saldo Neto" como primaria; sorter default desc; tag bajo el monto cuando está cubierto. |
+| Portal `/portal/[token]` | Alert success/info; resumen de 2 a 4 cards cuando hay anticipo. |
+
+### 14 superficies del backend cubiertas
+
+(Lista completa en CP-15 de `CRITICAL_POINTS.md`.) Endpoints HTTP: 9.
+Tools del bot: 4. Job de empuje matutino: 1.
+
+### Limitación de validación visual
+
+El preview server arrancó sin errores (`Next.js Ready in 15.8s`, compiló
+`/login` en 33.7s — Issue #7 FS lento confirmado). Las pantallas internas
+están detrás del login y no había credenciales en el entorno de la
+sesión; el portal requiere un token HMAC del que tampoco hay datos. La
+verificación visual de los nuevos componentes con datos reales queda
+para el usuario en su entorno local (ver `PENDIENTE_USUARIO.md`).
+
+La lógica está cubierta por:
+- `tsc --noEmit` limpio después de cada commit.
+- 32 asserts agregados entre los dos smoke tests contra Softec real.
+- Los datos crudos del bug (bruto $31.45M, a favor $8.43M, neto $27.51M,
+  58 cubiertos, sobrecobro 14.6%) reproducidos por el smoke.
+
+### Próximo
+
+Pendiente del usuario después del próximo deploy local con sesión válida:
+validar las 4 pantallas, confirmar que la cola excluye a los 58 clientes
+cubiertos, confirmar que el empuje matutino muestra neto, y verificar el
+portal con un cliente cubierto. Detalle completo en
+`PENDIENTE_USUARIO.md`.

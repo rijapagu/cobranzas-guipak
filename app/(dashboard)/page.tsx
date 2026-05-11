@@ -36,6 +36,9 @@ const { Title, Text } = Typography;
 
 interface DashboardKPIs {
   cartera_total: number;
+  // CP-15: bruto vs neto. El backend ya los pobla; en mock pueden venir en 0.
+  cartera_total_a_favor?: number;
+  cartera_total_neta?: number;
   total_facturas: number;
   total_clientes: number;
   dso: number;
@@ -50,7 +53,16 @@ interface DashboardKPIs {
   wa_respondidos_mes: number;
   email_enviados_mes: number;
   email_respondidos_mes: number;
-  top_clientes: { codigo: string; nombre: string; saldo: number; facturas: number }[];
+  // CP-15: top 10 ya viene ordenado por saldo_neto. Campos a_favor / neto
+  // son opcionales para no romper con respuestas legacy o mock.
+  top_clientes: {
+    codigo: string;
+    nombre: string;
+    saldo: number;
+    saldo_a_favor?: number;
+    saldo_neto?: number;
+    facturas: number;
+  }[];
   promesas_vencidas: number;
   facturas_sin_gestion_30d: number;
   clientes_sin_contacto: number;
@@ -120,7 +132,12 @@ export default function DashboardPage() {
   const totalEmail = kpis.email_enviados_mes;
   const tasaRespuestaEmail = totalEmail > 0 ? Math.round((kpis.email_respondidos_mes / totalEmail) * 100) : 0;
 
-  const topColumns: ColumnsType<{ codigo: string; nombre: string; saldo: number; facturas: number }> = [
+  // CP-15: si el backend ya pobló a favor / neto úsalos; si no, cae al bruto.
+  const carteraNeta = kpis.cartera_total_neta ?? kpis.cartera_total;
+  const carteraAFavor = kpis.cartera_total_a_favor ?? 0;
+  const hayAnticipos = carteraAFavor > 0.01;
+
+  const topColumns: ColumnsType<DashboardKPIs["top_clientes"][number]> = [
     {
       title: "#",
       key: "index",
@@ -138,15 +155,28 @@ export default function DashboardPage() {
       ),
     },
     {
-      title: "Saldo",
-      dataIndex: "saldo",
+      // CP-15: la columna principal pasa a ser saldo NETO (lo cobrable real).
+      // El bruto queda como subtítulo discreto solo cuando difiere del neto.
+      title: "Saldo neto",
       key: "saldo",
       align: "right",
-      render: (val: number) => (
-        <Text strong style={{ color: "#cf1322" }}>
-          {formatMontoCompleto(val)}
-        </Text>
-      ),
+      render: (_, r) => {
+        const neto = r.saldo_neto ?? r.saldo;
+        const bruto = r.saldo;
+        const difiere = Math.abs(bruto - neto) > 0.01;
+        return (
+          <Space direction="vertical" size={0} align="end">
+            <Text strong style={{ color: "#cf1322" }}>
+              {formatMontoCompleto(neto)}
+            </Text>
+            {difiere && (
+              <Text type="secondary" style={{ fontSize: 10 }}>
+                bruto {formatMonto(bruto)}
+              </Text>
+            )}
+          </Space>
+        );
+      },
     },
     {
       title: "Fact.",
@@ -196,20 +226,59 @@ export default function DashboardPage() {
         </Row>
       )}
 
-      {/* KPIs principales */}
+      {/* CP-15: tres cards de cartera — bruto / a favor / neto cobrable.
+          Si no hay anticipos, las 3 muestran el mismo número (consistencia
+          visual) y el subtítulo "a favor" queda en cero. */}
       <Row gutter={[16, 16]}>
-        <Col xs={24} sm={12} lg={6}>
+        <Col xs={24} sm={12} lg={8}>
           <Card>
             <Statistic
-              title="Cartera Vencida"
+              title="Cartera Vencida (bruta)"
               value={kpis.cartera_total}
               prefix={<DollarOutlined />}
               formatter={() => formatMonto(kpis.cartera_total)}
               valueStyle={{ color: "#cf1322" }}
             />
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              Suma de saldos pendientes en Softec
+            </Text>
           </Card>
         </Col>
-        <Col xs={24} sm={12} lg={6}>
+        <Col xs={24} sm={12} lg={8}>
+          <Card>
+            <Statistic
+              title="Saldo a Favor (anticipos)"
+              value={carteraAFavor}
+              prefix={<DollarOutlined />}
+              formatter={() => formatMonto(carteraAFavor)}
+              valueStyle={{ color: hayAnticipos ? "#1890ff" : "#8c8c8c" }}
+            />
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              Recibos sin aplicar a facturas
+            </Text>
+          </Card>
+        </Col>
+        <Col xs={24} sm={12} lg={8}>
+          <Card>
+            <Statistic
+              title="Cartera Neta (cobrable)"
+              value={carteraNeta}
+              prefix={<DollarOutlined />}
+              formatter={() => formatMonto(carteraNeta)}
+              valueStyle={{ color: "#cf1322" }}
+            />
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              {hayAnticipos
+                ? "Bruto menos saldo a favor"
+                : "Sin anticipos por descontar"}
+            </Text>
+          </Card>
+        </Col>
+      </Row>
+
+      {/* KPIs secundarios */}
+      <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
+        <Col xs={24} sm={12} lg={8}>
           <Card>
             <Statistic
               title="DSO (Days Sales Outstanding)"
@@ -220,7 +289,7 @@ export default function DashboardPage() {
             />
           </Card>
         </Col>
-        <Col xs={24} sm={12} lg={6}>
+        <Col xs={24} sm={12} lg={8}>
           <Card>
             <Statistic
               title="Facturas Pendientes"
@@ -233,7 +302,7 @@ export default function DashboardPage() {
             </Text>
           </Card>
         </Col>
-        <Col xs={24} sm={12} lg={6}>
+        <Col xs={24} sm={12} lg={8}>
           <Card>
             <Statistic
               title="Gestiones Hoy"
@@ -283,7 +352,7 @@ export default function DashboardPage() {
           </Card>
         </Col>
         <Col xs={24} lg={12}>
-          <Card title="Top 10 Clientes con Mayor Saldo">
+          <Card title="Top 10 Clientes con Mayor Saldo Neto">
             <Table
               columns={topColumns}
               dataSource={kpis.top_clientes}

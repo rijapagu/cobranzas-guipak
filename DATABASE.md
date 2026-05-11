@@ -591,6 +591,139 @@ GROUP BY segmento
 ORDER BY FIELD(segmento, 'ROJO', 'NARANJA', 'AMARILLO', 'VERDE');
 ```
 
+> **Atención CP-15:** `saldo_total` arriba es **bruto** y no es el monto cobrable real. Para reportar a un humano usar el ajuste por saldo a favor del cliente — ver PARTE 4 abajo.
+
 ---
 
-*Versión: 1.1 — Abril 2026*
+## PARTE 4 — Cómo calcular saldos correctamente
+
+> Esta sección consolida la lógica de saldos validada contra producción
+> (10-may-2026) y referencia los puntos críticos relevantes. Si vas a
+> escribir un endpoint o reporte que muestre saldos a un humano, lee
+> todo antes de teclear.
+
+### 4.1 Saldo de una FACTURA
+
+**Fórmula:**
+
+```
+saldo_factura = IJ_TOT - IJ_TOTAPPL
+```
+
+**Filtros obligatorios (CP-04):**
+
+```sql
+WHERE IJ_TYPEDOC = 'IN'
+  AND IJ_INVTORF = 'T'
+  AND IJ_PAID    = 'F'
+  AND (IJ_TOT - IJ_TOTAPPL) > 0
+```
+
+**Sigue válido para:**
+- Filas individuales en la tabla de cartera (saldo de esa factura).
+- DSO y métricas contables estándar (que requieren bruto por convención).
+- Snapshot inmutable guardado en `cobranza_gestiones.saldo_pendiente`.
+
+**No usar para:**
+- Agregar a nivel cliente (puede haber recibos sin aplicar — ver 4.2).
+- Mostrar "saldo total del cliente" al usuario sin ajuste.
+
+### 4.2 Saldo del CLIENTE
+
+> **Punto crítico:** un cliente puede tener recibos en `ijnl_pay` cuyo
+> monto NO se aplicó (parcial o totalmente) a sus facturas. Ese remanente
+> es **saldo a favor** y debe descontarse del pendiente bruto cuando se
+> reporta el saldo del cliente.
+
+**Fórmula consolidada (CP-15):**
+
+```
+pendiente_bruto       = SUM(IJ_TOT - IJ_TOTAPPL) por cliente
+saldo_a_favor         = SUM(IJ_TOT_recibo - SUM(IR_AMTPAID)) por cliente, solo recibos con sin_aplicar > 0.01
+saldo_a_favor_aplicable = MIN(pendiente_bruto, saldo_a_favor)
+saldo_neto            = MAX(0, pendiente_bruto - saldo_a_favor)
+cubierto_por_anticipo = saldo_a_favor >= pendiente_bruto AND pendiente_bruto > 0
+```
+
+**Query del saldo a favor (CP-13 + CP-14):**
+
+```sql
+SELECT
+  codigo_cliente,
+  SUM(sin_aplicar) AS saldo_a_favor
+FROM (
+  SELECT
+    pay.IJ_CCODE                            AS codigo_cliente,
+    (pay.IJ_TOT - IFNULL(ap.aplicado, 0))   AS sin_aplicar
+  FROM v_cobr_ijnl_pay pay
+  LEFT JOIN (
+    SELECT
+      r.IR_PLOCAL,
+      r.IR_PTYPDOC,
+      r.IR_RECNUM,
+      SUM(r.IR_AMTPAID) AS aplicado
+    FROM v_cobr_irjnl r
+    GROUP BY r.IR_PLOCAL, r.IR_PTYPDOC, r.IR_RECNUM
+  ) ap
+    ON  ap.IR_PLOCAL  = pay.IJ_LOCAL
+    AND ap.IR_PTYPDOC = pay.IJ_SINORIN
+    AND ap.IR_RECNUM  = pay.IJ_RECNUM
+  WHERE pay.IJ_CCODE IS NOT NULL
+) recibos
+WHERE sin_aplicar > 0.01     -- filtrar antes de agregar por cliente
+GROUP BY codigo_cliente
+HAVING saldo_a_favor > 0.01;
+```
+
+**Tres notas críticas del JOIN:**
+
+1. **CP-13**: el JOIN se hace por `IR_PLOCAL / IR_PTYPDOC / IR_RECNUM` (que apuntan al recibo). **No** usar `IR_F*` (factura) — en Guipak vienen vacías a nivel de pago.
+2. **CP-14**: no usar `IJ_ONLPAID` ni desglosados de `ijnl_pay`. Suma siempre `IR_AMTPAID` agregado de `irjnl`.
+3. Filtrar `sin_aplicar > 0.01` ANTES de agrupar por cliente — un recibo sobre-aplicado (raro, viene de ajustes contables) no debe restar del saldo a favor del cliente.
+
+**Tabla "Usar / No usar":**
+
+| Necesitas... | Usa | NO uses |
+|---|---|---|
+| Saldo de UNA factura para mostrarlo en su fila | `IJ_TOT - IJ_TOTAPPL` | — |
+| Saldo TOTAL de un cliente para presentar al usuario | `obtenerSaldoAFavorPorCliente()` + `ajustarSaldoCliente()` | `SUM(IJ_TOT - IJ_TOTAPPL)` solo |
+| Decidir si un cliente debe recibir cobranza | `ajuste.cubierto_por_anticipo === false` | comparar saldo bruto contra 0 |
+| Cartera total agregada (dashboard, reporte global) | bruto + a favor + neto (mostrar los tres) | solo bruto |
+| Cuántos pagos aplicó un recibo | `SUM(IR_AMTPAID)` con JOIN por `IR_PLOCAL/IR_PTYPDOC/IR_RECNUM` (CP-13) | `IJ_ONLPAID` (CP-14) ni `IR_F*` |
+| DSO o métricas contables externas | bruto (estándar de la disciplina) | neto |
+
+**Helper canónico:** `lib/cobranzas/saldo-favor.ts`
+
+```typescript
+// 1) Pedir el mapa de saldo a favor (un solo query agregado)
+import { obtenerSaldoAFavorPorCliente, ajustarSaldoCliente } from '@/lib/cobranzas/saldo-favor';
+
+const saldosFavor = await obtenerSaldoAFavorPorCliente([codigo]);
+const favor = saldosFavor.get(codigo) ?? 0;
+
+// 2) Ajustar contra el pendiente bruto que ya tienes
+const ajuste = ajustarSaldoCliente(saldoBruto, favor);
+
+// ajuste === {
+//   saldo_pendiente: <bruto>,
+//   saldo_a_favor:   <favor>,
+//   saldo_neto:      <max(0, bruto - favor)>,
+//   cubierto_por_anticipo: <favor >= bruto && bruto > 0>
+// }
+```
+
+**Decisiones de producto (10-may-2026):**
+
+- Los clientes con `cubierto_por_anticipo === true` quedan **excluidos** de la cola de cobranza (opción B del CP-15). Sus facturas siguen visibles en cartera, marcadas con badge "Cubierta por anticipo".
+- El bot bloquea la generación de drafts de correo cuando el cliente está cubierto, con motivo `CLIENTE_CUBIERTO_POR_ANTICIPO`.
+- El portal cliente muestra un Alert success con mensaje pre-formateado cuando el cliente está cubierto ("No tienes pagos pendientes...").
+
+**Enlaces cruzados:**
+- CP-13 (JOIN recibo↔aplicación) — `CRITICAL_POINTS.md`
+- CP-14 (no `IJ_ONLPAID`) — `CRITICAL_POINTS.md`
+- CP-15 (restar saldo a favor) — `CRITICAL_POINTS.md`
+- Smoke tests: `scripts/test-saldo-favor.ts`, `scripts/test-saldo-favor-telegram.ts`
+
+---
+
+*Versión: 1.2 — 11 Mayo 2026*

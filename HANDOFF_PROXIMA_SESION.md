@@ -1,8 +1,66 @@
 # HANDOFF — Próxima sesión
 
 > **Documento de continuidad. Léelo completo antes de codear.**
-> Última sesión cerrada: **1 mayo 2026**
-> Estado: Tareas y Calendario en producción ✅ — Sistema operativo end-to-end
+> Última sesión cerrada: **11 mayo 2026** (fix CP-15 saldo a favor — 8 commits)
+> Sesión previa: 1 mayo 2026 (Tareas y Calendario)
+> Estado: fix CP-15 implementado y commiteado en rama `claude/goofy-gates-dc20da` (sin push). Validación visual del UI pendiente — ver `PENDIENTE_USUARIO.md`.
+
+---
+
+## Cierre 11-may-2026 — Fix CP-15 (saldo a favor)
+
+### Bug detectado y corregido
+
+Ningún endpoint del sistema descontaba los recibos sin aplicar (saldo a
+favor del cliente). La cartera se reportaba inflada en **14.6%** ($31.45M
+bruto vs $27.51M cobrable real) y **58 clientes con saldo a favor ≥
+pendiente** recibían cobranza injustamente.
+
+### Decisión
+
+**Opción B (confirmada por usuario):** excluir de la cola de cobranza a
+los 58 clientes cubiertos; sus facturas siguen visibles marcadas con
+badge "Cubierta por anticipo". Contabilidad debe aplicar el anticipo —
+no se les cobra.
+
+### 8 commits del fix (rama `claude/goofy-gates-dc20da`)
+
+| # | Commit | Resumen |
+|---|---|---|
+| 1 | `8db0eed` | helper `lib/cobranzas/saldo-favor.ts` + smoke (22 asserts). |
+| 2 | `336808c` | 6 endpoints (cartera, dashboard, clientes, alertas, Excel). |
+| 3 | `8602b97` | portal cliente backend con mensaje pre-formateado. |
+| 4 | `291eb6c` | `/generar-cola` excluye cubiertos (opción B). |
+| 5 | `4fe33a3` | bot Telegram (4 tools) + empuje matutino + bloqueo CP-15 en draft-correo. Smoke (10 asserts). |
+| 6 | `92be701` | reporte Excel estado-cuenta con saldo neto. |
+| 7 | `ed63e2c` | UI interna: dashboard 3 cards, cartera columnas+badge, clientes ordenado por neto. |
+| 8 | `d7bcaee` | Portal cliente UI: Alert + 4 cards (bruto / a favor / neto). |
+
+### Documentación actualizada en esta sesión
+
+| Doc | Cambio |
+|---|---|
+| `CRITICAL_POINTS.md` | CP-13, CP-14, CP-15 nuevos. Checklist pre-commit ampliado. Versión 1.0 → 1.1. |
+| `DATABASE.md` | PARTE 4 nueva: "Cómo calcular saldos correctamente". Versión 1.1 → 1.2. |
+| `PROGRESS.md` | Sección "Sesión 10-11 mayo 2026 — Hallazgo del bug saldo a favor + fix CP-15". |
+| `HANDOFF_PROXIMA_SESION.md` | Este bloque + actualización de "Estado actual". |
+| `PENDIENTE_USUARIO.md` | Archivo nuevo con items de validación post-deploy. |
+
+### Validación
+
+- `tsc --noEmit` limpio después de cada commit.
+- 2 smoke tests contra Softec real (32 asserts en total): `scripts/test-saldo-favor.ts` y `scripts/test-saldo-favor-telegram.ts`. Reproducen los números del bug (bruto $31.45M, a favor aplicable $3.94M, neto $27.51M, 58 cubiertos).
+- Preview server arrancó en 15.8s y compiló `/login` en 33.7s sin errores. Las pantallas internas requieren login que no había en el entorno — la validación visual queda en `PENDIENTE_USUARIO.md`.
+
+### Working tree al cierre
+
+Solo `.claude/settings.local.json` modificado (permisos locales acumulados al ejecutar `unset` y `npx tsx`). Decisión consciente: no commitearlo — es local del entorno.
+
+### Próximo paso recomendado
+
+1. Validar visualmente las 4 pantallas con sesión real (`PENDIENTE_USUARIO.md`).
+2. Si todo OK, push de los 8 commits a la rama y abrir PR contra master (o merge directo según convención).
+3. Tras deploy, confirmar el primer empuje matutino con saldo neto y la primera ejecución de `/generar-cola` excluyendo los 58 cubiertos.
 
 ---
 
@@ -233,12 +291,12 @@ EVOLUTION_NUMERO_VINCULADO=18098536995
 
 ## 🚀 Para retomar — prompt sugerido
 
-> Lee `HANDOFF_PROXIMA_SESION.md` y `CHECKLIST.md`. Estamos en Cobranzas Guipak, post-Tareas.
+> Lee `HANDOFF_PROXIMA_SESION.md`, `PENDIENTE_USUARIO.md` y `CRITICAL_POINTS.md` (al menos CP-13, CP-14, CP-15). Estamos en Cobranzas Guipak, post-fix CP-15.
 >
-> Lo que cerramos en la sesión 1-may: sistema de Tareas y Calendario completo (migración 013, API CRUD, UI calendario en español, bot crea/lista/marca hecha por NL, auto-tareas desde acuerdos, integradas al empuje matutino).
+> Lo que cerramos en la sesión 10-11 may: fix completo del bug "saldo a favor del cliente nunca se restaba" — 8 commits en rama `claude/goofy-gates-dc20da` (sin push), 14 superficies de backend corregidas, 4 pantallas UI actualizadas, helper canónico `lib/cobranzas/saldo-favor.ts`, 2 smoke tests con 32 asserts contra Softec real.
 >
-> Hoy quiero arrancar **Validación end-to-end con clientes reales** (sección "Pendientes alta prioridad #1" del handoff) — probar el ciclo completo: cliente real responde WA → cola → supervisor → cliente recibe → si promete pago, se crea acuerdo + auto-tarea de seguimiento.
+> Hoy quiero: (a) validar visualmente las 4 pantallas (dashboard, cartera, clientes, portal cliente) con sesión real — items concretos en `PENDIENTE_USUARIO.md`; (b) si todo cuadra, push y deploy; (c) después del primer empuje matutino y del primer `/generar-cola` post-deploy, confirmar que la cartera reportada es la neta y que los 58 clientes cubiertos quedaron excluidos.
 
 ---
 
-*Última actualización: 1-may-2026, sesión Sonnet 4.7 1M*
+*Última actualización: 11-may-2026, sesión Opus 4.7 1M — fix CP-15 saldo a favor*
