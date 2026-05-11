@@ -196,6 +196,34 @@ export const TOOLS: Anthropic.Tool[] = [
       required: ['codigo_cliente', 'campo', 'valor'],
     },
   },
+  {
+    name: 'listar_clientes_sin_datos',
+    description:
+      'Lista los clientes de la cartera vencida que tienen datos de contacto incompletos: sin email y/o sin WhatsApp. Úsalo cuando el usuario quiera saber a quiénes le falta completar datos antes de poder enviarles gestiones de cobranza.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        faltante: {
+          type: 'string',
+          enum: ['email', 'whatsapp', 'cualquiera'],
+          description: 'Filtrar por tipo de dato faltante. Default "cualquiera".',
+        },
+        limite: {
+          type: 'number',
+          description: 'Cantidad máxima a retornar (default 15)',
+        },
+      },
+    },
+  },
+  {
+    name: 'estado_cadencias',
+    description:
+      'Muestra el estado del sistema de cadencias automáticas: cuántas facturas tienen cadencia activa, cuántas se procesaron en el último run, las cadencias configuradas y cuántas facturas estarán listas para accionar hoy.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {},
+    },
+  },
 ];
 
 interface ResultadoTool {
@@ -253,6 +281,15 @@ export async function ejecutarTool(
           String(argumentos.valor),
           ctx
         );
+
+      case 'listar_clientes_sin_datos':
+        return await listarClientesSinDatos(
+          String(argumentos.faltante || 'cualquiera') as 'email' | 'whatsapp' | 'cualquiera',
+          Number(argumentos.limite) || 15
+        );
+
+      case 'estado_cadencias':
+        return await estadoCadencias();
 
       default:
         return { ok: false, error: `Tool desconocida: ${nombre}` };
@@ -770,6 +807,196 @@ async function guardarDatoCliente(
   });
 
   return { ok: true, data: { codigo_cliente: codigo, campo, valor: valorTrimmed } };
+}
+
+// =====================================================================
+// Capa C — Clientes sin datos de contacto
+// =====================================================================
+
+async function listarClientesSinDatos(
+  faltante: 'email' | 'whatsapp' | 'cualquiera',
+  limite: number
+): Promise<ResultadoTool> {
+  const softecOk = await testSoftecConnection();
+  if (!softecOk) return { ok: false, error: 'Sin conexión a Softec' };
+
+  // Obtener clientes con facturas vencidas desde Softec
+  const clientesSoftec = await softecQuery<{
+    codigo: string;
+    nombre: string;
+    email_softec: string | null;
+    telefono_softec: string | null;
+    saldo_bruto: number;
+    facturas: number;
+  }>(`
+    SELECT
+      c.IC_CODE  AS codigo,
+      c.IC_NAME  AS nombre,
+      c.IC_EMAIL AS email_softec,
+      c.IC_PHONE AS telefono_softec,
+      SUM(f.IJ_TOT - f.IJ_TOTAPPL) AS saldo_bruto,
+      COUNT(f.IJ_INUM) AS facturas
+    FROM v_cobr_ijnl f
+    INNER JOIN v_cobr_icust c ON c.IC_CODE = f.IJ_CCODE AND c.IC_STATUS = 'A'
+    WHERE f.IJ_TYPEDOC = 'IN' AND f.IJ_INVTORF = 'T' AND f.IJ_PAID = 'F'
+      AND (f.IJ_TOT - f.IJ_TOTAPPL) > 0
+      AND DATEDIFF(CURDATE(), f.IJ_DUEDATE) > 0
+    GROUP BY c.IC_CODE, c.IC_NAME, c.IC_EMAIL, c.IC_PHONE
+    ORDER BY saldo_bruto DESC
+    LIMIT 200
+  `);
+
+  if (clientesSoftec.length === 0) {
+    return { ok: true, data: { total: 0, clientes: [] } };
+  }
+
+  // Datos enriquecidos locales
+  const codigos = clientesSoftec.map((c) => String(c.codigo).trim());
+  const enriqRows = await cobranzasQuery<{
+    codigo_cliente: string;
+    email: string | null;
+    whatsapp: string | null;
+  }>(
+    `SELECT codigo_cliente, email, whatsapp
+     FROM cobranza_clientes_enriquecidos
+     WHERE codigo_cliente IN (${codigos.map(() => '?').join(',')})`,
+    codigos
+  );
+  const enriqMap = new Map(enriqRows.map((r) => [String(r.codigo_cliente).trim(), r]));
+
+  // CP-15: saldos a favor
+  const codigosConPendiente = clientesSoftec
+    .filter((c) => Number(c.saldo_bruto) > 0)
+    .map((c) => String(c.codigo).trim());
+  const saldosFavor = await obtenerSaldoAFavorPorCliente(codigosConPendiente);
+
+  const resultado: {
+    codigo: string;
+    nombre: string;
+    saldo_neto: number;
+    facturas: number;
+    falta_email: boolean;
+    falta_whatsapp: boolean;
+  }[] = [];
+
+  for (const c of clientesSoftec) {
+    const codigo = String(c.codigo).trim();
+    const enriq = enriqMap.get(codigo);
+
+    const tieneEmail = !!(
+      (c.email_softec && c.email_softec.trim()) ||
+      (enriq?.email && enriq.email.trim())
+    );
+    const tieneWhatsapp = !!(
+      (c.telefono_softec && c.telefono_softec.trim()) ||
+      (enriq?.whatsapp && enriq.whatsapp.trim())
+    );
+
+    const faltaEmail = !tieneEmail;
+    const faltaWhatsapp = !tieneWhatsapp;
+
+    const pasaFiltro =
+      faltante === 'cualquiera'
+        ? faltaEmail || faltaWhatsapp
+        : faltante === 'email'
+        ? faltaEmail
+        : faltaWhatsapp;
+
+    if (!pasaFiltro) continue;
+
+    const saldoBruto = Number(c.saldo_bruto) || 0;
+    const favor = saldosFavor.get(codigo) ?? 0;
+    const saldoNeto = Math.max(0, saldoBruto - favor);
+
+    resultado.push({
+      codigo,
+      nombre: String(c.nombre).trim(),
+      saldo_neto: saldoNeto,
+      facturas: Number(c.facturas),
+      falta_email: faltaEmail,
+      falta_whatsapp: faltaWhatsapp,
+    });
+  }
+
+  // Ordenar por saldo neto desc y cortar
+  resultado.sort((a, b) => b.saldo_neto - a.saldo_neto);
+  const paginado = resultado.slice(0, limite);
+
+  return {
+    ok: true,
+    data: {
+      total: resultado.length,
+      mostrados: paginado.length,
+      filtro: faltante,
+      clientes: paginado,
+    },
+  };
+}
+
+// =====================================================================
+// Capa D — Estado del sistema de cadencias
+// =====================================================================
+
+async function estadoCadencias(): Promise<ResultadoTool> {
+  // Configuración activa
+  const cadenciasConfig = await cobranzasQuery<{
+    segmento: string;
+    dia_desde_vencimiento: number;
+    accion: string;
+    requiere_aprobacion: number;
+  }>(
+    'SELECT segmento, dia_desde_vencimiento, accion, requiere_aprobacion FROM cobranza_cadencias WHERE activa=1 ORDER BY dia_desde_vencimiento ASC'
+  );
+
+  // Último run
+  const ultimoRun = await cobranzasQuery<{ detalle: string; created_at: string }>(
+    "SELECT detalle, created_at FROM cobranza_logs WHERE accion='CADENCIAS_HORARIAS' ORDER BY created_at DESC LIMIT 1"
+  );
+
+  // Facturas con estado de cadencia registrado
+  const conEstado = await cobranzasQuery<{ total: number }>(
+    'SELECT COUNT(*) AS total FROM cobranza_factura_cadencia_estado'
+  );
+
+  // Facturas pausadas individualmente
+  const pausadas = await cobranzasQuery<{ total: number }>(
+    'SELECT COUNT(*) AS total FROM cobranza_factura_cadencia_estado WHERE pausada_hasta > NOW()'
+  );
+
+  // Stats del último run (extraído del JSON en detalle)
+  let statsUltimoRun: Record<string, number> | null = null;
+  if (ultimoRun[0]?.detalle) {
+    try {
+      statsUltimoRun = JSON.parse(ultimoRun[0].detalle) as Record<string, number>;
+    } catch { /* ignorar parse errors */ }
+  }
+
+  // Gestiones generadas por cadencias en las últimas 24h
+  const generadasHoy = await cobranzasQuery<{ total: number }>(
+    "SELECT COUNT(*) AS total FROM cobranza_gestiones WHERE creado_por='cadencias' AND created_at >= NOW() - INTERVAL 24 HOUR"
+  );
+
+  return {
+    ok: true,
+    data: {
+      cadencias_activas: cadenciasConfig.length,
+      configuracion: cadenciasConfig.map((c) => ({
+        segmento: c.segmento,
+        dia: c.dia_desde_vencimiento,
+        accion: c.accion,
+        aprobacion: c.requiere_aprobacion ? 'manual' : 'auto',
+      })),
+      facturas_con_estado: Number(conEstado[0]?.total) || 0,
+      facturas_pausadas: Number(pausadas[0]?.total) || 0,
+      gestiones_generadas_24h: Number(generadasHoy[0]?.total) || 0,
+      ultimo_run: ultimoRun[0]
+        ? {
+            fecha: ultimoRun[0].created_at,
+            stats: statsUltimoRun,
+          }
+        : null,
+    },
+  };
 }
 
 async function marcarTareaHecha(

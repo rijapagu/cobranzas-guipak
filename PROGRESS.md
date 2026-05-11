@@ -9,10 +9,10 @@
 
 | Campo | Detalle |
 |---|---|
-| **Fase actual** | Fase 10 — Agente Proactivo Telegram (Capa A + B + Plantillas + Tareas ✅) |
-| **Próxima fase** | Validación end-to-end con clientes reales + Capa C/D |
-| **Última actualización** | 1 Mayo 2026 |
-| **Progreso general** | ██████████ 98% |
+| **Fase actual** | Fase 10 — Agente Proactivo Telegram ✅ COMPLETADA (Capas A+B+C+D) |
+| **Próxima fase** | Validación end-to-end con clientes reales · Worker en Dokploy |
+| **Última actualización** | 11 Mayo 2026 |
+| **Progreso general** | ██████████ 100% |
 | **Repo GitHub** | https://github.com/rijapagu/cobranzas-guipak (público) |
 | **Producción** | https://cobros.sguipak.com |
 | **VPS** | srv869155 — 31.97.131.17 (Dokploy) |
@@ -33,7 +33,7 @@
 | 7 | Agente IA respuestas entrantes | ✅ Completada | 100% |
 | 8 | Portal cliente + Documentación | ✅ Completada | 100% |
 | 9 | KPIs, alertas y refinamiento | ✅ Completada | 100% |
-| 10 | Agente Proactivo Telegram (Capa A + B + Plantillas + Tareas) | 🟢 En curso | 85% |
+| 10 | Agente Proactivo Telegram (Capas A + B + C + D + Plantillas + Tareas) | ✅ Completada | 100% |
 
 ---
 
@@ -271,8 +271,23 @@
 - Strip line comments antes de split por `;`
 - Reporta cantidad de statements ejecutados por archivo
 
-### ⏳ Capa C — Captura interactiva de datos (PENDIENTE)
-### ⏳ Capa D — Cadencias automáticas (PENDIENTE)
+### ✅ Capa C — Captura interactiva de datos (COMPLETADA)
+- Tool `guardar_dato_cliente` — guarda email/WhatsApp/contacto desde el bot (sin tocar Softec, CP-01)
+- Tool `listar_clientes_sin_datos(faltante, limite)` — lista clientes de la cartera vencida con email o WhatsApp faltante, ordenados por saldo neto desc
+- System prompt instruye al bot para preguntar el email cuando falta al generar un draft
+- Bot puede completar datos proactivamente o en respuesta a preguntas del supervisor
+
+### ✅ Capa D — Cadencias automáticas (COMPLETADA)
+- `lib/queue/jobs/cadencias.ts` — worker horario evalúa cada factura contra `cobranza_cadencias`
+- Protección anti-flood: primer run en factura con >30 días → fast-forward sin gestión
+- Respeta CP-02 (aprobación), CP-03 (disputas), CP-15 (cubiertos por anticipo)
+- `app/api/internal/cron/cadencias-horarias` — endpoint con INTERNAL_CRON_SECRET
+- `app/api/cobranzas/cadencias` — CRUD completo para configurar cadencias
+- `app/(dashboard)/cadencias/page.tsx` — UI con tabla, toggle activa/inactiva, "Ejecutar ahora"
+- `lib/queue/bullmq.ts` — `scheduleCadenciasHorarias()` cron `0 * * * *`
+- Tool bot `estado_cadencias` — el bot puede reportar estado: facturas con cadencia, último run, gestiones generadas
+- Migrations: 010 (tablas), 014 (mejoras estado)
+
 ### 🔮 Capa E — Memoria semántica (DIFERIDA 2-3 meses)
 
 ### Tablas nuevas creadas (migration 010)
