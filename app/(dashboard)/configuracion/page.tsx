@@ -89,6 +89,11 @@ export default function ConfiguracionPage() {
   const [testResults, setTestResults] = useState<Record<string, TestResult>>({});
   const [saving, setSaving] = useState<string | null>(null);
 
+  const [promptAgente, setPromptAgente] = useState("");
+  const [promptOriginal, setPromptOriginal] = useState("");
+  const [loadingPrompt, setLoadingPrompt] = useState(false);
+  const [savingPrompt, setSavingPrompt] = useState(false);
+
   const [formSoftec] = Form.useForm();
   const [formSmtp] = Form.useForm();
   const [formEvolution] = Form.useForm();
@@ -133,9 +138,49 @@ export default function ConfiguracionPage() {
     }
   }, [formSoftec, formSmtp, formEvolution, formDrive]);
 
+  const fetchPrompt = useCallback(async () => {
+    setLoadingPrompt(true);
+    try {
+      const res = await fetch("/api/cobranzas/configuracion/prompt");
+      const data = await res.json();
+      if (data.prompt) {
+        setPromptAgente(data.prompt);
+        setPromptOriginal(data.prompt);
+      }
+    } catch { /* ignore */ }
+    finally { setLoadingPrompt(false); }
+  }, []);
+
+  const guardarPrompt = async () => {
+    if (!promptAgente.trim() || promptAgente.trim().length < 10) {
+      message.warning("El prompt debe tener al menos 10 caracteres");
+      return;
+    }
+    setSavingPrompt(true);
+    try {
+      const res = await fetch("/api/cobranzas/configuracion/prompt", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: promptAgente }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        message.success("Prompt del agente actualizado");
+        setPromptOriginal(promptAgente);
+      } else {
+        message.error(data.error || "Error guardando");
+      }
+    } catch {
+      message.error("Error de conexión");
+    } finally {
+      setSavingPrompt(false);
+    }
+  };
+
   useEffect(() => {
     fetchConfig();
-  }, [fetchConfig]);
+    fetchPrompt();
+  }, [fetchConfig, fetchPrompt]);
 
   const probarConexion = async (servicio: string) => {
     setTesting(servicio);
@@ -412,6 +457,80 @@ export default function ConfiguracionPage() {
             </Space>
           </Form>
           <TestResultDisplay servicio="claude" />
+        </div>
+      ),
+    },
+    {
+      key: "prompt",
+      label: (
+        <Space>
+          <RobotOutlined />
+          <span>Prompt del Agente (IA)</span>
+          {promptOriginal ? (
+            <Tag color="green" icon={<CheckCircleOutlined />}>Personalizado</Tag>
+          ) : (
+            <Tag color="default">Por defecto</Tag>
+          )}
+        </Space>
+      ),
+      children: (
+        <div>
+          <Paragraph type="secondary">
+            Instrucciones que recibe el agente IA al procesar cada mensaje. Define su personalidad,
+            reglas de negocio y comportamiento. Si se deja vacío, usa el prompt predeterminado del sistema.
+          </Paragraph>
+          {loadingPrompt ? (
+            <div style={{ textAlign: "center", padding: 24 }}>
+              <Spin size="small" />
+            </div>
+          ) : (
+            <>
+              <Input.TextArea
+                value={promptAgente}
+                onChange={(e) => setPromptAgente(e.target.value)}
+                rows={16}
+                placeholder="Escribe aquí las instrucciones del agente... (deja vacío para usar el prompt predeterminado)"
+                style={{ fontFamily: "monospace", fontSize: 12 }}
+              />
+              <div style={{ marginTop: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  {promptAgente.length.toLocaleString()} caracteres
+                  {promptAgente !== promptOriginal && " · Sin guardar"}
+                </Text>
+                <Space>
+                  {promptOriginal && (
+                    <Button
+                      size="small"
+                      danger
+                      onClick={() => {
+                        setPromptAgente("");
+                        setSavingPrompt(true);
+                        fetch("/api/cobranzas/configuracion/prompt", {
+                          method: "PUT",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ prompt: "          " }),
+                        }).then(() => {
+                          setPromptOriginal("");
+                          message.info("Prompt reseteado al predeterminado");
+                        }).finally(() => setSavingPrompt(false));
+                      }}
+                    >
+                      Resetear a predeterminado
+                    </Button>
+                  )}
+                  <Button
+                    type="primary"
+                    icon={<SaveOutlined />}
+                    loading={savingPrompt}
+                    disabled={!promptAgente.trim() || promptAgente === promptOriginal}
+                    onClick={guardarPrompt}
+                  >
+                    Guardar Prompt
+                  </Button>
+                </Space>
+              </div>
+            </>
+          )}
         </div>
       ),
     },

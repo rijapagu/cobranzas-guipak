@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { TOOLS, ejecutarTool } from './tools';
 import type { TelegramUserAuth } from './auth';
+import { getConfig } from '@/lib/db/configuracion';
 
 function fechaHoyDominicana(): string {
   // YYYY-MM-DD en zona America/Santo_Domingo (UTC-4 sin DST)
@@ -127,9 +128,18 @@ function tablaProximosDias(hoyIso: string): string {
   return lineas.join('\n');
 }
 
-function buildSystemPrompt(): string {
+async function buildSystemPrompt(): Promise<string> {
   const hoy = fechaHoyDominicana();
   const diaSemana = diaSemanaEspanol(hoy);
+
+  let promptBase = SYSTEM_PROMPT_BASE;
+  try {
+    const custom = await getConfig('prompt_agente');
+    if (custom && custom.trim().length > 10) {
+      promptBase = custom.trim();
+    }
+  } catch { /* fallback al hardcoded */ }
+
   return `FECHA DE HOY (Santo Domingo): ${hoy} (${diaSemana}).
 
 CALENDARIO DE LOS PRÓXIMOS 14 DÍAS (úsalo como tabla de lookup, NO calcules tú las fechas):
@@ -144,7 +154,7 @@ REGLAS PARA RESOLVER FECHAS RELATIVAS:
 - "en N días" → cuenta N filas hacia abajo desde HOY.
 - Siempre verifica que la fecha que envías a crear_tarea coincida con el día de la semana de la tabla.
 
-${SYSTEM_PROMPT_BASE}`;
+${promptBase}`;
 }
 
 const MAX_TURNS = 5;
@@ -177,7 +187,7 @@ export async function procesarMensajeBot(input: MensajeUsuario): Promise<string>
     const response = await client.messages.create({
       model: 'claude-sonnet-4-5-20250929',
       max_tokens: 2048,
-      system: buildSystemPrompt(),
+      system: await buildSystemPrompt(),
       tools: TOOLS,
       messages,
     });
