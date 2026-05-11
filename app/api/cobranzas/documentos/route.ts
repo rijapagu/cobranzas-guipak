@@ -25,11 +25,18 @@ export async function GET(request: NextRequest) {
     const params: (string | number)[] = [];
 
     if (busqueda) {
-      where += ' AND (d.ij_inum LIKE ? OR d.codigo_cliente LIKE ? OR d.nombre_archivo LIKE ?)';
+      where += ' AND (ij_inum LIKE ? OR codigo_cliente LIKE ? OR nombre_archivo LIKE ?)';
       const q = `%${busqueda}%`;
       params.push(q, q, q);
     }
 
+    if (soloSinPdf) {
+      // Filtrar facturas que no tienen documento registrado (uso futuro)
+      where += ' AND google_drive_id IS NULL';
+    }
+
+    // LIMIT/OFFSET se interpolan directamente (valores numéricos controlados)
+    // para evitar ER_WRONG_ARGUMENTS en MySQL < 8 con prepared statements.
     const docs = await cobranzasQuery<{
       id: number;
       ij_local: string;
@@ -47,8 +54,8 @@ export async function GET(request: NextRequest) {
               nombre_archivo, fecha_escaneo, subido_por, origen, created_at
        FROM cobranza_facturas_documentos ${where}
        ORDER BY created_at DESC
-       LIMIT ? OFFSET ?`,
-      [...params, limit, offset]
+       LIMIT ${limit} OFFSET ${offset}`,
+      params
     );
 
     const countResult = await cobranzasQuery<{ total: number }>(
