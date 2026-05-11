@@ -91,6 +91,26 @@ Sin esto, el bot solo responde cuando se le menciona o se usan comandos.
 
 ---
 
+## ✅ Migraciones ejecutadas en producción (11-may-2026 sesión 2)
+
+- [x] `015_memoria_cliente.sql` — tabla `cobranza_memoria_cliente` (vía terminal Dokploy)
+- [x] `016_configuracion.sql` — tabla `cobranza_configuracion` (vía terminal Dokploy)
+- [x] Prompt del agente guardado desde la UI de Configuración
+
+---
+
+## Funcionalidades nuevas desplegadas (11-may-2026 sesión 2)
+
+- [x] Widget "Asistente" en dashboard (chat flotante con aprobación inline)
+- [x] Prompt del agente editable en Configuración (ADMIN only)
+- [x] Envío manual de facturas PDF desde Gestión Documental
+- [x] Búsqueda por nombre de cliente en Reportes
+- [x] Memoria Capa 1 del bot (consultar/guardar info comportamental)
+- [x] Propuestas WhatsApp desde el bot
+- [x] PDF adjunto automático en emails de cobranza
+
+---
+
 ## Notas técnicas menores
 
 - **`.claude/settings.local.json` modificado, sin commitear:** permisos locales

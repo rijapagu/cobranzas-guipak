@@ -726,4 +726,43 @@ const ajuste = ajustarSaldoCliente(saldoBruto, favor);
 
 ---
 
-*Versión: 1.2 — 11 Mayo 2026*
+---
+
+## Tabla: `cobranza_memoria_cliente` (Migración 015)
+
+Memoria estructurada Capa 1 — info comportamental por cliente para personalizar gestiones.
+
+| Columna | Tipo | Descripción |
+|---|---|---|
+| id | INT PK AUTO_INCREMENT | ID interno |
+| codigo_cliente | VARCHAR(20) UNIQUE | Código Softec del cliente |
+| patron_pago | VARCHAR(255) | Ej: "paga a fin de mes", "paga a 45 días" |
+| canal_efectivo | VARCHAR(50) | Canal que mejor funciona: EMAIL, WHATSAPP, LLAMADA |
+| contacto_real | VARCHAR(255) | Persona real que gestiona pagos (no siempre es el titular) |
+| mejor_momento | VARCHAR(255) | Mejor día/hora para contactar |
+| notas_daria | TEXT | Notas libres del agente IA |
+| actualizado_por | VARCHAR(100) | Email/usuario que actualizó |
+| updated_at | TIMESTAMP | Última actualización |
+| created_at | TIMESTAMP | Creación |
+
+---
+
+## Tabla: `cobranza_configuracion` (Migración 016)
+
+Key-value para configuración persistente del sistema (prompt del agente, etc.).
+
+| Columna | Tipo | Descripción |
+|---|---|---|
+| clave | VARCHAR(100) PK | Clave única (ej: `prompt_agente`) |
+| valor | LONGTEXT | Valor (puede ser texto largo como un prompt completo) |
+| descripcion | VARCHAR(255) | Descripción legible de qué es esta config |
+| actualizado_por | VARCHAR(100) | Email/usuario que actualizó |
+| updated_at | TIMESTAMP | Última actualización |
+| created_at | TIMESTAMP | Creación |
+
+Claves actuales:
+- `prompt_agente` — System prompt del agente IA (Telegram + chat web)
+
+---
+
+*Versión: 1.3 — 11 Mayo 2026*
