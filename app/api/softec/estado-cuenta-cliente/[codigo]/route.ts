@@ -38,14 +38,15 @@ export interface EstadoCuentaCliente {
  */
 export async function GET(
   _request: NextRequest,
-  { params }: { params: { codigo: string } }
+  { params }: { params: Promise<{ codigo: string }> }
 ) {
   const session = await getSession();
   if (!session) {
     return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
   }
 
-  const codigo = params.codigo?.trim();
+  const { codigo: codigoRaw } = await params;
+  const codigo = codigoRaw?.trim();
   if (!codigo) {
     return NextResponse.json({ error: 'Código de cliente requerido' }, { status: 400 });
   }
