@@ -57,6 +57,11 @@ interface ClienteEnriquecido {
   tiene_whatsapp: boolean;
   total_facturas_pendientes: number;
   saldo_total: number;
+  // CP-15: el endpoint /api/cobranzas/clientes los devuelve. Opcionales
+  // para tolerar respuestas legacy o mock.
+  saldo_a_favor?: number;
+  saldo_neto?: number;
+  cubierto_por_anticipo?: boolean;
 }
 
 interface EstadisticasClientes {
@@ -255,12 +260,57 @@ export default function ClientesPage() {
       width: 140,
       align: "right",
       sorter: (a, b) => a.saldo_total - b.saldo_total,
-      defaultSortOrder: "descend",
       render: (val: number) => (
-        <Text strong style={{ color: "#cf1322" }}>
+        <Text type="secondary" style={{ fontSize: 12 }}>
           {formatMonto(val)}
         </Text>
       ),
+    },
+    {
+      // CP-15: anticipo del cliente. Se muestra "—" si no tiene.
+      title: "A Favor",
+      key: "saldo_a_favor",
+      width: 120,
+      align: "right",
+      sorter: (a, b) => (a.saldo_a_favor ?? 0) - (b.saldo_a_favor ?? 0),
+      render: (_, record) => {
+        const favor = record.saldo_a_favor ?? 0;
+        if (favor <= 0.01) {
+          return <Text type="secondary">—</Text>;
+        }
+        return (
+          <Text style={{ color: "#1890ff" }}>{formatMonto(favor)}</Text>
+        );
+      },
+    },
+    {
+      // CP-15: saldo neto cobrable. Esta es la columna que se ordena por
+      // defecto — es el monto sobre el que se prioriza la cobranza.
+      title: "Saldo Neto",
+      key: "saldo_neto",
+      width: 150,
+      align: "right",
+      sorter: (a, b) =>
+        (a.saldo_neto ?? a.saldo_total) - (b.saldo_neto ?? b.saldo_total),
+      defaultSortOrder: "descend",
+      render: (_, record) => {
+        const neto = record.saldo_neto ?? record.saldo_total;
+        const cubierto = record.cubierto_por_anticipo;
+        return (
+          <Space direction="vertical" size={0} align="end">
+            <Text strong style={{ color: cubierto ? "#52c41a" : "#cf1322" }}>
+              {formatMonto(neto)}
+            </Text>
+            {cubierto && (
+              <Tooltip title="El saldo a favor cubre todo el pendiente. No requiere cobranza.">
+                <Tag color="blue" style={{ fontSize: 10, marginRight: 0 }}>
+                  Cubierto por anticipo
+                </Tag>
+              </Tooltip>
+            )}
+          </Space>
+        );
+      },
     },
     {
       title: "Acciones",
@@ -354,7 +404,7 @@ export default function ClientesPage() {
         loading={loading}
         pagination={{ pageSize: 50, showTotal: (t) => `${t} clientes` }}
         size="small"
-        scroll={{ x: 1000 }}
+        scroll={{ x: 1280 }}
       />
 
       {/* Drawer de edición */}
