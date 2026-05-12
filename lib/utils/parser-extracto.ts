@@ -1,10 +1,11 @@
 /**
  * Parser de extractos bancarios (Excel/CSV).
- * Detecta columnas automáticamente.
+ * Detecta Banco Popular automáticamente; genérico para otros bancos.
  */
 
 import * as XLSX from 'xlsx';
 import type { LineaExtracto } from '@/lib/types/conciliacion';
+import { esBancoPopular, parsearBancoPopular } from './parser-banco-popular';
 
 const COLUMN_PATTERNS = {
   fecha: /fecha|date|fch/i,
@@ -22,6 +23,11 @@ interface ParsedRow {
  * Parsea un archivo Excel o CSV y retorna líneas de extracto.
  */
 export function parsearExtracto(buffer: Buffer, fileName: string): LineaExtracto[] {
+  const preview = buffer.toString('utf-8', 0, Math.min(buffer.length, 2000));
+  if (esBancoPopular(preview)) {
+    return parsearBancoPopular(buffer);
+  }
+
   const workbook = XLSX.read(buffer, { type: 'buffer', cellDates: true });
   const sheetName = workbook.SheetNames[0];
   const sheet = workbook.Sheets[sheetName];
