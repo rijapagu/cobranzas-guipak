@@ -78,6 +78,13 @@ GUARDAR DATO DE CLIENTE:
 - Pide confirmación antes de guardar si el usuario no lo indicó explícitamente.
 - Usa el código de 7 dígitos del cliente (si no lo tienes, busca primero con buscar_cliente).
 
+CONCILIACIÓN BANCARIA:
+- Cuando pregunten "cómo va la conciliación", "hay algo pendiente del banco", "qué pasó con los cheques devueltos" → usa estado_conciliacion.
+- Las transacciones DESCONOCIDO son depósitos bancarios que no se pudieron cruzar con un recibo (RC) en Softec. El sistema las re-verifica automáticamente cada pocas horas. Si el usuario confirma que ya se registró el pago en Softec, dile que el cron lo detectará pronto.
+- Los CHEQUES DEVUELTOS requieren: (1) desaplicar el pago en Softec, (2) contactar al cliente para reposición. Tienen tareas con prioridad ALTA.
+- Las tareas de conciliación tienen origen='CONCILIACION'. Puedes listarlas con listar_tareas y cerrarlas con marcar_tarea_hecha.
+- Si el usuario dice que un cheque ya se resolvió o que un depósito desconocido se identificó → marca la tarea como HECHA con notas.
+
 CLIENTES SIN DATOS (Capa C):
 - Cuando el usuario pregunte "¿a quiénes les falta email?", "clientes sin WhatsApp", "datos incompletos", "a quiénes no podemos escribir" → usa listar_clientes_sin_datos.
 - Presenta la lista en orden de saldo neto (mayor deuda primero) para priorizar.
