@@ -765,4 +765,34 @@ Claves actuales:
 
 ---
 
-*Versión: 1.3 — 11 Mayo 2026*
+## Tabla: `cobranza_conciliacion_detalle` (Migración 018)
+
+Tabla hijo para libramientos/pagos multi-recibo — una línea del banco que cubre recibos de varios clientes.
+
+| Columna | Tipo | Descripción |
+|---|---|---|
+| id | BIGINT UNSIGNED PK AUTO_INCREMENT | ID interno |
+| conciliacion_id | BIGINT UNSIGNED NOT NULL | FK → `cobranza_conciliacion(id)` ON DELETE CASCADE |
+| ir_recnum | DECIMAL(8,0) NOT NULL | Número de recibo Softec que matcheó |
+| codigo_cliente | CHAR(12) NOT NULL | Código del cliente dueño del recibo |
+| nombre_cliente | VARCHAR(200) | Nombre del cliente (snapshot) |
+| monto | DECIMAL(15,2) NOT NULL | Monto individual de este recibo |
+| created_at | DATETIME DEFAULT CURRENT_TIMESTAMP | Creación |
+
+**Relación:** Un registro de `cobranza_conciliacion` con `es_multi=true` tiene N filas en esta tabla, una por cada recibo Softec que sumados dan el monto del depósito bancario.
+
+---
+
+## Modificaciones a `cobranza_conciliacion` (Migración 017)
+
+- ENUM `estado` expandido: + `CHEQUE_DEVUELTO`
+
+## Modificaciones a `cobranza_tareas` (Migración 019)
+
+- ENUM `tipo` expandido: + `CHEQUE_DEVUELTO`
+- ENUM `origen` expandido: + `CONCILIACION`
+- Tareas de conciliación usan `origen_ref` con patrón `conc-desc-{id}` (desconocidos) y `conc-chdev-{id}` (cheques devueltos) para idempotencia.
+
+---
+
+*Versión: 1.4 — 12 Mayo 2026*

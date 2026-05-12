@@ -11,7 +11,7 @@
 |---|---|
 | **Fase actual** | Fase 10 — Agente Proactivo Telegram ✅ COMPLETADA (Capas A+B+C+D) |
 | **Próxima fase** | Validación end-to-end con clientes reales · Worker en Dokploy |
-| **Última actualización** | 11 Mayo 2026 (sesión 2) |
+| **Última actualización** | 12 Mayo 2026 |
 | **Progreso general** | ██████████ 100% |
 | **Repo GitHub** | https://github.com/rijapagu/cobranzas-guipak (público) |
 | **Producción** | https://cobros.sguipak.com |
@@ -328,9 +328,11 @@ INTERNAL_CRON_SECRET=...
 | 3 | **Disputas** — página funcional completa (actualmente placeholder) | ⏳ Pendiente desarrollo |
 | 4 | **N8N workflow** — generar cola de cobranza automática cada mañana | ⏳ Pendiente configuración |
 | 5 | **Reporte diario por email** — resumen automático al supervisor | ⏳ Pendiente desarrollo |
-| 6 | **Campañas/cadencias** — contacto cada X días por segmento | ⏳ Pendiente desarrollo |
-| 7 | Banco(s) principal(es) de Guipak para conciliación | ⏳ Ricardo |
-| 8 | Formato extractos bancarios reales (Excel/PDF) | ⏳ Ricardo |
+| 6 | ~~Campañas/cadencias~~ | ✅ Completado (Capa D Fase 10) |
+| 7 | ~~Banco(s) principal(es) de Guipak para conciliación~~ | ✅ Banco Popular confirmado |
+| 8 | ~~Formato extractos bancarios reales~~ | ✅ CSV Banco Popular implementado |
+| 9 | **Verificación end-to-end WhatsApp** — probar ciclo completo con clientes reales | ⏳ Requiere activar Evolution API |
+| 10 | **Worker BullMQ en producción** — levantar como servicio en Dokploy | ⏳ Pendiente configuración |
 
 ## ✅ Credenciales Configuradas (Producción + Local)
 
@@ -623,3 +625,62 @@ portal con un cliente cubierto. Detalle completo en
 - `app/(dashboard)/layout.tsx` — AsistenteChat integrado
 - `db/migrations/015_memoria_cliente.sql`
 - `db/migrations/016_configuracion.sql`
+
+---
+
+## Sesión 12-Mayo-2026 — Conciliación mejorada + Multi-recibo + Seguimiento Telegram
+
+### Completado
+
+#### Conciliación bancaria — eliminación selectiva
+- DELETE `/api/conciliacion/resultados` ahora filtra por `archivo_origen` (no borra toda la tabla)
+- UI: dropdown de archivos cargados con cantidad de registros
+- Popconfirm de seguridad antes de eliminar
+
+#### Multi-recibo (libramientos del gobierno)
+- Algoritmo subset-sum con backtracking para encontrar combinaciones de recibos RC que sumen al monto del banco
+- Tabla hijo `cobranza_conciliacion_detalle` para registrar el desglose (FK a conciliacion con ON DELETE CASCADE)
+- Migración 018 aplicada en producción
+- UI: DrawerTransacción muestra tabla de desglose; TablaConciliación muestra tag "N clientes" en columna cliente
+- Verificado: depósito RD$183,472.36 del gobierno correctamente dividido entre 2 clientes
+
+#### Seguimiento de DESCONOCIDO y CHEQUE_DEVUELTO
+- `lib/conciliacion/seguimiento.ts` — 4 funciones:
+  - `crearTareasConciliacion()`: crea tareas idempotentes para cada DESCONOCIDO (MEDIA) y CHEQUE_DEVUELTO (ALTA)
+  - `notificarConciliacionDesdeBD()`: notificación Telegram con estadísticas reales
+  - `verificarDesconocidos()`: re-corre matcher, auto-concilia + cierra tarea + notifica
+  - `recordatorioChequesDevueltos()`: recordatorio cada 3 días para cheques sin resolver
+- Migración 019: ENUM expandido en `cobranza_tareas` (tipo += CHEQUE_DEVUELTO, origen += CONCILIACION)
+- Cron: `POST /api/internal/cron/conciliacion-seguimiento` (L-V 10am RD = `0 14 * * 1-5` UTC)
+- Configurado en Dokploy
+
+#### Tool del agente Telegram
+- `estado_conciliacion` — consulta estadísticas por estado, tareas pendientes, últimas 3 cargas
+- System prompt del agente actualizado con sección CONCILIACIÓN BANCARIA
+
+#### Fix /tareas
+- CHEQUE_DEVUELTO y CONCILIACION agregados a tipos y orígenes en page.tsx
+
+### Resultados verificados en producción
+- 55 conciliadas, 6 desconocidas, 3 cheques devueltos
+- 9 tareas de seguimiento creadas automáticamente
+- Notificación Telegram recibida en grupo "Cobros Guipak"
+- Página de tareas muestra todas las tareas de conciliación
+
+### Archivos nuevos/modificados
+- `lib/conciliacion/seguimiento.ts` — NEW (~294 líneas)
+- `app/api/internal/cron/conciliacion-seguimiento/route.ts` — NEW
+- `app/api/conciliacion/resultados/route.ts` — DELETE selectivo + lista archivos
+- `app/api/conciliacion/cargar/route.ts` — multi-recibo + seguimiento
+- `app/(dashboard)/conciliacion/page.tsx` — dropdown archivos, Popconfirm
+- `components/conciliacion/DrawerTransaccion.tsx` — desglose libramiento
+- `components/conciliacion/TablaConciliacion.tsx` — tag multi-cliente
+- `components/conciliacion/CargadorExtracto.tsx` — acepta .txt
+- `lib/conciliacion/matcher.ts` — subset-sum + exports
+- `lib/types/conciliacion.ts` — ConciliacionDetalle, es_multi
+- `lib/telegram/tools.ts` — tool estado_conciliacion
+- `lib/telegram/agent.ts` — sección conciliación en prompt
+- `app/(dashboard)/tareas/page.tsx` — CHEQUE_DEVUELTO + CONCILIACION
+- `db/migrations/017_conciliacion_cheque_devuelto.sql`
+- `db/migrations/018_conciliacion_detalle.sql`
+- `db/migrations/019_tareas_conciliacion.sql`
