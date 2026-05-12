@@ -80,7 +80,12 @@ export default function TablaConciliacion({ entradas, loading, clientes, onRefre
       title: "Cliente",
       dataIndex: "codigo_cliente",
       width: 120,
-      render: (v: string | null) => v || <Text type="secondary">-</Text>,
+      render: (v: string | null, record) => {
+        if (record.es_multi && record.detalles) {
+          return <Tag color="blue">{record.detalles.length} clientes</Tag>;
+        }
+        return v || <Text type="secondary">-</Text>;
+      },
     },
   ];
 

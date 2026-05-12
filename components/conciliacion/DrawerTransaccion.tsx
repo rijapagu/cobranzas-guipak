@@ -1,8 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { Drawer, Descriptions, Button, Space, Typography, Divider, message } from "antd";
-import { CheckOutlined, UserAddOutlined } from "@ant-design/icons";
+import { Drawer, Descriptions, Button, Space, Typography, Divider, message, Table, Tag } from "antd";
+import { CheckOutlined, UserAddOutlined, ApartmentOutlined } from "@ant-design/icons";
 import type { ConciliacionEntry, ClienteOption } from "@/lib/types/conciliacion";
 import { formatMonto, formatFecha } from "@/lib/utils/formato";
 import SelectorCliente from "./SelectorCliente";
@@ -13,12 +13,14 @@ const estadoColor: Record<string, string> = {
   CONCILIADO: "#52c41a",
   POR_APLICAR: "#fa8c16",
   DESCONOCIDO: "#f5222d",
+  CHEQUE_DEVUELTO: "#722ed1",
 };
 
 const estadoLabel: Record<string, string> = {
   CONCILIADO: "Conciliado",
   POR_APLICAR: "Por Aplicar",
   DESCONOCIDO: "Desconocido",
+  CHEQUE_DEVUELTO: "Cheque Devuelto",
 };
 
 interface Props {
@@ -125,20 +127,81 @@ export default function DrawerTransaccion({ entrada, open, onClose, onRefresh, c
           <Descriptions.Item label="Cuenta Origen">
             {entrada.cuenta_origen || "-"}
           </Descriptions.Item>
-          {entrada.codigo_cliente && (
-            <Descriptions.Item label="Cliente" span={2}>
-              <Text strong>{entrada.codigo_cliente}</Text>
-              {entrada.nombre_cliente && ` — ${entrada.nombre_cliente}`}
+          {entrada.es_multi ? (
+            <Descriptions.Item label="Tipo" span={2}>
+              <Tag icon={<ApartmentOutlined />} color="blue">
+                Multi-recibo ({entrada.detalles?.length} clientes)
+              </Tag>
             </Descriptions.Item>
-          )}
-          {entrada.ir_recnum && (
-            <Descriptions.Item label="Recibo Softec" span={2}>
-              <Text code>#{entrada.ir_recnum}</Text>
-            </Descriptions.Item>
+          ) : (
+            <>
+              {entrada.codigo_cliente && (
+                <Descriptions.Item label="Cliente" span={2}>
+                  <Text strong>{entrada.codigo_cliente}</Text>
+                  {entrada.nombre_cliente && ` — ${entrada.nombre_cliente}`}
+                </Descriptions.Item>
+              )}
+              {entrada.ir_recnum && (
+                <Descriptions.Item label="Recibo Softec" span={2}>
+                  <Text code>#{entrada.ir_recnum}</Text>
+                </Descriptions.Item>
+              )}
+            </>
           )}
           <Descriptions.Item label="Archivo">{entrada.archivo_origen}</Descriptions.Item>
           <Descriptions.Item label="Cargado por">{entrada.cargado_por}</Descriptions.Item>
         </Descriptions>
+
+        {/* Desglose multi-recibo */}
+        {entrada.es_multi && entrada.detalles && entrada.detalles.length > 0 && (
+          <>
+            <Divider>Desglose del Libramiento</Divider>
+            <Table
+              dataSource={entrada.detalles}
+              rowKey="ir_recnum"
+              size="small"
+              pagination={false}
+              columns={[
+                {
+                  title: "Cliente",
+                  dataIndex: "codigo_cliente",
+                  render: (v: string, r) => (
+                    <span>
+                      <Text strong>{v}</Text>
+                      {r.nombre_cliente && <Text type="secondary"> — {r.nombre_cliente}</Text>}
+                    </span>
+                  ),
+                },
+                {
+                  title: "Recibo",
+                  dataIndex: "ir_recnum",
+                  width: 80,
+                  render: (v: number) => <Text code>#{v}</Text>,
+                },
+                {
+                  title: "Monto",
+                  dataIndex: "monto",
+                  width: 140,
+                  align: "right" as const,
+                  render: (v: number) => <Text strong>{formatMonto(v)}</Text>,
+                },
+              ]}
+              summary={(data) => {
+                const total = data.reduce((s, r) => s + Number(r.monto), 0);
+                return (
+                  <Table.Summary.Row>
+                    <Table.Summary.Cell index={0} colSpan={2}>
+                      <Text strong>Total</Text>
+                    </Table.Summary.Cell>
+                    <Table.Summary.Cell index={2} align="right">
+                      <Text strong style={{ color: "#1890ff" }}>{formatMonto(total)}</Text>
+                    </Table.Summary.Cell>
+                  </Table.Summary.Row>
+                );
+              }}
+            />
+          </>
+        )}
 
         {/* Acciones según estado */}
         {entrada.estado === "DESCONOCIDO" && (

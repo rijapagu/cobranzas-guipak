@@ -43,6 +43,7 @@ export async function POST(request: NextRequest) {
     let porAplicar = 0;
     let desconocidas = 0;
 
+    let multiRecibo = 0;
     const chequesDevueltos: { fecha: string; monto: number; referencia: string; descripcion: string }[] = [];
 
     for (const linea of lineas) {
@@ -72,7 +73,7 @@ export async function POST(request: NextRequest) {
 
       const match = await procesarLinea(linea);
 
-      await cobranzasExecute(
+      const insertResult = await cobranzasExecute(
         `INSERT INTO cobranza_conciliacion (
           fecha_extracto, banco, archivo_origen,
           fecha_transaccion, descripcion, referencia, cuenta_origen,
@@ -85,6 +86,19 @@ export async function POST(request: NextRequest) {
           session.email,
         ]
       );
+
+      if (match.es_multi && match.detalles && match.detalles.length > 0) {
+        const conciliacionId = insertResult.insertId;
+        for (const det of match.detalles) {
+          await cobranzasExecute(
+            `INSERT INTO cobranza_conciliacion_detalle
+               (conciliacion_id, ir_recnum, codigo_cliente, nombre_cliente, monto)
+             VALUES (?, ?, ?, ?, ?)`,
+            [conciliacionId, det.ir_recnum, det.codigo_cliente, det.nombre_cliente, det.monto]
+          );
+        }
+        multiRecibo++;
+      }
 
       if (match.estado === 'CONCILIADO') conciliadas++;
       else if (match.estado === 'POR_APLICAR') porAplicar++;
@@ -132,6 +146,7 @@ export async function POST(request: NextRequest) {
       conciliadas,
       por_aplicar: porAplicar,
       desconocidas,
+      multi_recibo: multiRecibo,
       cheques_devueltos: chequesDevueltos.length,
       monto_devuelto: montoDevuelto,
       detalle_devueltos: chequesDevueltos,
