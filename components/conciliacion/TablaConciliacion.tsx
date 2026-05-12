@@ -13,6 +13,7 @@ const estadoConfig: Record<EstadoConciliacion, { color: string; label: string }>
   CONCILIADO: { color: "green", label: "Conciliado" },
   POR_APLICAR: { color: "orange", label: "Por Aplicar" },
   DESCONOCIDO: { color: "red", label: "Desconocido" },
+  CHEQUE_DEVUELTO: { color: "purple", label: "Cheque Devuelto" },
 };
 
 interface Props {
@@ -88,19 +89,25 @@ export default function TablaConciliacion({ entradas, loading, clientes, onRefre
     CONCILIADO: entradas.filter((e) => e.estado === "CONCILIADO").length,
     POR_APLICAR: entradas.filter((e) => e.estado === "POR_APLICAR").length,
     DESCONOCIDO: entradas.filter((e) => e.estado === "DESCONOCIDO").length,
+    CHEQUE_DEVUELTO: entradas.filter((e) => e.estado === "CHEQUE_DEVUELTO").length,
   };
+
+  const tabs = [
+    { key: "todos", label: `Todos (${counts.todos})` },
+    { key: "CONCILIADO", label: `Conciliados (${counts.CONCILIADO})` },
+    { key: "POR_APLICAR", label: `Por Aplicar (${counts.POR_APLICAR})` },
+    { key: "DESCONOCIDO", label: `Desconocidos (${counts.DESCONOCIDO})` },
+  ];
+  if (counts.CHEQUE_DEVUELTO > 0) {
+    tabs.push({ key: "CHEQUE_DEVUELTO", label: `Cheques Devueltos (${counts.CHEQUE_DEVUELTO})` });
+  }
 
   return (
     <>
       <Tabs
         activeKey={filtroEstado}
         onChange={setFiltroEstado}
-        items={[
-          { key: "todos", label: `Todos (${counts.todos})` },
-          { key: "CONCILIADO", label: `Conciliados (${counts.CONCILIADO})` },
-          { key: "POR_APLICAR", label: `Por Aplicar (${counts.POR_APLICAR})` },
-          { key: "DESCONOCIDO", label: `Desconocidos (${counts.DESCONOCIDO})` },
-        ]}
+        items={tabs}
       />
       <Table
         columns={columns}
@@ -116,7 +123,7 @@ export default function TablaConciliacion({ entradas, loading, clientes, onRefre
           },
           style: {
             cursor: "pointer",
-            borderLeft: `3px solid ${estadoConfig[record.estado].color === "green" ? "#52c41a" : estadoConfig[record.estado].color === "orange" ? "#fa8c16" : "#f5222d"}`,
+            borderLeft: `3px solid ${{ green: "#52c41a", orange: "#fa8c16", red: "#f5222d", purple: "#722ed1" }[estadoConfig[record.estado].color] || "#d9d9d9"}`,
           },
         })}
       />

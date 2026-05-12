@@ -147,7 +147,7 @@ CREATE TABLE IF NOT EXISTS cobranza_conciliacion (
     cuenta_origen       VARCHAR(50),
     monto               DECIMAL(15,2)   NOT NULL,
     moneda              CHAR(3)         NOT NULL DEFAULT 'DOP',
-    estado              ENUM('CONCILIADO','POR_APLICAR','DESCONOCIDO') NOT NULL DEFAULT 'DESCONOCIDO',
+    estado              ENUM('CONCILIADO','POR_APLICAR','DESCONOCIDO','CHEQUE_DEVUELTO') NOT NULL DEFAULT 'DESCONOCIDO',
     ir_recnum           DECIMAL(8,0),
     codigo_cliente      CHAR(12),
     aprobado_por        VARCHAR(50),

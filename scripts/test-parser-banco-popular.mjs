@@ -61,6 +61,11 @@ function extraerCuentaOrigen(serial, descripcion) {
   return '';
 }
 
+function esChequeDevuelto(desc) {
+  const d = desc.toUpperCase();
+  return d.includes('CHEQUE DEPOSITADO DEVUELTO') && !d.includes('REVERSO');
+}
+
 function parsearCSV(text) {
   const lines = text.split(/\r?\n/);
   const results = [];
@@ -76,10 +81,7 @@ function parsearCSV(text) {
     if (cols.length < 7) continue;
 
     const descCorta = cols[1];
-    if (!esCredito(descCorta)) continue;
-
     const descripcion = cols.slice(6).join(',');
-    if (esExcluido(descripcion)) continue;
 
     const monto = parseFloat(cols[2]);
     if (!monto || monto <= 0) continue;
@@ -90,14 +92,28 @@ function parsearCSV(text) {
     const noRef = (cols[4] || '').trim();
     const noSerial = (cols[5] || '').trim();
 
-    results.push({
-      fecha_transaccion: fecha,
-      descripcion: limpiarDescripcion(descripcion),
-      referencia: elegirReferencia(noSerial, noRef),
-      cuenta_origen: extraerCuentaOrigen(noSerial, descripcion),
-      monto,
-      moneda: 'DOP',
-    });
+    if (esCredito(descCorta)) {
+      if (esExcluido(descripcion)) continue;
+      results.push({
+        fecha_transaccion: fecha,
+        descripcion: limpiarDescripcion(descripcion),
+        referencia: elegirReferencia(noSerial, noRef),
+        cuenta_origen: extraerCuentaOrigen(noSerial, descripcion),
+        monto,
+        moneda: 'DOP',
+        tipo: 'CREDITO',
+      });
+    } else if (esChequeDevuelto(descripcion)) {
+      results.push({
+        fecha_transaccion: fecha,
+        descripcion: limpiarDescripcion(descripcion),
+        referencia: elegirReferencia(noSerial, noRef),
+        cuenta_origen: '',
+        monto,
+        moneda: 'DOP',
+        tipo: 'CHEQUE_DEVUELTO',
+      });
+    }
   }
   return results;
 }
@@ -113,12 +129,8 @@ function parsearTXT(text) {
     if (cols.length < 8) continue;
 
     const tipo = cols[4].trim();
-    if (tipo !== 'CR') continue;
-
     const serial = cols[cols.length - 1].trim();
     const descripcion = cols.slice(5, cols.length - 2).join(',');
-
-    if (esExcluido(descripcion)) continue;
 
     const monto = parseFloat(cols[3]);
     if (!monto || monto <= 0) continue;
@@ -128,14 +140,28 @@ function parsearTXT(text) {
 
     const referencia = cols[2].trim();
 
-    results.push({
-      fecha_transaccion: fecha,
-      descripcion: limpiarDescripcion(descripcion),
-      referencia: elegirReferencia(referencia, serial),
-      cuenta_origen: extraerCuentaOrigen(referencia, descripcion),
-      monto,
-      moneda: 'DOP',
-    });
+    if (tipo === 'CR') {
+      if (esExcluido(descripcion)) continue;
+      results.push({
+        fecha_transaccion: fecha,
+        descripcion: limpiarDescripcion(descripcion),
+        referencia: elegirReferencia(referencia, serial),
+        cuenta_origen: extraerCuentaOrigen(referencia, descripcion),
+        monto,
+        moneda: 'DOP',
+        tipo: 'CREDITO',
+      });
+    } else if (tipo === 'DB' && esChequeDevuelto(descripcion)) {
+      results.push({
+        fecha_transaccion: fecha,
+        descripcion: limpiarDescripcion(descripcion),
+        referencia: elegirReferencia(referencia, serial),
+        cuenta_origen: '',
+        monto,
+        moneda: 'DOP',
+        tipo: 'CHEQUE_DEVUELTO',
+      });
+    }
   }
   return results;
 }
@@ -151,11 +177,23 @@ const csvText = readFileSync(csvFile, 'utf-8');
 const csvFmt = esBancoPopular(csvText);
 console.log(`CSV detectado como: ${csvFmt}`);
 const csvResults = parsearCSV(csvText);
-console.log(`CSV: ${csvResults.length} créditos parseados`);
-const csvTotal = csvResults.reduce((s, r) => s + r.monto, 0);
-console.log(`CSV: Monto total créditos: RD$ ${csvTotal.toLocaleString('es-DO', { minimumFractionDigits: 2 })}`);
-console.log('\nPrimeras 5 transacciones CSV:');
-csvResults.slice(0, 5).forEach((r, i) => {
+const csvCreditos = csvResults.filter(r => r.tipo === 'CREDITO');
+const csvDevueltos = csvResults.filter(r => r.tipo === 'CHEQUE_DEVUELTO');
+console.log(`CSV: ${csvCreditos.length} créditos + ${csvDevueltos.length} cheques devueltos = ${csvResults.length} total`);
+const csvTotal = csvCreditos.reduce((s, r) => s + r.monto, 0);
+const csvTotalDev = csvDevueltos.reduce((s, r) => s + r.monto, 0);
+console.log(`CSV: Monto créditos: RD$ ${csvTotal.toLocaleString('es-DO', { minimumFractionDigits: 2 })}`);
+console.log(`CSV: Monto cheques devueltos: RD$ ${csvTotalDev.toLocaleString('es-DO', { minimumFractionDigits: 2 })}`);
+
+if (csvDevueltos.length > 0) {
+  console.log('\n⚠️  CHEQUES DEVUELTOS:');
+  csvDevueltos.forEach((r, i) => {
+    console.log(`  ${i + 1}. ${r.fecha_transaccion} | RD$ ${r.monto.toFixed(2).padStart(12)} | ref: ${r.referencia.padEnd(15)} | ${r.descripcion}`);
+  });
+}
+
+console.log('\nPrimeras 5 créditos CSV:');
+csvCreditos.slice(0, 5).forEach((r, i) => {
   console.log(`  ${i + 1}. ${r.fecha_transaccion} | RD$ ${r.monto.toFixed(2).padStart(12)} | ref: ${r.referencia.padEnd(15)} | cuenta: ${r.cuenta_origen.padEnd(15)} | ${r.descripcion.substring(0, 60)}`);
 });
 
@@ -167,11 +205,13 @@ const txtText = readFileSync(txtFile, 'utf-8');
 const txtFmt = esBancoPopular(txtText);
 console.log(`TXT detectado como: ${txtFmt}`);
 const txtResults = parsearTXT(txtText);
-console.log(`TXT: ${txtResults.length} créditos parseados`);
-const txtTotal = txtResults.reduce((s, r) => s + r.monto, 0);
-console.log(`TXT: Monto total créditos: RD$ ${txtTotal.toLocaleString('es-DO', { minimumFractionDigits: 2 })}`);
-console.log('\nPrimeras 5 transacciones TXT:');
-txtResults.slice(0, 5).forEach((r, i) => {
+const txtCreditos = txtResults.filter(r => r.tipo === 'CREDITO');
+const txtDevueltos = txtResults.filter(r => r.tipo === 'CHEQUE_DEVUELTO');
+console.log(`TXT: ${txtCreditos.length} créditos + ${txtDevueltos.length} cheques devueltos = ${txtResults.length} total`);
+const txtTotal = txtCreditos.reduce((s, r) => s + r.monto, 0);
+console.log(`TXT: Monto créditos: RD$ ${txtTotal.toLocaleString('es-DO', { minimumFractionDigits: 2 })}`);
+console.log('\nPrimeras 5 créditos TXT:');
+txtCreditos.slice(0, 5).forEach((r, i) => {
   console.log(`  ${i + 1}. ${r.fecha_transaccion} | RD$ ${r.monto.toFixed(2).padStart(12)} | ref: ${r.referencia.padEnd(15)} | cuenta: ${r.cuenta_origen.padEnd(15)} | ${r.descripcion.substring(0, 60)}`);
 });
 
@@ -179,15 +219,15 @@ console.log('\n---\n');
 
 // Compare
 console.log('=== COMPARACIÓN CSV vs TXT ===');
-console.log(`CSV: ${csvResults.length} transacciones, RD$ ${csvTotal.toFixed(2)}`);
-console.log(`TXT: ${txtResults.length} transacciones, RD$ ${txtTotal.toFixed(2)}`);
+console.log(`CSV: ${csvResults.length} total (${csvCreditos.length} créditos + ${csvDevueltos.length} devueltos), RD$ ${csvTotal.toFixed(2)} créditos`);
+console.log(`TXT: ${txtResults.length} total (${txtCreditos.length} créditos + ${txtDevueltos.length} devueltos), RD$ ${txtTotal.toFixed(2)} créditos`);
 console.log(`Match cantidad: ${csvResults.length === txtResults.length ? 'SÍ ✓' : 'NO ✗'}`);
-console.log(`Match monto: ${Math.abs(csvTotal - txtTotal) < 0.01 ? 'SÍ ✓' : `NO ✗ (diff: ${(csvTotal - txtTotal).toFixed(2)})`}`);
+console.log(`Match monto créditos: ${Math.abs(csvTotal - txtTotal) < 0.01 ? 'SÍ ✓' : `NO ✗ (diff: ${(csvTotal - txtTotal).toFixed(2)})`}`);
+console.log(`Match cheques devueltos: ${csvDevueltos.length === txtDevueltos.length ? 'SÍ ✓' : 'NO ✗'}`);
 
-// Show account extraction stats
-const conCuenta = csvResults.filter(r => r.cuenta_origen).length;
-const sinCuenta = csvResults.filter(r => !r.cuenta_origen).length;
-console.log(`\nCuentas origen extraídas: ${conCuenta}/${csvResults.length} (${sinCuenta} sin cuenta)`);
+const conCuenta = csvCreditos.filter(r => r.cuenta_origen).length;
+const sinCuenta = csvCreditos.filter(r => !r.cuenta_origen).length;
+console.log(`\nCuentas origen extraídas: ${conCuenta}/${csvCreditos.length} créditos (${sinCuenta} sin cuenta)`);
 
 console.log('\nTransacciones SIN cuenta origen:');
 csvResults.filter(r => !r.cuenta_origen).forEach((r, i) => {

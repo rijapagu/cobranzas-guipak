@@ -2,6 +2,8 @@
  * Parser especializado para extractos de Banco Popular Dominicano.
  * Soporta formato CSV (Consulta de Transacciones) y TXT (raw).
  *
+ * Extrae créditos (pagos recibidos) Y cheques devueltos (pagos fallidos).
+ *
  * CSV columns: Fecha Posteo, Descripción Corta, Monto Transacción,
  *              Balance, No. Referencia, No. Serial, Descripción
  *
@@ -47,10 +49,7 @@ function parsearCSV(text: string): LineaExtracto[] {
     if (cols.length < 7) continue;
 
     const descCorta = cols[1];
-    if (!esCredito(descCorta)) continue;
-
     const descripcion = cols.slice(6).join(',');
-    if (esExcluido(descripcion)) continue;
 
     const monto = parseFloat(cols[2]);
     if (!monto || monto <= 0) continue;
@@ -61,14 +60,29 @@ function parsearCSV(text: string): LineaExtracto[] {
     const noRef = (cols[4] || '').trim();
     const noSerial = (cols[5] || '').trim();
 
-    results.push({
-      fecha_transaccion: fecha,
-      descripcion: limpiarDescripcion(descripcion),
-      referencia: elegirReferencia(noSerial, noRef),
-      cuenta_origen: extraerCuentaOrigen(noSerial, descripcion),
-      monto,
-      moneda: 'DOP',
-    });
+    if (esCredito(descCorta)) {
+      if (esExcluido(descripcion)) continue;
+
+      results.push({
+        fecha_transaccion: fecha,
+        descripcion: limpiarDescripcion(descripcion),
+        referencia: elegirReferencia(noSerial, noRef),
+        cuenta_origen: extraerCuentaOrigen(noSerial, descripcion),
+        monto,
+        moneda: 'DOP',
+        tipo: 'CREDITO',
+      });
+    } else if (esChequeDevuelto(descripcion)) {
+      results.push({
+        fecha_transaccion: fecha,
+        descripcion: limpiarDescripcion(descripcion),
+        referencia: elegirReferencia(noSerial, noRef),
+        cuenta_origen: '',
+        monto,
+        moneda: 'DOP',
+        tipo: 'CHEQUE_DEVUELTO',
+      });
+    }
   }
 
   return results;
@@ -86,12 +100,9 @@ function parsearTXT(text: string): LineaExtracto[] {
     if (cols.length < 8) continue;
 
     const tipo = cols[4].trim();
-    if (tipo !== 'CR') continue;
-
     const serial = cols[cols.length - 1].trim();
     const descripcion = cols.slice(5, cols.length - 2).join(',');
-
-    if (esExcluido(descripcion)) continue;
+    const referencia = cols[2].trim();
 
     const monto = parseFloat(cols[3]);
     if (!monto || monto <= 0) continue;
@@ -99,16 +110,29 @@ function parsearTXT(text: string): LineaExtracto[] {
     const fecha = parsearFechaDMY(cols[1]);
     if (!fecha) continue;
 
-    const referencia = cols[2].trim();
+    if (tipo === 'CR') {
+      if (esExcluido(descripcion)) continue;
 
-    results.push({
-      fecha_transaccion: fecha,
-      descripcion: limpiarDescripcion(descripcion),
-      referencia: elegirReferencia(referencia, serial),
-      cuenta_origen: extraerCuentaOrigen(referencia, descripcion),
-      monto,
-      moneda: 'DOP',
-    });
+      results.push({
+        fecha_transaccion: fecha,
+        descripcion: limpiarDescripcion(descripcion),
+        referencia: elegirReferencia(referencia, serial),
+        cuenta_origen: extraerCuentaOrigen(referencia, descripcion),
+        monto,
+        moneda: 'DOP',
+        tipo: 'CREDITO',
+      });
+    } else if (tipo === 'DB' && esChequeDevuelto(descripcion)) {
+      results.push({
+        fecha_transaccion: fecha,
+        descripcion: limpiarDescripcion(descripcion),
+        referencia: elegirReferencia(referencia, serial),
+        cuenta_origen: '',
+        monto,
+        moneda: 'DOP',
+        tipo: 'CHEQUE_DEVUELTO',
+      });
+    }
   }
 
   return results;
@@ -122,6 +146,11 @@ function esCredito(descCorta: string): boolean {
     d.startsWith('depósito') ||
     d.startsWith('deposito')
   );
+}
+
+function esChequeDevuelto(desc: string): boolean {
+  const d = desc.toUpperCase();
+  return d.includes('CHEQUE DEPOSITADO DEVUELTO') && !d.includes('REVERSO');
 }
 
 function esExcluido(desc: string): boolean {

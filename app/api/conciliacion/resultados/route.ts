@@ -45,21 +45,27 @@ export async function GET(request: NextRequest) {
       conciliadas: 0,
       por_aplicar: 0,
       desconocidas: 0,
+      cheques_devueltos: 0,
       monto_conciliado: 0,
       monto_por_aplicar: 0,
       monto_desconocido: 0,
+      monto_devuelto: 0,
     };
 
     for (const e of allEntries) {
+      const monto = Number(e.monto);
       if (e.estado === 'CONCILIADO') {
         stats.conciliadas++;
-        stats.monto_conciliado += Number(e.monto);
+        stats.monto_conciliado += monto;
       } else if (e.estado === 'POR_APLICAR') {
         stats.por_aplicar++;
-        stats.monto_por_aplicar += Number(e.monto);
+        stats.monto_por_aplicar += monto;
+      } else if (e.estado === 'CHEQUE_DEVUELTO') {
+        stats.cheques_devueltos++;
+        stats.monto_devuelto += monto;
       } else {
         stats.desconocidas++;
-        stats.monto_desconocido += Number(e.monto);
+        stats.monto_desconocido += monto;
       }
     }
 

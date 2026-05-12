@@ -9,6 +9,9 @@ import { procesarLinea } from '@/lib/conciliacion/matcher';
  * Recibe extracto bancario (FormData) y lo procesa.
  * CP-05: Cuentas nuevas → DESCONOCIDO obligatorio.
  * CP-08: Log de toda acción.
+ *
+ * Detecta cheques devueltos y los registra como CHEQUE_DEVUELTO
+ * para que el supervisor gestione la desaplicación en Softec.
  */
 export async function POST(request: NextRequest) {
   try {
@@ -28,7 +31,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Archivo requerido' }, { status: 400 });
     }
 
-    // Parsear archivo
     const buffer = Buffer.from(await file.arrayBuffer());
     const lineas = parsearExtracto(buffer, file.name);
 
@@ -41,7 +43,33 @@ export async function POST(request: NextRequest) {
     let porAplicar = 0;
     let desconocidas = 0;
 
+    const chequesDevueltos: { fecha: string; monto: number; referencia: string; descripcion: string }[] = [];
+
     for (const linea of lineas) {
+      if (linea.tipo === 'CHEQUE_DEVUELTO') {
+        await cobranzasExecute(
+          `INSERT INTO cobranza_conciliacion (
+            fecha_extracto, banco, archivo_origen,
+            fecha_transaccion, descripcion, referencia, cuenta_origen,
+            monto, moneda, estado, ir_recnum, codigo_cliente, cargado_por
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'CHEQUE_DEVUELTO', NULL, NULL, ?)`,
+          [
+            fechaExtracto, banco, file.name,
+            linea.fecha_transaccion, linea.descripcion, linea.referencia, linea.cuenta_origen || null,
+            linea.monto, linea.moneda,
+            session.email,
+          ]
+        );
+
+        chequesDevueltos.push({
+          fecha: linea.fecha_transaccion,
+          monto: linea.monto,
+          referencia: linea.referencia,
+          descripcion: linea.descripcion,
+        });
+        continue;
+      }
+
       const match = await procesarLinea(linea);
 
       await cobranzasExecute(
@@ -63,6 +91,9 @@ export async function POST(request: NextRequest) {
       else desconocidas++;
     }
 
+    const totalCreditos = lineas.filter(l => l.tipo !== 'CHEQUE_DEVUELTO').length;
+    const montoDevuelto = chequesDevueltos.reduce((s, c) => s + c.monto, 0);
+
     await logAccion(
       session.userId.toString(),
       'EXTRACTO_CARGADO',
@@ -72,18 +103,38 @@ export async function POST(request: NextRequest) {
         archivo: file.name,
         banco,
         total_lineas: lineas.length,
+        creditos: totalCreditos,
         conciliadas,
         por_aplicar: porAplicar,
         desconocidas,
+        cheques_devueltos: chequesDevueltos.length,
+        monto_devuelto: montoDevuelto,
       }
     );
 
+    if (chequesDevueltos.length > 0) {
+      await logAccion(
+        'sistema',
+        'ALERTA_CHEQUES_DEVUELTOS',
+        'conciliacion',
+        '0',
+        {
+          cantidad: chequesDevueltos.length,
+          monto_total: montoDevuelto,
+          detalle: chequesDevueltos,
+        }
+      );
+    }
+
     return NextResponse.json({
-      message: `Extracto procesado: ${lineas.length} transacciones`,
+      message: `Extracto procesado: ${totalCreditos} créditos, ${chequesDevueltos.length} cheques devueltos`,
       total: lineas.length,
       conciliadas,
       por_aplicar: porAplicar,
       desconocidas,
+      cheques_devueltos: chequesDevueltos.length,
+      monto_devuelto: montoDevuelto,
+      detalle_devueltos: chequesDevueltos,
     });
   } catch (error) {
     console.error('[CONCILIACION-CARGAR] Error:', error);
