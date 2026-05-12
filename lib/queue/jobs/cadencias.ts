@@ -177,6 +177,14 @@ export async function ejecutarCadenciasHorarias(): Promise<{
     ])
   );
 
+  // Cargar PDFs disponibles (de webhook CRM o vinculación manual)
+  const pdfRows = await cobranzasQuery<{ ij_inum: number; url_pdf: string; google_drive_id: string }>(
+    `SELECT ij_inum, url_pdf, google_drive_id FROM cobranza_facturas_documentos
+     WHERE ij_inum IN (${inums.map(() => '?').join(',')})`,
+    inums.map(String)
+  );
+  const pdfMap = new Map(pdfRows.map((r) => [Number(r.ij_inum), { url_pdf: r.url_pdf, google_drive_id: r.google_drive_id }]));
+
   let pasosAplicados = 0;
 
   for (const factura of facturas) {
@@ -223,7 +231,8 @@ export async function ejecutarCadenciasHorarias(): Promise<{
     const paso = pasosAplicables[0];
 
     try {
-      await aplicarPaso(paso, factura, estado);
+      const pdf = pdfMap.get(factura.ij_inum);
+      await aplicarPaso(paso, factura, estado, pdf);
       await upsertEstado(facturaId, paso.id, paso.dia_desde_vencimiento, false);
       pasosAplicados++;
       stats.aplicadas++;
@@ -269,7 +278,8 @@ async function upsertEstado(
 async function aplicarPaso(
   paso: Cadencia,
   factura: FacturaVencida,
-  _estado: CadenciaEstado | undefined
+  _estado: CadenciaEstado | undefined,
+  pdf?: { url_pdf: string; google_drive_id: string }
 ): Promise<void> {
   const segmento = factura.segmento as 'VERDE' | 'AMARILLO' | 'NARANJA' | 'ROJO';
   const diasVencida = Number(factura.dias_vencida);
@@ -343,8 +353,8 @@ async function aplicarPaso(
           dias_vencido: diasVencida,
           fecha_vencimiento: new Date(factura.fecha_vencimiento).toISOString().split('T')[0],
           segmento_riesgo: segmento,
-          tiene_pdf: false,
-          url_pdf: '',
+          tiene_pdf: !!pdf,
+          url_pdf: pdf?.url_pdf || '',
         });
         asunto = generado.asunto_email;
         mensajeEmail = generado.mensaje_email;
@@ -367,8 +377,9 @@ async function aplicarPaso(
       total_factura, saldo_pendiente, moneda,
       fecha_vencimiento, dias_vencido, segmento_riesgo,
       canal, mensaje_propuesto_wa, mensaje_propuesto_email, asunto_email,
-      estado, aprobado_por, ultima_consulta_softec, creado_por
-    ) VALUES (?, ?, ?, ?, ?, ?, 'DOP', ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), 'cadencias')`,
+      estado, aprobado_por, ultima_consulta_softec, creado_por,
+      tiene_pdf, url_pdf
+    ) VALUES (?, ?, ?, ?, ?, ?, 'DOP', ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), 'cadencias', ?, ?)`,
     [
       factura.ij_local || 'GUI',
       factura.ij_typedoc,
@@ -385,6 +396,8 @@ async function aplicarPaso(
       asunto || null,
       estado,
       aprobadoPor,
+      pdf ? 1 : 0,
+      pdf?.url_pdf || null,
     ]
   );
 }
