@@ -45,10 +45,10 @@ dayjs.locale("es");
 const { Title, Text } = Typography;
 const { TextArea } = Input;
 
-type Tipo = "LLAMAR" | "DEPOSITAR_CHEQUE" | "SEGUIMIENTO" | "DOCUMENTO" | "REUNION" | "OTRO";
+type Tipo = "LLAMAR" | "DEPOSITAR_CHEQUE" | "SEGUIMIENTO" | "DOCUMENTO" | "REUNION" | "CHEQUE_DEVUELTO" | "OTRO";
 type Estado = "PENDIENTE" | "EN_PROGRESO" | "HECHA" | "CANCELADA";
 type Prioridad = "BAJA" | "MEDIA" | "ALTA";
-type Origen = "MANUAL" | "ACUERDO_PAGO" | "CADENCIA";
+type Origen = "MANUAL" | "ACUERDO_PAGO" | "CADENCIA" | "CONCILIACION";
 
 interface Tarea {
   id: number;
@@ -76,6 +76,7 @@ const TIPO_META: Record<Tipo, { label: string; color: string; icon: React.ReactN
   SEGUIMIENTO: { label: "Seguimiento", color: "purple", icon: <EyeOutlined /> },
   DOCUMENTO: { label: "Documento", color: "orange", icon: <FileTextOutlined /> },
   REUNION: { label: "Reunión", color: "magenta", icon: <TeamOutlined /> },
+  CHEQUE_DEVUELTO: { label: "Cheque devuelto", color: "red", icon: <BankOutlined /> },
   OTRO: { label: "Otro", color: "default", icon: null },
 };
 
