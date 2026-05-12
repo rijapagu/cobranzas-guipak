@@ -91,20 +91,24 @@ FROM irjnl;
 
 -- -------------------------------------------------------------
 -- 4. VISTA: ijnl_pay (header de recibos de pago)
---    Usada en: estado de cuenta (LEFT JOIN con irjnl)
---    NOTA: ijnl_pay es la misma tabla ijnl filtrada a recibos —
---    si el ingeniero confirma que basta con la vista v_cobr_ijnl,
---    podemos eliminar esta. Por ahora mantenemos paridad con el
---    código actual para no romper.
+--    Usada en: saldo a favor, conciliación bancaria, estado de cuenta.
+--    JOIN con ijnl_onlpay para obtener IJ_PAY (tipo pago: EF/CK/6).
 -- -------------------------------------------------------------
 CREATE OR REPLACE VIEW v_cobr_ijnl_pay AS
 SELECT
-    IJ_LOCAL,
-    IJ_RECNUM,
-    IJ_DATE,
-    IJ_TOT,
-    IJ_DESCR
-FROM ijnl_pay;
+    p.IJ_LOCAL,
+    p.IJ_RECNUM,
+    p.IJ_DATE,
+    p.IJ_TOT,
+    p.IJ_DESCR,
+    p.IJ_CCODE,
+    p.IJ_SINORIN,
+    IFNULL(o.IJ_PAY, '') AS IJ_PAY
+FROM ijnl_pay p
+LEFT JOIN ijnl_onlpay o
+  ON o.IJ_LOCAL = p.IJ_LOCAL
+  AND o.IJ_SINORIN = p.IJ_SINORIN
+  AND o.IJ_RECNUM = p.IJ_RECNUM;
 
 
 -- =============================================================
