@@ -120,6 +120,30 @@ export async function downloadPdfBuffer(googleDriveId: string): Promise<Buffer |
 }
 
 /**
+ * Lista PDFs en la carpeta de facturas de Google Drive.
+ * Retorna los archivos ordenados por fecha de creación desc (más recientes primero).
+ */
+export async function listPdfsInFolder(pageSize = 100): Promise<DriveFileInfo[]> {
+  if (isMock || !GOOGLE_DRIVE_FOLDER_ID) return [];
+
+  const token = await getAccessToken();
+  const q = encodeURIComponent(`'${GOOGLE_DRIVE_FOLDER_ID}' in parents and mimeType='application/pdf' and trashed=false`);
+  const fields = encodeURIComponent('files(id,name,mimeType,size,webViewLink,webContentLink,createdTime)');
+
+  const res = await fetch(
+    `https://www.googleapis.com/drive/v3/files?q=${q}&fields=${fields}&pageSize=${pageSize}&orderBy=createdTime desc`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+
+  if (!res.ok) {
+    throw new Error(`Error listando archivos de Drive: ${res.status}`);
+  }
+
+  const data = await res.json();
+  return data.files || [];
+}
+
+/**
  * Verifica que el archivo existe y es un PDF.
  */
 export async function verifyPdf(googleDriveId: string): Promise<{ exists: boolean; name?: string }> {
