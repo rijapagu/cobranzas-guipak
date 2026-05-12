@@ -2,10 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { ejecutarCadenciasHorarias } from '@/lib/queue/jobs/cadencias';
 
 export async function POST(req: NextRequest) {
-  const secret = process.env.INTERNAL_CRON_SECRET;
-  const auth = req.headers.get('authorization');
-
-  if (!secret || auth !== `Bearer ${secret}`) {
+  const secret = req.headers.get('x-internal-secret');
+  if (!secret || secret !== process.env.INTERNAL_CRON_SECRET) {
     return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
   }
 
