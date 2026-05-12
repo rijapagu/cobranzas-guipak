@@ -2,7 +2,9 @@
  * Tipos del módulo de Conciliación Bancaria
  */
 
-export type EstadoConciliacion = 'CONCILIADO' | 'POR_APLICAR' | 'DESCONOCIDO';
+export type EstadoConciliacion = 'CONCILIADO' | 'POR_APLICAR' | 'DESCONOCIDO' | 'CHEQUE_DEVUELTO';
+
+export type TipoMovimiento = 'CREDITO' | 'CHEQUE_DEVUELTO';
 
 export interface LineaExtracto {
   fecha_transaccion: string;
@@ -11,6 +13,7 @@ export interface LineaExtracto {
   cuenta_origen: string;
   monto: number;
   moneda: string;
+  tipo?: TipoMovimiento;
 }
 
 export interface ConciliacionEntry {
@@ -52,9 +55,11 @@ export interface ResultadoConciliacion {
   conciliadas: number;
   por_aplicar: number;
   desconocidas: number;
+  cheques_devueltos: number;
   monto_conciliado: number;
   monto_por_aplicar: number;
   monto_desconocido: number;
+  monto_devuelto: number;
 }
 
 export interface ClienteOption {
