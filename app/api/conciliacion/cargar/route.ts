@@ -3,6 +3,7 @@ import { getSession } from '@/lib/auth/session';
 import { cobranzasExecute, logAccion } from '@/lib/db/cobranzas';
 import { parsearExtracto } from '@/lib/utils/parser-extracto';
 import { procesarLinea } from '@/lib/conciliacion/matcher';
+import { crearTareasConciliacion, notificarConciliacionDesdeBD } from '@/lib/conciliacion/seguimiento';
 
 /**
  * POST /api/conciliacion/cargar
@@ -140,6 +141,23 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Crear tareas de seguimiento y notificar por Telegram
+    let tareasCreadas = 0;
+    try {
+      tareasCreadas = await crearTareasConciliacion({
+        conciliadas, por_aplicar: porAplicar, desconocidas,
+        cheques_devueltos: chequesDevueltos.length,
+        monto_conciliado: 0, monto_desconocido: 0, monto_devuelto: montoDevuelto,
+        multi_recibo: multiRecibo, archivo: file.name, banco,
+      });
+    } catch (e) {
+      console.error('[CONCILIACION-CARGAR] Error creando tareas:', e);
+    }
+
+    // Notificar por Telegram en background (consulta montos reales de la BD)
+    notificarConciliacionDesdeBD(file.name, banco, multiRecibo, tareasCreadas)
+      .catch(e => console.error('[CONCILIACION-CARGAR] Error notificando:', e));
+
     return NextResponse.json({
       message: `Extracto procesado: ${totalCreditos} créditos, ${chequesDevueltos.length} cheques devueltos`,
       total: lineas.length,
@@ -150,6 +168,7 @@ export async function POST(request: NextRequest) {
       cheques_devueltos: chequesDevueltos.length,
       monto_devuelto: montoDevuelto,
       detalle_devueltos: chequesDevueltos,
+      tareas_creadas: tareasCreadas,
     });
   } catch (error) {
     console.error('[CONCILIACION-CARGAR] Error:', error);

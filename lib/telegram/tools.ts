@@ -241,6 +241,15 @@ export const TOOLS: Anthropic.Tool[] = [
     },
   },
   {
+    name: 'estado_conciliacion',
+    description:
+      'Resumen del estado actual de la conciliación bancaria: transacciones conciliadas, desconocidas, cheques devueltos, tareas de seguimiento pendientes. Úsala cuando pregunten "cómo va la conciliación" o "hay algo pendiente del banco".',
+    input_schema: {
+      type: 'object' as const,
+      properties: {},
+    },
+  },
+  {
     name: 'consultar_memoria_cliente',
     description:
       'Consulta la memoria estructurada del asistente sobre un cliente: patrón de pago, canal efectivo, contacto real, mejor momento de contacto, notas del equipo. Úsala antes de proponer un correo o WhatsApp para personalizar la gestión.',
@@ -357,6 +366,9 @@ export async function ejecutarTool(
 
       case 'estado_cadencias':
         return await estadoCadencias();
+
+      case 'estado_conciliacion':
+        return await estadoConciliacion();
 
       case 'proponer_whatsapp_cliente': {
         const result = await proponerWhatsAppCliente(String(argumentos.termino));
@@ -1188,4 +1200,46 @@ async function marcarTareaHecha(
   await logAccion(ctx?.userId || null, 'TAREA_HECHA_BOT', 'tarea', String(id), { via: 'telegram' });
 
   return { ok: true, data: { id, titulo: t.titulo, mensaje: 'Marcada HECHA' } };
+}
+
+async function estadoConciliacion(): Promise<ResultadoTool> {
+  const stats = await cobranzasQuery<{ estado: string; total: number; cantidad: number }>(
+    `SELECT estado, SUM(monto) as total, COUNT(*) as cantidad
+     FROM cobranza_conciliacion GROUP BY estado`
+  );
+
+  const tareas = await cobranzasQuery<{
+    tipo: string; estado: string; titulo: string; id: number;
+    created_at: string;
+  }>(
+    `SELECT id, tipo, estado, titulo, created_at
+     FROM cobranza_tareas
+     WHERE origen = 'CONCILIACION' AND estado IN ('PENDIENTE', 'EN_PROGRESO')
+     ORDER BY created_at DESC LIMIT 20`
+  );
+
+  const ultimaCarga = await cobranzasQuery<{ archivo_origen: string; fecha_extracto: string; total: number }>(
+    `SELECT archivo_origen, fecha_extracto, COUNT(*) as total
+     FROM cobranza_conciliacion
+     GROUP BY archivo_origen, fecha_extracto
+     ORDER BY fecha_extracto DESC LIMIT 3`
+  );
+
+  return {
+    ok: true,
+    data: {
+      resumen_por_estado: stats.map(s => ({
+        estado: s.estado,
+        cantidad: Number(s.cantidad),
+        monto_total: Number(s.total),
+      })),
+      tareas_seguimiento_pendientes: tareas.map(t => ({
+        id: t.id,
+        tipo: t.tipo,
+        titulo: t.titulo,
+        dias_abierta: Math.floor((Date.now() - new Date(t.created_at).getTime()) / 86400000),
+      })),
+      ultimas_cargas: ultimaCarga,
+    },
+  };
 }
