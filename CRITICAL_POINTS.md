@@ -331,11 +331,11 @@ LEFT JOIN (
 | Métrica | Valor |
 |---|---|
 | Cartera bruta (sumando `IJ_TOT - IJ_TOTAPPL`) | **$31.45M** |
-| Saldo a favor global (sumando recibos sin aplicar) | $8.43M |
-| **Saldo a favor aplicable** (limitado al pendiente de cada cliente) | **$3.94M** |
-| Cartera neta cobrable (bruto − aplicable) | **$27.51M** |
-| Sobrecobro reportado al usuario | **14.6%** |
-| **Clientes con saldo a favor ≥ pendiente** | **58** (esperado 57, tolerancia ±3) |
+| Saldo a favor global (solo RC — recibos reales) | $2.87M |
+| Cartera neta cobrable | **$28.58M** (aprox) |
+| **Clientes con saldo a favor ≥ pendiente** | **41** |
+
+**Fix 12-may-2026:** se excluyen DE (retenciones de ley, certificaciones) y DC (notas débito/crédito) del cálculo. Las DE inflaban el saldo a favor en RD$5.59M y generaban 18 falsos positivos (clientes marcados como "cubiertos" que en realidad debían).
 
 **Top casos validados:**
 

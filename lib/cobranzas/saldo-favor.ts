@@ -37,11 +37,15 @@ export type AjusteSaldo = Omit<SaldoCliente, 'codigo_cliente'>;
  *
  * Semántica del cálculo (alineada con /api/cobranzas/clientes/[codigo]/
  * estado-cuenta, validado contra SR0017 el 8-may-2026):
- *   1. Por cada recibo se calcula `sin_aplicar = IJ_TOT - SUM(IR_AMTPAID)`.
- *   2. Solo cuentan los recibos con `sin_aplicar > 0.01` — los recibos
+ *   1. Solo documentos tipo RC (recibos reales). Se excluyen DE (retenciones
+ *      de ley / certificaciones) y DC (notas débito/crédito) porque no
+ *      representan dinero que el cliente depositó. Fix 12-may-2026: las DE
+ *      inflaban el saldo a favor en RD$5.59M y generaban 18 falsos positivos.
+ *   2. Por cada recibo se calcula `sin_aplicar = IJ_TOT - SUM(IR_AMTPAID)`.
+ *   3. Solo cuentan los recibos con `sin_aplicar > 0.01` — los recibos
  *      sobre-aplicados (raros, vienen de ajustes contables) NO restan del
  *      saldo a favor del cliente.
- *   3. Se suma por cliente.
+ *   4. Se suma por cliente.
  *
  * Performance: la query pre-agrega `irjnl` una vez y hace JOIN — evita la
  * subquery correlacionada por cliente que es lenta a escala (cuando se
@@ -100,6 +104,7 @@ export async function obtenerSaldoAFavorPorCliente(
          AND ap.IR_PTYPDOC = pay.IJ_SINORIN
          AND ap.IR_RECNUM  = pay.IJ_RECNUM
        WHERE pay.IJ_CCODE IS NOT NULL
+         AND pay.IJ_SINORIN = 'RC'
          ${filtroCodigos}
      ) recibos
      WHERE sin_aplicar > 0.01
