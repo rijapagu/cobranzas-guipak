@@ -16,6 +16,13 @@ export interface LineaExtracto {
   tipo?: TipoMovimiento;
 }
 
+export interface ConciliacionDetalle {
+  ir_recnum: number;
+  codigo_cliente: string;
+  nombre_cliente: string | null;
+  monto: number;
+}
+
 export interface ConciliacionEntry {
   id: number;
   fecha_extracto: string;
@@ -36,6 +43,8 @@ export interface ConciliacionEntry {
   notas: string | null;
   cargado_por: string;
   created_at: string;
+  es_multi?: boolean;
+  detalles?: ConciliacionDetalle[];
 }
 
 export interface CuentaAprendida {

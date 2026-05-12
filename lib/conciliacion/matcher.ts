@@ -16,11 +16,20 @@ import { softecQuery, testSoftecConnection } from '@/lib/db/softec';
 import { cobranzasQuery, cobranzasExecute } from '@/lib/db/cobranzas';
 import type { LineaExtracto, EstadoConciliacion, CuentaAprendida } from '@/lib/types/conciliacion';
 
-interface MatchResult {
+export interface DetalleRecibo {
+  ir_recnum: number;
+  codigo_cliente: string;
+  nombre_cliente: string | null;
+  monto: number;
+}
+
+export interface MatchResult {
   estado: EstadoConciliacion;
   ir_recnum: number | null;
   codigo_cliente: string | null;
   nombre_cliente: string | null;
+  es_multi?: boolean;
+  detalles?: DetalleRecibo[];
 }
 
 interface ReciboSoftec {
@@ -34,6 +43,7 @@ export async function procesarLinea(linea: LineaExtracto): Promise<MatchResult> 
   const softecOk = await testSoftecConnection();
 
   if (softecOk) {
+    // 1. Match exacto: un recibo = un depósito
     const matchRecibo = await matchContraRecibos(linea);
     if (matchRecibo) {
       if (matchRecibo.codigo_cliente && linea.cuenta_origen) {
@@ -41,6 +51,10 @@ export async function procesarLinea(linea: LineaExtracto): Promise<MatchResult> 
       }
       return matchRecibo;
     }
+
+    // 2. Match multi-recibo: varios recibos suman el monto (libramientos)
+    const matchMulti = await matchMultiRecibo(linea);
+    if (matchMulti) return matchMulti;
   }
 
   if (linea.cuenta_origen) {
@@ -119,6 +133,81 @@ async function matchContraRecibos(linea: LineaExtracto): Promise<MatchResult | n
   }
 
   return null;
+}
+
+async function matchMultiRecibo(linea: LineaExtracto): Promise<MatchResult | null> {
+  const recibos = await softecQuery<ReciboSoftec>(
+    `SELECT IJ_RECNUM, IJ_CCODE, IJ_TOT, IJ_DATE
+     FROM v_cobr_ijnl_pay
+     WHERE IJ_SINORIN = 'RC'
+       AND IJ_TOT < ?
+       AND IJ_TOT > 0
+       AND ABS(DATEDIFF(?, IJ_DATE)) <= 3
+     ORDER BY IJ_TOT DESC`,
+    [linea.monto, linea.fecha_transaccion]
+  );
+
+  if (recibos.length < 2) return null;
+
+  const targetCents = Math.round(linea.monto * 100);
+  const candidatos = recibos.map(r => ({
+    ...r,
+    montoCents: Math.round(Number(r.IJ_TOT) * 100),
+  }));
+
+  const combo = buscarCombinacion(candidatos, targetCents, 8);
+  if (!combo) return null;
+
+  const detalles: DetalleRecibo[] = [];
+  for (const r of combo) {
+    const nombre = await obtenerNombreCliente(String(r.IJ_CCODE).trim());
+    detalles.push({
+      ir_recnum: r.IJ_RECNUM,
+      codigo_cliente: String(r.IJ_CCODE).trim(),
+      nombre_cliente: nombre,
+      monto: Number(r.IJ_TOT),
+    });
+  }
+
+  return {
+    estado: 'CONCILIADO',
+    ir_recnum: null,
+    codigo_cliente: null,
+    nombre_cliente: null,
+    es_multi: true,
+    detalles,
+  };
+}
+
+function buscarCombinacion(
+  candidatos: { IJ_RECNUM: number; IJ_CCODE: string; IJ_TOT: number; montoCents: number }[],
+  targetCents: number,
+  maxDepth: number
+): typeof candidatos | null {
+  let resultado: typeof candidatos | null = null;
+
+  function backtrack(index: number, remaining: number, current: typeof candidatos) {
+    if (resultado) return;
+    if (remaining === 0) {
+      resultado = [...current];
+      return;
+    }
+    if (remaining < 0 || current.length >= maxDepth || index >= candidatos.length) return;
+
+    for (let i = index; i < candidatos.length; i++) {
+      if (candidatos[i].montoCents > remaining) continue;
+      // Skip duplicates (same recnum)
+      if (i > index && candidatos[i].montoCents === candidatos[i - 1].montoCents
+          && candidatos[i].IJ_CCODE === candidatos[i - 1].IJ_CCODE) continue;
+
+      current.push(candidatos[i]);
+      backtrack(i + 1, remaining - candidatos[i].montoCents, current);
+      current.pop();
+    }
+  }
+
+  backtrack(0, targetCents, []);
+  return resultado;
 }
 
 async function obtenerNombreCliente(codigo: string): Promise<string | null> {

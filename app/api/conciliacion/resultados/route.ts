@@ -34,6 +34,30 @@ export async function GET(request: NextRequest) {
 
     const entradas = await cobranzasQuery<ConciliacionEntry>(sql, params);
 
+    // Cargar detalles multi-recibo
+    const detalles = await cobranzasQuery<{
+      conciliacion_id: number;
+      ir_recnum: number;
+      codigo_cliente: string;
+      nombre_cliente: string | null;
+      monto: number;
+    }>('SELECT * FROM cobranza_conciliacion_detalle ORDER BY conciliacion_id, id');
+
+    const detallesPorId = new Map<number, typeof detalles>();
+    for (const d of detalles) {
+      const arr = detallesPorId.get(d.conciliacion_id) || [];
+      arr.push(d);
+      detallesPorId.set(d.conciliacion_id, arr);
+    }
+
+    for (const e of entradas) {
+      const dets = detallesPorId.get(e.id);
+      if (dets && dets.length > 0) {
+        e.es_multi = true;
+        e.detalles = dets;
+      }
+    }
+
     // Stats
     const allEntries = await cobranzasQuery<{ estado: string; monto: number }>(
       'SELECT estado, monto FROM cobranza_conciliacion' +
