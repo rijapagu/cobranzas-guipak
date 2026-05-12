@@ -1,8 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Typography, message, Alert, Button, Popconfirm, Space } from "antd";
-import { DeleteOutlined } from "@ant-design/icons";
+import { Typography, message, Alert, Button, Popconfirm, Space, Dropdown } from "antd";
+import { DeleteOutlined, FileTextOutlined, DownOutlined } from "@ant-design/icons";
+import type { MenuProps } from "antd";
 import type { ConciliacionEntry, ClienteOption } from "@/lib/types/conciliacion";
 import CargadorExtracto from "@/components/conciliacion/CargadorExtracto";
 import ResumenConciliacion from "@/components/conciliacion/ResumenConciliacion";
@@ -17,6 +18,8 @@ export default function ConciliacionPage() {
   const [cargando, setCargando] = useState(false);
   const [clientes] = useState<ClienteOption[]>(getMockClientes());
   const [limpiando, setLimpiando] = useState(false);
+  const [archivoAEliminar, setArchivoAEliminar] = useState<string | null>(null);
+  const [archivosCargados, setArchivosCargados] = useState<{ archivo_origen: string; fecha_extracto: string; registros: number }[]>([]);
   const [stats, setStats] = useState({
     conciliadas: 0,
     por_aplicar: 0,
@@ -35,6 +38,7 @@ export default function ConciliacionPage() {
       const res = await fetch("/api/conciliacion/resultados");
       const data = await res.json();
       setEntradas(data.entradas || []);
+      setArchivosCargados(data.archivos || []);
       setStats({
         conciliadas: data.conciliadas || 0,
         por_aplicar: data.por_aplicar || 0,
@@ -86,16 +90,17 @@ export default function ConciliacionPage() {
     }
   };
 
-  const handleLimpiar = async () => {
+  const handleLimpiar = async (archivo: string) => {
     setLimpiando(true);
     try {
-      const res = await fetch("/api/conciliacion/resultados", { method: "DELETE" });
+      const res = await fetch(`/api/conciliacion/resultados?archivo=${encodeURIComponent(archivo)}`, { method: "DELETE" });
       const data = await res.json();
       if (!res.ok) {
         messageApi.error(data.error || "Error limpiando");
         return;
       }
-      messageApi.success(`${data.total} registros eliminados`);
+      messageApi.success(`${data.total} registros de "${archivo}" eliminados`);
+      setArchivoAEliminar(null);
       fetchResultados();
     } catch {
       messageApi.error("Error de conexión");
@@ -104,7 +109,12 @@ export default function ConciliacionPage() {
     }
   };
 
-  const hayRegistros = entradas.length > 0;
+  const menuArchivos: MenuProps["items"] = archivosCargados.map((a) => ({
+    key: a.archivo_origen,
+    icon: <FileTextOutlined />,
+    label: `${a.archivo_origen} (${a.registros} reg, ${a.fecha_extracto})`,
+    onClick: () => setArchivoAEliminar(a.archivo_origen),
+  }));
 
   return (
     <div>
@@ -114,21 +124,27 @@ export default function ConciliacionPage() {
         <Title level={4} style={{ margin: 0 }}>
           Conciliación Bancaria
         </Title>
-        {hayRegistros && (
-          <Popconfirm
-            title="¿Limpiar todos los registros?"
-            description="Esto eliminará todos los registros de conciliación actuales para poder recargar el extracto."
-            onConfirm={handleLimpiar}
-            okText="Sí, limpiar"
-            cancelText="Cancelar"
-            okButtonProps={{ danger: true }}
-          >
-            <Button danger icon={<DeleteOutlined />} loading={limpiando}>
-              Limpiar registros
+        {archivosCargados.length > 0 && (
+          <Dropdown menu={{ items: menuArchivos }} trigger={["click"]}>
+            <Button icon={<DeleteOutlined />}>
+              Eliminar carga <DownOutlined />
             </Button>
-          </Popconfirm>
+          </Dropdown>
         )}
       </Space>
+
+      <Popconfirm
+        title={`¿Eliminar registros de "${archivoAEliminar}"?`}
+        description="Solo se eliminarán los registros de este archivo. Las demás cargas no se afectan."
+        open={!!archivoAEliminar}
+        onConfirm={() => archivoAEliminar && handleLimpiar(archivoAEliminar)}
+        onCancel={() => setArchivoAEliminar(null)}
+        okText="Sí, eliminar"
+        cancelText="Cancelar"
+        okButtonProps={{ danger: true, loading: limpiando }}
+      >
+        <span />
+      </Popconfirm>
 
       <Alert
         message="Conciliación inteligente"

@@ -69,20 +69,32 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    const archivos = await cobranzasQuery<{
+      archivo_origen: string;
+      fecha_extracto: string;
+      registros: number;
+      cargado_por: string;
+    }>(
+      `SELECT archivo_origen, fecha_extracto, COUNT(*) as registros, MAX(cargado_por) as cargado_por
+       FROM cobranza_conciliacion
+       GROUP BY archivo_origen, fecha_extracto
+       ORDER BY fecha_extracto DESC`
+    );
+
     const response: ResultadoConciliacion = {
       entradas,
       total: entradas.length,
       ...stats,
     };
 
-    return NextResponse.json(response);
+    return NextResponse.json({ ...response, archivos });
   } catch (error) {
     console.error('[CONCILIACION-RESULTADOS] Error:', error);
     return NextResponse.json({ error: 'Error consultando resultados' }, { status: 500 });
   }
 }
 
-export async function DELETE() {
+export async function DELETE(request: NextRequest) {
   try {
     const session = await getSession();
     if (!session) {
@@ -92,22 +104,35 @@ export async function DELETE() {
       return NextResponse.json({ error: 'Solo supervisores pueden limpiar registros' }, { status: 403 });
     }
 
+    const archivo = request.nextUrl.searchParams.get('archivo');
+    if (!archivo) {
+      return NextResponse.json({ error: 'Debe especificar el archivo a eliminar (?archivo=nombre.csv)' }, { status: 400 });
+    }
+
     const countResult = await cobranzasQuery<{ total: number }>(
-      'SELECT COUNT(*) as total FROM cobranza_conciliacion'
+      'SELECT COUNT(*) as total FROM cobranza_conciliacion WHERE archivo_origen = ?',
+      [archivo]
     );
     const total = countResult[0]?.total || 0;
 
-    await cobranzasExecute('DELETE FROM cobranza_conciliacion');
+    if (total === 0) {
+      return NextResponse.json({ error: 'No se encontraron registros de ese archivo' }, { status: 404 });
+    }
+
+    await cobranzasExecute(
+      'DELETE FROM cobranza_conciliacion WHERE archivo_origen = ?',
+      [archivo]
+    );
 
     await logAccion(
       session.userId.toString(),
       'CONCILIACION_LIMPIADA',
       'conciliacion',
       '0',
-      { registros_eliminados: total }
+      { archivo, registros_eliminados: total }
     );
 
-    return NextResponse.json({ message: `${total} registros eliminados`, total });
+    return NextResponse.json({ message: `${total} registros del archivo "${archivo}" eliminados`, total, archivo });
   } catch (error) {
     console.error('[CONCILIACION-RESULTADOS] Error DELETE:', error);
     return NextResponse.json({ error: 'Error limpiando registros' }, { status: 500 });
