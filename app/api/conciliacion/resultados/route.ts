@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth/session';
-import { cobranzasQuery } from '@/lib/db/cobranzas';
+import { cobranzasQuery, cobranzasExecute, logAccion } from '@/lib/db/cobranzas';
 import type { ConciliacionEntry, ResultadoConciliacion } from '@/lib/types/conciliacion';
 
 /**
@@ -79,5 +79,37 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     console.error('[CONCILIACION-RESULTADOS] Error:', error);
     return NextResponse.json({ error: 'Error consultando resultados' }, { status: 500 });
+  }
+}
+
+export async function DELETE() {
+  try {
+    const session = await getSession();
+    if (!session) {
+      return NextResponse.json({ error: 'No autenticado' }, { status: 401 });
+    }
+    if (session.rol !== 'ADMIN' && session.rol !== 'SUPERVISOR') {
+      return NextResponse.json({ error: 'Solo supervisores pueden limpiar registros' }, { status: 403 });
+    }
+
+    const countResult = await cobranzasQuery<{ total: number }>(
+      'SELECT COUNT(*) as total FROM cobranza_conciliacion'
+    );
+    const total = countResult[0]?.total || 0;
+
+    await cobranzasExecute('DELETE FROM cobranza_conciliacion');
+
+    await logAccion(
+      session.userId.toString(),
+      'CONCILIACION_LIMPIADA',
+      'conciliacion',
+      '0',
+      { registros_eliminados: total }
+    );
+
+    return NextResponse.json({ message: `${total} registros eliminados`, total });
+  } catch (error) {
+    console.error('[CONCILIACION-RESULTADOS] Error DELETE:', error);
+    return NextResponse.json({ error: 'Error limpiando registros' }, { status: 500 });
   }
 }

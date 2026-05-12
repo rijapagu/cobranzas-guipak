@@ -59,7 +59,7 @@ export default function CargadorExtracto({ onProcesar, loading }: Props) {
             size="large"
           />
           <Dragger
-            accept=".xlsx,.xls,.csv"
+            accept=".xlsx,.xls,.csv,.txt"
             fileList={fileList}
             beforeUpload={() => false}
             onChange={({ fileList: fl }) => setFileList(fl.slice(-1))}
@@ -72,7 +72,7 @@ export default function CargadorExtracto({ onProcesar, loading }: Props) {
               Arrastre el extracto aquí o haga clic para seleccionar
             </p>
             <p className="ant-upload-hint">
-              <Text type="secondary">Formatos: .xlsx, .xls, .csv</Text>
+              <Text type="secondary">Formatos: .xlsx, .xls, .csv, .txt</Text>
             </p>
           </Dragger>
           <Button
