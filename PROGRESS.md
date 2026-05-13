@@ -325,14 +325,14 @@ INTERNAL_CRON_SECRET=...
 |---|---|---|
 | 1 | **WhatsApp (Evolution API)** — falta API Key + nombre instancia | ⏳ Ricardo decide cuándo activar |
 | 2 | **Webhook CRM → Cobranzas** — el CRM debe enviar POST a `https://cobros.sguipak.com/api/webhooks/factura-escaneada` | ⏳ Desarrollo CRM |
-| 3 | **Disputas** — página funcional completa (actualmente placeholder) | ⏳ Pendiente desarrollo |
-| 4 | **N8N workflow** — generar cola de cobranza automática cada mañana | ⏳ Pendiente configuración |
-| 5 | **Reporte diario por email** — resumen automático al supervisor | ⏳ Pendiente desarrollo |
+| 3 | ~~Disputas — página funcional completa~~ | ✅ Completado (13-may-2026) |
+| 4 | **N8N workflow** — generar cola de cobranza automática cada mañana | ⏳ Pendiente configuración (cadencias BullMQ lo cubre) |
+| 5 | ~~Reporte diario por email — resumen automático al supervisor~~ | ✅ Completado (13-may-2026) |
 | 6 | ~~Campañas/cadencias~~ | ✅ Completado (Capa D Fase 10) |
 | 7 | ~~Banco(s) principal(es) de Guipak para conciliación~~ | ✅ Banco Popular confirmado |
 | 8 | ~~Formato extractos bancarios reales~~ | ✅ CSV Banco Popular implementado |
-| 9 | **Verificación end-to-end WhatsApp** — probar ciclo completo con clientes reales | ⏳ Requiere activar Evolution API |
-| 10 | **Worker BullMQ en producción** — levantar como servicio en Dokploy | ⏳ Pendiente configuración |
+| 9 | ~~Verificación end-to-end WhatsApp — ciclo completo~~ | ✅ Completado (13-may-2026) |
+| 10 | ~~Worker BullMQ en producción — servicio Dokploy~~ | ✅ Completado (13-may-2026) |
 
 ## ✅ Credenciales Configuradas (Producción + Local)
 
@@ -342,7 +342,7 @@ INTERNAL_CRON_SECRET=...
 | 2 | Claude AI (Anthropic) | ✅ sk-ant-api03-... | Responde OK |
 | 3 | SMTP Email | ✅ mail.guipak.com:465 | cobros@guipak.com |
 | 4 | Google Drive API | ✅ OAuth 2.0 + refresh token | 5 archivos visibles, carpeta Facturas ID configurado |
-| 5 | WhatsApp (Evolution API) | ⏳ URL configurada, falta API Key | evolutionapi.sguipak.com |
+| 5 | WhatsApp (Evolution API) | ✅ Configurado y verificado | evolutionapi.sguipak.com — instancia AsistenteGuipak activa |
 | 6 | Dokploy (producción) | ✅ 27 variables configuradas | cobros.sguipak.com |
 
 ---
@@ -684,3 +684,61 @@ portal con un cliente cubierto. Detalle completo en
 - `db/migrations/017_conciliacion_cheque_devuelto.sql`
 - `db/migrations/018_conciliacion_detalle.sql`
 - `db/migrations/019_tareas_conciliacion.sql`
+
+---
+
+## Sesión 13-Mayo-2026 — Disputas + WhatsApp + Worker + Reporte Diario
+
+### Completado
+
+#### Módulo de Disputas (funcional completo)
+- **`app/api/cobranzas/disputas/route.ts`** — GET con filtros (estado, búsqueda, rango fechas), batch lookup de nombres en Softec `v_cobr_icust`; POST crea disputa + log CP-08
+- **`app/api/cobranzas/disputas/[id]/route.ts`** — GET detalle completo (disputa + cliente Softec + factura Softec + últimas 50 entradas del log); PUT transiciones de estado con máquina de estados: ABIERTA→EN_REVISION/ANULADA, EN_REVISION→RESUELTA(requiere `resolucion`)/ANULADA, RESUELTA/ANULADA inmutables
+- **`app/(dashboard)/disputas/page.tsx`** — reemplaza placeholder con: 4 cards de estado clickeables como filtro, tabla con search + selector estado + DateRangePicker, Drawer con Descriptions + Timeline, DrawerFooter contextual (botones según estado actual), Modal resolución/anulación, Modal nueva disputa con alerta CP-03
+
+#### WhatsApp verificado
+- API Key global de Evolution API configurada en Dokploy (instancia AsistenteGuipak)
+- Ciclo completo verificado: sendText → delivery → read → webhook → procesarMensajeBot → respuesta IA
+- Normalización de teléfonos RD (10 dígitos → `1809…@s.whatsapp.net`)
+- Manejo de formato LID para números con privacidad Meta
+
+#### Worker BullMQ como servicio Dokploy
+- **`Dockerfile.worker`** — imagen Node 20 Alpine con tsx, sin Next.js standalone; `CMD ["npm", "run", "worker"]`
+- **`docker-compose.yml`** — servicio `cobranzas-worker` con `depends_on: cobranzas-redis`
+- **`lib/queue/bullmq.ts`** — `scheduleReporteDiario()` cron `30 12 * * 1-5` (8:30 AM AST L-V)
+- **`lib/queue/worker.ts`** — handler para `JOBS.REPORTE_DIARIO`
+
+#### Reporte diario por email
+- **`lib/reportes/reporte-diario.ts`** — HTML completo: header, cartera por segmento con barras de progreso, 6 tipos de alerta, top 8 clientes por saldo neto, stats de gestiones, CTA a la app; asunto incluye ⚠️ cuando hay alertas urgentes
+- **`lib/email/sender.ts`** — 5to parámetro opcional `htmlBody?: string` (retrocompatible con 3 llamadores existentes)
+- **`app/api/internal/cron/reporte-diario/route.ts`** — POST autenticado con `x-cron-secret: INTERNAL_CRON_SECRET`; llamar via Dokploy cron `0 12 * * 1-5`
+
+### Pruebas locales (todos pasaron ✅)
+| Test | Resultado |
+|---|---|
+| `GET /api/cobranzas/disputas` | ✅ `{"disputas":[],"por_estado":{}}` |
+| `POST /api/cobranzas/disputas` | ✅ `{"ok":true,"id":1}` |
+| `GET /api/cobranzas/disputas/1` | ✅ Detalle + cliente Softec (MAWREN COMERCIAL) + log |
+| `PUT` ABIERTA→EN_REVISION | ✅ |
+| `PUT` EN_REVISION→RESUELTA | ✅ (requiere `resolucion`) |
+| `PUT` RESUELTA→cualquier | ✅ Rechazado 400 |
+| `POST /api/internal/cron/reporte-diario` | ✅ Llega a SMTP, falla por credenciales dev (code path OK) |
+| `npm run worker` (con REDIS_HOST=localhost) | ✅ 3 jobs BullMQ programados |
+| TypeScript `tsc --noEmit` | ✅ 0 errores |
+
+### Pendiente en Dokploy (configuración manual)
+- Agregar env var `REPORT_EMAIL=<email_supervisor>` (si distinto de `SMTP_USER`)
+- Configurar cron HTTP Dokploy: `POST https://cobros.sguipak.com/api/internal/cron/reporte-diario` schedule `0 12 * * 1-5` header `x-cron-secret`
+- Verificar que `cobranzas-worker` sube correctamente en el próximo deploy
+
+### Archivos nuevos/modificados
+- `app/api/cobranzas/disputas/route.ts` — NEW
+- `app/api/cobranzas/disputas/[id]/route.ts` — NEW
+- `app/(dashboard)/disputas/page.tsx` — reemplazó placeholder
+- `app/api/internal/cron/reporte-diario/route.ts` — NEW
+- `lib/reportes/reporte-diario.ts` — NEW
+- `lib/email/sender.ts` — 5to param htmlBody opcional
+- `lib/queue/bullmq.ts` — REPORTE_DIARIO job + scheduleReporteDiario()
+- `lib/queue/worker.ts` — handler REPORTE_DIARIO
+- `Dockerfile.worker` — NEW
+- `docker-compose.yml` — servicio cobranzas-worker
