@@ -19,6 +19,7 @@ export const JOBS = {
   EMPUJE_MATUTINO: 'empuje-matutino',
   CADENCIAS_HORARIAS: 'cadencias-horarias',
   REPORTE_DIARIO: 'reporte-diario',
+  INTELIGENCIA_CLIENTES: 'inteligencia-clientes',
 } as const;
 
 let cronQueue: Queue | null = null;
@@ -99,6 +100,26 @@ export async function scheduleReporteDiario() {
   );
 
   console.log('[BullMQ] Reporte diario programado: 8:30 AM AST L-V (12:30 UTC)');
+}
+
+export async function scheduleInteligenciaClientes() {
+  const queue = getCronQueue();
+
+  const repeatables = await queue.getRepeatableJobs();
+  for (const job of repeatables) {
+    if (job.name === JOBS.INTELIGENCIA_CLIENTES) {
+      await queue.removeRepeatableByKey(job.key);
+    }
+  }
+
+  // 1:00 AM AST = 5:00 AM UTC — el equipo llega con datos frescos a las 8 AM
+  await queue.add(
+    JOBS.INTELIGENCIA_CLIENTES,
+    {},
+    { repeat: { pattern: '0 5 * * *', tz: 'UTC' } }
+  );
+
+  console.log('[BullMQ] Inteligencia clientes programada: 1:00 AM AST (5:00 UTC)');
 }
 
 export function createCronWorker(
