@@ -4,11 +4,11 @@ import { ejecutarInteligenciaClientes } from '@/lib/queue/jobs/inteligencia-clie
 /**
  * POST /api/internal/cron/inteligencia-clientes
  * Endpoint para disparo manual del job de scoring (Dokploy cron o admin).
- * Protegido con CRON_SECRET.
+ * Protegido con INTERNAL_CRON_SECRET.
  */
 export async function POST(request: NextRequest) {
   const secret = request.headers.get('x-cron-secret');
-  if (!secret || secret !== process.env.CRON_SECRET) {
+  if (!secret || secret !== process.env.INTERNAL_CRON_SECRET) {
     return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
   }
 
