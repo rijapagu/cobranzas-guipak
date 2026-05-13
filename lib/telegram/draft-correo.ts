@@ -75,8 +75,13 @@ export async function proponerCorreoCliente(
 
   // 1. Buscar la factura más urgente del cliente
   const esCodigo = /^\d+$/.test(termino.trim());
-  const filtro = esCodigo ? 'c.IC_CODE = ?' : 'c.IC_NAME LIKE ?';
-  const param = esCodigo ? termino.trim().padStart(7, '0') : `%${termino}%`;
+  // Soportar códigos alfanuméricos como "RV0003" además de numéricos y nombres
+  const filtro = esCodigo
+    ? 'c.IC_CODE = ?'
+    : '(c.IC_NAME LIKE ? OR c.IC_CODE = ?)';
+  const params = esCodigo
+    ? [termino.trim().padStart(7, '0')]
+    : [`%${termino}%`, termino.trim()];
 
   const facturas = await softecQuery<FacturaUrgente>(
     `SELECT
@@ -101,7 +106,7 @@ export async function proponerCorreoCliente(
        AND (f.IJ_TOT - f.IJ_TOTAPPL) > 0
      ORDER BY DATEDIFF(CURDATE(), f.IJ_DUEDATE) DESC, (f.IJ_TOT - f.IJ_TOTAPPL) DESC
      LIMIT 1`,
-    [param]
+    params
   );
 
   if (facturas.length === 0) {
