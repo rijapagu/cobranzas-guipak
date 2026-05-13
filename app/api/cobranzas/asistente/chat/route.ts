@@ -37,7 +37,14 @@ export async function POST(request: NextRequest) {
       activo: 1,
     };
 
-    const respuesta = await procesarMensajeBot({ texto: mensaje, user: webUser });
+    // chatId negativo ficticio por usuario para separar historial web del de Telegram
+    const webChatId = -(session.userId);
+    const respuesta = await procesarMensajeBot({
+      texto: mensaje,
+      user: webUser,
+      chatId: webChatId,
+      telegramUserId: 0,
+    });
 
     // Extraer <gestion-pendiente id="N"/> si existe
     const match = respuesta.match(/<gestion-pendiente\s+id="(\d+)"\s*\/>/);

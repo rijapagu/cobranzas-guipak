@@ -7,6 +7,7 @@ import {
 } from '@/lib/cobranzas/saldo-favor';
 import { proponerCorreoCliente } from './draft-correo';
 import { proponerWhatsAppCliente } from './draft-whatsapp';
+import { guardarMemoriaEquipo } from './historial';
 
 /**
  * Definición de herramientas que Claude puede invocar desde el bot de Telegram.
@@ -300,6 +301,25 @@ export const TOOLS: Anthropic.Tool[] = [
       required: ['codigo_cliente'],
     },
   },
+  {
+    name: 'guardar_memoria_equipo',
+    description:
+      'Guarda un dato permanente sobre el equipo, sus preferencias o el contexto del negocio. Úsalo cuando el usuario comparta algo que debas recordar en futuras conversaciones: cómo prefiere trabajar, quién maneja qué clientes, acuerdos internos, contexto de la empresa.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        clave: {
+          type: 'string',
+          description: 'Nombre descriptivo y único del dato (ej. "preferencia_correos_ricardo", "clientes_daria", "horario_reunion_semanal")',
+        },
+        valor: {
+          type: 'string',
+          description: 'El dato a recordar, escrito de forma clara y completa para que sea útil en el futuro',
+        },
+      },
+      required: ['clave', 'valor'],
+    },
+  },
 ];
 
 interface ResultadoTool {
@@ -311,7 +331,7 @@ interface ResultadoTool {
 export async function ejecutarTool(
   nombre: string,
   argumentos: Record<string, unknown>,
-  ctx?: { userId?: string; userEmail?: string }
+  ctx?: { userId?: string; userEmail?: string; telegramUserId?: number }
 ): Promise<ResultadoTool> {
   try {
     switch (nombre) {
@@ -380,6 +400,9 @@ export async function ejecutarTool(
 
       case 'guardar_memoria_cliente':
         return await guardarMemoriaCliente(argumentos, ctx);
+
+      case 'guardar_memoria_equipo':
+        return await guardarMemoriaEquipoTool(argumentos, ctx);
 
       default:
         return { ok: false, error: `Tool desconocida: ${nombre}` };
@@ -1170,6 +1193,25 @@ async function guardarMemoriaCliente(
   });
 
   return { ok: true, data: { codigo_cliente: codigo, campos_guardados: Object.keys(campos).filter((k) => k !== 'actualizado_por') } };
+}
+
+async function guardarMemoriaEquipoTool(
+  args: Record<string, unknown>,
+  ctx?: { userId?: string; userEmail?: string; telegramUserId?: number }
+): Promise<ResultadoTool> {
+  const clave = String(args.clave || '').trim();
+  const valor = String(args.valor || '').trim();
+  if (!clave || clave.length < 2) return { ok: false, error: 'clave inválida' };
+  if (!valor || valor.length < 2) return { ok: false, error: 'valor inválido' };
+
+  const telegramUserId = ctx?.telegramUserId ?? 0;
+  await guardarMemoriaEquipo(telegramUserId, clave, valor);
+  await logAccion(ctx?.userId || null, 'MEMORIA_EQUIPO_GUARDADA', 'telegram', clave, {
+    valor,
+    telegram_user_id: telegramUserId,
+    via: 'telegram',
+  });
+  return { ok: true, data: { clave, valor } };
 }
 
 async function marcarTareaHecha(
