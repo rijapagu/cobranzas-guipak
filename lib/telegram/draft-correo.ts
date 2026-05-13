@@ -1,24 +1,20 @@
 /**
- * Genera un draft de correo para un cliente y lo inserta en cobranza_gestiones
- * con estado PENDIENTE. Devuelve el ID para que se puedan presentar botones
- * de aprobación en Telegram.
+ * Genera un draft de correo CONSOLIDADO para un cliente: cubre TODA su deuda,
+ * no solo una factura.
  *
  * CP-02: el correo NO se envía. Solo se crea el draft.
  * CP-10: Claude solo genera texto.
  * CP-15: si el cliente tiene saldo a favor que cubre su pendiente, NO se
- *        genera draft (sería injusto cobrar a alguien que ya pagó de más).
+ *        genera draft.
  */
 
 import { cobranzasQuery, cobranzasExecute } from '@/lib/db/cobranzas';
 import { softecQuery, testSoftecConnection } from '@/lib/db/softec';
-import { generarMensajeCobranza } from '@/lib/claude/client';
-import { seleccionarPlantilla } from '@/lib/templates/seleccionar';
-import { renderPlantilla } from '@/lib/templates/render';
 import { obtenerSaldoAFavorPorCliente } from '@/lib/cobranzas/saldo-favor';
 import Anthropic from '@anthropic-ai/sdk';
 import type { SegmentoRiesgo } from '@/lib/types/cartera';
 
-interface FacturaUrgente {
+interface FacturaCliente {
   ij_local: string;
   ij_typedoc: string;
   ij_inum: number;
@@ -41,6 +37,7 @@ export interface DraftCorreoResult {
   cliente?: string;
   codigo?: string;
   factura?: number;
+  total_facturas?: number;
   saldo?: number;
   asunto?: string;
   mensaje_email?: string;
@@ -54,8 +51,6 @@ export interface DraftCorreoResult {
     | 'ERROR_GENERAR'
     | 'CLIENTE_PAUSADO'
     | 'CLIENTE_CUBIERTO_POR_ANTICIPO';
-  // CP-15: cuando se bloquea por anticipo se reportan los montos para que
-  // el bot pueda explicarle al supervisor por qué no se generó el correo.
   saldo_pendiente?: number;
   saldo_a_favor?: number;
 }
@@ -73,9 +68,8 @@ export async function proponerCorreoCliente(
   const softecOk = await testSoftecConnection();
   if (!softecOk) return { ok: false, error: 'Sin conexión a Softec' };
 
-  // 1. Buscar la factura más urgente del cliente
+  // 1. Buscar TODAS las facturas pendientes del cliente
   const esCodigo = /^\d+$/.test(termino.trim());
-  // Soportar códigos alfanuméricos como "RV0003" además de numéricos y nombres
   const filtro = esCodigo
     ? 'c.IC_CODE = ?'
     : '(c.IC_NAME LIKE ? OR c.IC_CODE = ?)';
@@ -83,7 +77,7 @@ export async function proponerCorreoCliente(
     ? [termino.trim().padStart(7, '0')]
     : [`%${termino}%`, termino.trim()];
 
-  const facturas = await softecQuery<FacturaUrgente>(
+  const facturas = await softecQuery<FacturaCliente>(
     `SELECT
        'GUI'                AS ij_local,
        f.IJ_TYPEDOC          AS ij_typedoc,
@@ -105,7 +99,7 @@ export async function proponerCorreoCliente(
        AND f.IJ_TYPEDOC='IN' AND f.IJ_INVTORF='T' AND f.IJ_PAID='F'
        AND (f.IJ_TOT - f.IJ_TOTAPPL) > 0
      ORDER BY DATEDIFF(CURDATE(), f.IJ_DUEDATE) DESC, (f.IJ_TOT - f.IJ_TOTAPPL) DESC
-     LIMIT 1`,
+     LIMIT 50`,
     params
   );
 
@@ -117,88 +111,56 @@ export async function proponerCorreoCliente(
     };
   }
 
-  const f = facturas[0];
-  const codigoCliente = String(f.codigo_cliente).trim();
-  const nombreCliente = String(f.nombre_cliente).trim();
+  const masUrgente = facturas[0];
+  const codigoCliente = String(masUrgente.codigo_cliente).trim();
+  const nombreCliente = String(masUrgente.nombre_cliente).trim();
+  const saldoTotal = facturas.reduce((s, f) => s + Number(f.saldo_pendiente), 0);
+  const diasMaxVencido = Math.max(...facturas.map((f) => Number(f.dias_vencido)));
+  const segmento = calcularSegmento(diasMaxVencido);
 
-  // 2. Verificar que no haya disputa activa (CP-03)
-  const disputas = await cobranzasQuery<{ count: number }>(
-    "SELECT COUNT(*) AS count FROM cobranza_disputas WHERE ij_inum = ? AND estado IN ('ABIERTA','EN_REVISION')",
-    [f.ij_inum]
-  );
-  if (Number(disputas[0]?.count) > 0) {
-    return {
-      ok: false,
-      motivo: 'FACTURA_EN_DISPUTA',
-      error: 'Esta factura tiene disputa activa, no se puede gestionar',
-    };
-  }
-
-  // 3. Verificar pausa
+  // 2. Verificar pausa
   const pausa = await cobranzasQuery<{ pausa_hasta: string | null; no_contactar: number }>(
     'SELECT pausa_hasta, no_contactar FROM cobranza_clientes_enriquecidos WHERE codigo_cliente = ?',
     [codigoCliente]
   );
   if (pausa[0]) {
     if (pausa[0].no_contactar) {
-      return {
-        ok: false,
-        motivo: 'CLIENTE_PAUSADO',
-        error: 'Cliente marcado como NO CONTACTAR',
-      };
+      return { ok: false, motivo: 'CLIENTE_PAUSADO', error: 'Cliente marcado como NO CONTACTAR' };
     }
     if (pausa[0].pausa_hasta && new Date(pausa[0].pausa_hasta) > new Date()) {
-      return {
-        ok: false,
-        motivo: 'CLIENTE_PAUSADO',
-        error: `Cliente pausado hasta ${pausa[0].pausa_hasta}`,
-      };
+      return { ok: false, motivo: 'CLIENTE_PAUSADO', error: `Cliente pausado hasta ${pausa[0].pausa_hasta}` };
     }
   }
 
-  // 3.5. CP-15: verificar que el cliente NO esté cubierto por saldo a favor.
-  // Si los recibos sin aplicar del cliente cubren o superan su pendiente
-  // bruto total, el correo de cobranza es injusto — la acción correcta es
-  // que contabilidad aplique el anticipo, no que se le cobre.
-  const pendienteCliente = await softecQuery<{ pendiente: number }>(
-    `SELECT COALESCE(SUM(IJ_TOT - IJ_TOTAPPL), 0) AS pendiente
-       FROM v_cobr_ijnl
-      WHERE IJ_CCODE = ?
-        AND IJ_TYPEDOC='IN' AND IJ_INVTORF='T' AND IJ_PAID='F'
-        AND (IJ_TOT - IJ_TOTAPPL) > 0`,
-    [codigoCliente]
-  );
-  const pendienteBruto = Number(pendienteCliente[0]?.pendiente) || 0;
+  // 3. CP-15: saldo a favor
   const saldosFavor = await obtenerSaldoAFavorPorCliente([codigoCliente]);
   const saldoFavor = saldosFavor.get(codigoCliente) ?? 0;
-  if (saldoFavor >= pendienteBruto && pendienteBruto > 0) {
+  if (saldoFavor >= saldoTotal && saldoTotal > 0) {
     return {
       ok: false,
       motivo: 'CLIENTE_CUBIERTO_POR_ANTICIPO',
-      error:
-        'El cliente tiene saldo a favor que cubre todo su pendiente. ' +
-        'Contabilidad debe aplicar el anticipo antes de cobrar.',
-      saldo_pendiente: pendienteBruto,
+      error: 'El cliente tiene saldo a favor que cubre todo su pendiente. Contabilidad debe aplicar el anticipo antes de cobrar.',
+      saldo_pendiente: saldoTotal,
       saldo_a_favor: saldoFavor,
     };
   }
 
-  // 4. Verificar gestión PENDIENTE existente para esa factura
+  // 4. Verificar gestión PENDIENTE existente para este cliente
   const yaPendiente = await cobranzasQuery<{ id: number }>(
-    "SELECT id FROM cobranza_gestiones WHERE ij_inum = ? AND estado='PENDIENTE'",
-    [f.ij_inum]
+    "SELECT id FROM cobranza_gestiones WHERE codigo_cliente = ? AND canal = 'EMAIL' AND estado='PENDIENTE' LIMIT 1",
+    [codigoCliente]
   );
   if (yaPendiente.length > 0) {
     return {
       ok: false,
       motivo: 'YA_HAY_GESTION_PENDIENTE',
-      error: `Ya existe una gestión pendiente para esta factura (ID: ${yaPendiente[0].id})`,
+      error: `Ya existe una gestión de correo pendiente para este cliente (ID: ${yaPendiente[0].id})`,
       gestion_id: yaPendiente[0].id,
     };
   }
 
-  // 5. Buscar email enriquecido si no hay en Softec
-  let emailDestino = (f.email || '').trim();
+  // 5. Buscar email
+  let emailDestino = (masUrgente.email || '').trim();
   if (!emailDestino) {
     const enr = await cobranzasQuery<{ email: string | null }>(
       'SELECT email FROM cobranza_clientes_enriquecidos WHERE codigo_cliente = ?',
@@ -207,13 +169,7 @@ export async function proponerCorreoCliente(
     if (enr[0]?.email) emailDestino = enr[0].email.trim();
   }
 
-  // 6. Generar mensaje
-  // Enfoque B (bot manual): selecciona plantilla → render → opcionalmente
-  // refina con Claude para tono natural. Si no hay plantilla, fallback a Claude solo.
-  const diasVencido = Number(f.dias_vencido);
-  const segmento = calcularSegmento(diasVencido);
-
-  // Capa 1: cargar memoria del cliente para personalización
+  // 6. Memoria del cliente
   const memoriaRows = await cobranzasQuery<{
     patron_pago: string | null;
     canal_efectivo: string | null;
@@ -226,58 +182,23 @@ export async function proponerCorreoCliente(
   );
   const memoria = memoriaRows[0] || null;
 
+  // 7. Generar correo consolidado con Claude
   let asunto = '';
   let mensajeEmail = '';
 
   try {
-    const plantilla = await seleccionarPlantilla({
+    const generado = await generarCorreoConsolidado(
+      nombreCliente,
+      codigoCliente,
+      facturas,
+      saldoTotal,
+      saldoFavor,
       segmento,
-      diasVencido,
-    });
-
-    if (plantilla) {
-      const contacto = (memoria?.contacto_real || f.contacto_cobros) ? String(memoria?.contacto_real || f.contacto_cobros).trim() : '';
-      const rendered = renderPlantilla(
-        { asunto: plantilla.asunto, cuerpo: plantilla.cuerpo },
-        {
-          cliente: contacto || nombreCliente,
-          empresa_cliente: nombreCliente,
-          numero_factura: f.ij_inum,
-          ncf_fiscal: f.ncf_fiscal ? String(f.ncf_fiscal).trim() : '',
-          monto: Number(f.saldo_pendiente),
-          moneda: 'DOP',
-          fecha_vencimiento: new Date(f.fecha_vencimiento).toISOString().split('T')[0],
-          dias_vencida: diasVencido,
-        }
-      );
-      asunto = rendered.asunto;
-      mensajeEmail = rendered.cuerpo;
-
-      // Refinamiento opcional con Claude (solo si hay API key — best-effort)
-      const refinado = await refinarConClaude(asunto, mensajeEmail, segmento, memoria);
-      if (refinado) {
-        asunto = refinado.asunto;
-        mensajeEmail = refinado.cuerpo;
-      }
-    } else {
-      // Fallback: Claude genera todo
-      const generado = await generarMensajeCobranza({
-        nombre_cliente: nombreCliente,
-        contacto_cobros: memoria?.contacto_real || (f.contacto_cobros ? String(f.contacto_cobros).trim() : ''),
-        codigo_cliente: codigoCliente,
-        numero_factura: f.ij_inum,
-        ncf_fiscal: f.ncf_fiscal ? String(f.ncf_fiscal).trim() : '',
-        saldo_pendiente: Number(f.saldo_pendiente),
-        moneda: 'DOP',
-        dias_vencido: diasVencido,
-        fecha_vencimiento: new Date(f.fecha_vencimiento).toISOString().split('T')[0],
-        segmento_riesgo: segmento,
-        tiene_pdf: false,
-        url_pdf: '',
-      });
-      asunto = generado.asunto_email;
-      mensajeEmail = generado.mensaje_email;
-    }
+      memoria?.contacto_real || (masUrgente.contacto_cobros ? String(masUrgente.contacto_cobros).trim() : ''),
+      memoria
+    );
+    asunto = generado.asunto;
+    mensajeEmail = generado.cuerpo;
   } catch (err) {
     return {
       ok: false,
@@ -286,7 +207,8 @@ export async function proponerCorreoCliente(
     };
   }
 
-  // 7. Insertar en cobranza_gestiones (PENDIENTE)
+  // 8. Insertar gestión (referencia la factura más urgente pero saldo = total)
+  const saldoNeto = Math.max(0, saldoTotal - saldoFavor);
   const insertResult = await cobranzasExecute(
     `INSERT INTO cobranza_gestiones (
       ij_local, ij_typedoc, ij_inum, codigo_cliente,
@@ -296,15 +218,15 @@ export async function proponerCorreoCliente(
       estado, ultima_consulta_softec, creado_por
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'EMAIL', NULL, ?, ?, 'PENDIENTE', NOW(), ?)`,
     [
-      f.ij_local,
-      f.ij_typedoc,
-      f.ij_inum,
+      masUrgente.ij_local,
+      masUrgente.ij_typedoc,
+      masUrgente.ij_inum,
       codigoCliente,
-      Number(f.total_factura),
-      Number(f.saldo_pendiente),
+      saldoTotal,
+      saldoNeto,
       'DOP',
-      new Date(f.fecha_vencimiento).toISOString().split('T')[0],
-      diasVencido,
+      new Date(masUrgente.fecha_vencimiento).toISOString().split('T')[0],
+      diasMaxVencido,
       segmento,
       mensajeEmail,
       asunto,
@@ -322,13 +244,18 @@ export async function proponerCorreoCliente(
     gestion_id: gestionId,
     cliente: nombreCliente,
     codigo: codigoCliente,
-    factura: f.ij_inum,
-    saldo: Number(f.saldo_pendiente),
+    factura: masUrgente.ij_inum,
+    total_facturas: facturas.length,
+    saldo: saldoNeto,
     asunto,
     mensaje_email: mensajeEmail,
     destinatario_email: emailDestino || null,
   };
 }
+
+// =====================================================================
+// Generación de correo consolidado con Claude
+// =====================================================================
 
 interface MemoriaCliente {
   patron_pago: string | null;
@@ -338,59 +265,76 @@ interface MemoriaCliente {
   notas_daria: string | null;
 }
 
-/**
- * Toma una plantilla ya renderizada y le pide a Claude que ajuste el tono
- * para sonar más natural, opcionalmente usando la memoria del cliente.
- * Devuelve null si no hay API key o si Claude falla — el caller usa la
- * plantilla cruda como fallback.
- */
-async function refinarConClaude(
-  asunto: string,
-  cuerpo: string,
-  segmento: SegmentoRiesgo,
-  memoria?: MemoriaCliente | null
-): Promise<{ asunto: string; cuerpo: string } | null> {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) return null;
+const TONOS: Record<SegmentoRiesgo, string> = {
+  VERDE: 'amigable y preventivo — recordatorio cordial',
+  AMARILLO: 'cordial con urgencia moderada — solicitar fecha de pago',
+  NARANJA: 'formal y directo — solicitar pago inmediato o acuerdo',
+  ROJO: 'firme y urgente — exigir pago, advertir gestión legal sin amenazas',
+};
 
-  const tonoHint =
-    segmento === 'VERDE' ? 'amigable y preventivo'
-    : segmento === 'AMARILLO' ? 'cordial con urgencia moderada'
-    : segmento === 'NARANJA' ? 'formal y directo'
-    : 'firme y serio sin amenazas';
+async function generarCorreoConsolidado(
+  nombreCliente: string,
+  codigoCliente: string,
+  facturas: FacturaCliente[],
+  saldoTotal: number,
+  saldoFavor: number,
+  segmento: SegmentoRiesgo,
+  contacto: string,
+  memoria: MemoriaCliente | null
+): Promise<{ asunto: string; cuerpo: string }> {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    return generarCorreoConsolidadoMock(nombreCliente, facturas, saldoTotal);
+  }
+
+  const saldoNeto = Math.max(0, saldoTotal - saldoFavor);
+  const facturasTexto = facturas
+    .slice(0, 20)
+    .map((f) => {
+      const fecha = new Date(f.fecha_vencimiento).toISOString().split('T')[0];
+      return `  - Factura #${f.ij_inum} | Vcto: ${fecha} | ${Number(f.dias_vencido)}d vencida | RD$${Number(f.saldo_pendiente).toLocaleString('es-DO')}`;
+    })
+    .join('\n');
 
   const contextoMemoria = memoria
-    ? `\nCONTEXTO DEL CLIENTE (úsalo para personalizar, sin inventar datos):
+    ? `\nCONTEXTO DEL CLIENTE (personaliza sin inventar datos):
 ${memoria.patron_pago ? `- Patrón de pago: ${memoria.patron_pago}` : ''}
-${memoria.canal_efectivo ? `- Canal efectivo: ${memoria.canal_efectivo}` : ''}
-${memoria.mejor_momento ? `- Mejor momento de contacto: ${memoria.mejor_momento}` : ''}
+${memoria.contacto_real ? `- Contacto real: ${memoria.contacto_real}` : ''}
 ${memoria.notas_daria ? `- Notas del equipo: ${memoria.notas_daria}` : ''}`.trim()
     : '';
 
-  const prompt = `Eres asistente de cobranzas de Suministros Guipak (República Dominicana).
+  const prompt = `Eres asistente de cobranzas de Suministros Guipak, S.R.L. (distribuidora B2B, República Dominicana).
 
-Recibes una plantilla de correo ya redactada. Tu tarea: ajustar el tono para que suene natural y profesional, manteniendo el contenido factual EXACTAMENTE IGUAL.
+Genera UN correo de cobranza CONSOLIDADO para este cliente. El correo debe cubrir TODA la deuda, no solo una factura.
 
-Tono objetivo: ${tonoHint}.
+DATOS DEL CLIENTE:
+- Empresa: ${nombreCliente}
+- Código: ${codigoCliente}
+- Contacto: ${contacto || nombreCliente}
+- Saldo total pendiente: RD$${saldoTotal.toLocaleString('es-DO')}${saldoFavor > 0 ? `\n- Saldo a favor: RD$${saldoFavor.toLocaleString('es-DO')} (ya descontado)` : ''}
+- Saldo neto a cobrar: RD$${saldoNeto.toLocaleString('es-DO')}
+- Total facturas pendientes: ${facturas.length}
+- Factura más antigua: ${Number(facturas[0].dias_vencido)} días vencida
+- Segmento: ${segmento}
+
+DETALLE DE FACTURAS:
+${facturasTexto}${facturas.length > 20 ? `\n  ... y ${facturas.length - 20} facturas más` : ''}
 ${contextoMemoria}
 
-REGLAS ESTRICTAS:
-- NO inventes hechos nuevos, datos, fechas, montos, números de factura.
-- NO agregues amenazas legales que no estén en el original.
-- NO quites información factual del original.
-- Puedes reordenar oraciones o reformular para mejor flujo.
-- Mantén la firma "Departamento de Cuentas por Cobrar - Suministros Guipak".
+TONO: ${TONOS[segmento]}
 
-ASUNTO ORIGINAL:
-${asunto}
-
-CUERPO ORIGINAL:
-${cuerpo}
+REGLAS:
+- Dirigir a "${contacto || nombreCliente}" (no "Estimado cliente").
+- Mencionar el SALDO TOTAL NETO (RD$${saldoNeto.toLocaleString('es-DO')}), no factura por factura.
+- Si hay más de 5 facturas, no listarlas todas — resumir ("${facturas.length} facturas pendientes, la más antigua de ${Number(facturas[0].dias_vencido)} días").
+- Si hay 5 o menos, puedes listar los números de factura.
+- Firma: "Departamento de Cuentas por Cobrar\nSuministros Guipak, S.R.L."
+- NO inventes datos, montos ni fechas.
 
 Responde EXACTAMENTE en JSON:
 {
-  "asunto": "asunto refinado",
-  "cuerpo": "cuerpo refinado"
+  "asunto": "asunto del correo",
+  "cuerpo": "cuerpo del correo"
 }
 
 Solo JSON, sin texto adicional.`;
@@ -399,21 +343,40 @@ Solo JSON, sin texto adicional.`;
     const client = new Anthropic({ apiKey });
     const response = await client.messages.create({
       model: 'claude-sonnet-4-20250514',
-      max_tokens: 1500,
+      max_tokens: 2000,
       messages: [{ role: 'user', content: prompt }],
     });
 
     const text = response.content[0].type === 'text' ? response.content[0].text : '';
     const match = text.match(/\{[\s\S]*\}/);
-    if (!match) return null;
+    if (!match) return generarCorreoConsolidadoMock(nombreCliente, facturas, saldoTotal);
 
     const parsed = JSON.parse(match[0]);
     if (typeof parsed.asunto !== 'string' || typeof parsed.cuerpo !== 'string') {
-      return null;
+      return generarCorreoConsolidadoMock(nombreCliente, facturas, saldoTotal);
     }
     return { asunto: parsed.asunto, cuerpo: parsed.cuerpo };
   } catch (err) {
-    console.error('[draft-correo] Refinamiento Claude falló:', err);
-    return null;
+    console.error('[draft-correo] Error generando correo consolidado:', err);
+    return generarCorreoConsolidadoMock(nombreCliente, facturas, saldoTotal);
   }
+}
+
+function generarCorreoConsolidadoMock(
+  nombreCliente: string,
+  facturas: FacturaCliente[],
+  saldoTotal: number
+): { asunto: string; cuerpo: string } {
+  return {
+    asunto: `Estado de cuenta pendiente - ${nombreCliente}`,
+    cuerpo: `Estimado/a ${nombreCliente},
+
+Le informamos que su cuenta presenta un saldo pendiente de RD$${saldoTotal.toLocaleString('es-DO')} correspondiente a ${facturas.length} factura(s).
+
+Le solicitamos coordinar el pago a la brevedad posible.
+
+Saludos,
+Departamento de Cuentas por Cobrar
+Suministros Guipak, S.R.L.`,
+  };
 }
