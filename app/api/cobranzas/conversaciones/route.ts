@@ -30,10 +30,11 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ mensajes, cliente });
     }
 
-    // Resumen de conversaciones por cliente
+    // Resumen de conversaciones por cliente (con nombre de inteligencia o gestiones)
     const conversaciones = await cobranzasQuery(`
       SELECT
         c.codigo_cliente,
+        COALESCE(ci.nombre_cliente, c.codigo_cliente) AS nombre_cliente,
         COUNT(*) as total_mensajes,
         SUM(CASE WHEN c.direccion = 'RECIBIDO' AND NOT EXISTS (
           SELECT 1 FROM cobranza_conversaciones c2
@@ -49,7 +50,8 @@ export async function GET(request: NextRequest) {
          WHERE c4.codigo_cliente = c.codigo_cliente
          ORDER BY c4.created_at DESC LIMIT 1) as ultimo_canal
       FROM cobranza_conversaciones c
-      GROUP BY c.codigo_cliente
+      LEFT JOIN cobranza_cliente_inteligencia ci ON ci.codigo_cliente = c.codigo_cliente
+      GROUP BY c.codigo_cliente, ci.nombre_cliente
       ORDER BY MAX(c.created_at) DESC
     `);
 

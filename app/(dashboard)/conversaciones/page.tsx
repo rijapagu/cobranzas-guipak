@@ -9,6 +9,7 @@ const { Title, Text } = Typography;
 
 interface ConversacionResumen {
   codigo_cliente: string;
+  nombre_cliente?: string;
   total_mensajes: number;
   recibidos_sin_responder: number;
   ultimo_mensaje: string;
@@ -86,7 +87,12 @@ export default function ConversacionesPage() {
           </Col>
           <Col xs={24} md={16}>
             <Card
-              title={selectedCliente ? `Chat — ${selectedCliente}` : "Seleccione un cliente"}
+              title={selectedCliente
+                ? `Chat — ${selectedCliente}${(() => {
+                    const c = conversaciones.find((x) => x.codigo_cliente === selectedCliente);
+                    return c?.nombre_cliente && c.nombre_cliente !== selectedCliente ? ` · ${c.nombre_cliente}` : "";
+                  })()}`
+                : "Seleccione un cliente"}
               size="small"
               style={{ height: "calc(100vh - 220px)", overflow: "auto" }}
               loading={loadingMsgs}
