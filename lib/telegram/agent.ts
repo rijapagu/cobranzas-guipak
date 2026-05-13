@@ -2,6 +2,11 @@ import Anthropic from '@anthropic-ai/sdk';
 import { TOOLS, ejecutarTool } from './tools';
 import type { TelegramUserAuth } from './auth';
 import { getConfig } from '@/lib/db/configuracion';
+import {
+  guardarMensaje,
+  cargarHistorial,
+  cargarMemoriaEquipo,
+} from './historial';
 
 function fechaHoyDominicana(): string {
   // YYYY-MM-DD en zona America/Santo_Domingo (UTC-4 sin DST)
@@ -135,7 +140,7 @@ function tablaProximosDias(hoyIso: string): string {
   return lineas.join('\n');
 }
 
-async function buildSystemPrompt(): Promise<string> {
+async function buildSystemPrompt(memoriaEquipo: { clave: string; valor: string }[]): Promise<string> {
   const hoy = fechaHoyDominicana();
   const diaSemana = diaSemanaEspanol(hoy);
 
@@ -146,6 +151,10 @@ async function buildSystemPrompt(): Promise<string> {
       promptBase = custom.trim();
     }
   } catch { /* fallback al hardcoded */ }
+
+  const seccionMemoria = memoriaEquipo.length > 0
+    ? `\nMEMORIA DEL EQUIPO (lo que has aprendido sobre las personas y el negocio — úsalo en cada respuesta):\n${memoriaEquipo.map((m) => `- ${m.clave}: ${m.valor}`).join('\n')}\n`
+    : '';
 
   return `FECHA DE HOY (Santo Domingo): ${hoy} (${diaSemana}).
 
@@ -160,15 +169,17 @@ REGLAS PARA RESOLVER FECHAS RELATIVAS:
 - "el próximo lunes" → si HOY es lunes, salta al lunes de la siguiente fila; si no, igual que "el lunes".
 - "en N días" → cuenta N filas hacia abajo desde HOY.
 - Siempre verifica que la fecha que envías a crear_tarea coincida con el día de la semana de la tabla.
-
+${seccionMemoria}
 ${promptBase}`;
 }
 
 const MAX_TURNS = 5;
 
-interface MensajeUsuario {
+export interface MensajeUsuario {
   texto: string;
   user: TelegramUserAuth;
+  chatId: number;
+  telegramUserId: number;
   contexto?: { thread_id?: number; reply_to?: string };
 }
 
@@ -180,31 +191,49 @@ export async function procesarMensajeBot(input: MensajeUsuario): Promise<string>
 
   const client = new Anthropic({ apiKey });
 
+  // Cargar historial + memoria del equipo en paralelo
+  const [historial, memoriaEquipo] = await Promise.all([
+    cargarHistorial(input.chatId, 30).catch(() => []),
+    cargarMemoriaEquipo(input.telegramUserId).catch(() => []),
+  ]);
+
+  // Guardar el mensaje del usuario ANTES de llamar a Claude
+  guardarMensaje(input.chatId, input.telegramUserId, 'usuario', input.texto).catch(() => {});
+
+  // Construir el array de mensajes: historial previo + mensaje actual
   const messages: Anthropic.MessageParam[] = [
-    {
-      role: 'user',
-      content: input.texto,
-    },
+    ...historial.map((h) => ({
+      role: (h.rol === 'usuario' ? 'user' : 'assistant') as 'user' | 'assistant',
+      content: h.contenido,
+    })),
+    { role: 'user' as const, content: input.texto },
   ];
 
+  const systemPrompt = await buildSystemPrompt(memoriaEquipo);
+  let respuestaFinal = '';
   let turn = 0;
+
   while (turn < MAX_TURNS) {
     turn++;
 
     const response = await client.messages.create({
       model: 'claude-sonnet-4-5-20250929',
       max_tokens: 2048,
-      system: await buildSystemPrompt(),
+      system: systemPrompt,
       tools: TOOLS,
       messages,
     });
 
-    // Si Claude solo respondió texto, devolver
+    // Si Claude solo respondió texto, guardar en historial y devolver
     if (response.stop_reason === 'end_turn') {
       const textBlock = response.content.find((b) => b.type === 'text');
-      return textBlock && 'text' in textBlock
+      respuestaFinal = textBlock && 'text' in textBlock
         ? textBlock.text
         : 'No tengo respuesta para eso.';
+
+      // Guardar respuesta del asistente (fire-and-forget)
+      guardarMensaje(input.chatId, input.telegramUserId, 'asistente', respuestaFinal).catch(() => {});
+      return respuestaFinal;
     }
 
     // Si pidió usar herramientas, ejecutarlas
@@ -222,6 +251,7 @@ export async function procesarMensajeBot(input: MensajeUsuario): Promise<string>
             userEmail: input.user.telegram_username
               ? `telegram:${input.user.telegram_username}`
               : `telegram:${input.user.telegram_user_id}`,
+            telegramUserId: input.telegramUserId,
           }
         );
         toolResults.push({

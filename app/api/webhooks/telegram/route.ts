@@ -104,6 +104,8 @@ export async function POST(req: NextRequest) {
     const respuesta = await procesarMensajeBot({
       texto: textoLimpio,
       user: auth,
+      chatId: message.chat.id,
+      telegramUserId: message.from.id,
     });
 
     // Detectar si la respuesta contiene una gestion_id pendiente
@@ -350,6 +352,8 @@ async function manejarComando(
       const respuesta = await procesarMensajeBot({
         texto: 'Dame el estado de cobros de hoy.',
         user: auth,
+        chatId: message.chat.id,
+        telegramUserId: message.from?.id ?? 0,
       });
       const { texto: textoFinal, gestionId } = extraerGestionPendiente(respuesta);
       const teclado = gestionId ? construirBotonesGestion(gestionId) : undefined;
