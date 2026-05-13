@@ -7,6 +7,7 @@ import {
   cargarHistorial,
   cargarMemoriaEquipo,
 } from './historial';
+import { obtenerSesion, guardarSesion, type SesionChat } from './session';
 
 function fechaHoyDominicana(): string {
   // YYYY-MM-DD en zona America/Santo_Domingo (UTC-4 sin DST)
@@ -90,6 +91,15 @@ CONCILIACIÓN BANCARIA:
 - Las tareas de conciliación tienen origen='CONCILIACION'. Puedes listarlas con listar_tareas y cerrarlas con marcar_tarea_hecha.
 - Si el usuario dice que un cheque ya se resolvió o que un depósito desconocido se identificó → marca la tarea como HECHA con notas.
 
+PERFIL DE RIESGO (Capa 2 — Inteligencia pre-calculada):
+- Cuando el usuario pregunte "¿le podemos vender más a CLIENTE?", "¿le damos crédito?", "¿cómo está el riesgo de CLIENTE?", "¿qué hacemos con CLIENTE?" → usa obtener_perfil_riesgo_cliente.
+- Cuando consultar_saldo_cliente devuelva perfil_riesgo, preséntalo junto al saldo: nivel de riesgo, tendencia y acciones recomendadas.
+- Cuando el usuario pregunte "dashboard de riesgo", "cartera de riesgo", "a quiénes no vendemos", "quiénes están en cobro legal" → usa analizar_riesgo_cartera.
+- Si accion_ventas = NO_VENDER: "⛔ No vender hasta regularizar deuda." Si REQUIERE_ABONO: "⚠️ Requiere abono antes de nueva venta."
+- Si accion_credito = SUSPENDER: "🚫 Crédito suspendido." Si AUTORIZAR_MANUAL: "⚠️ Requiere aprobación manual de crédito."
+- Si accion_cobranza = COBRO_LEGAL: "⚖️ En proceso de gestión legal." Si GESTION_DIRECTA: "📞 Requiere gestión directa (no solo correo)."
+- Si perfil_riesgo es null en la respuesta de saldo, NO lo menciones — el primer cálculo se hará esta noche.
+
 CLIENTES SIN DATOS (Capa C):
 - Cuando el usuario pregunte "¿a quiénes les falta email?", "clientes sin WhatsApp", "datos incompletos", "a quiénes no podemos escribir" → usa listar_clientes_sin_datos.
 - Presenta la lista en orden de saldo neto (mayor deuda primero) para priorizar.
@@ -140,7 +150,10 @@ function tablaProximosDias(hoyIso: string): string {
   return lineas.join('\n');
 }
 
-async function buildSystemPrompt(memoriaEquipo: { clave: string; valor: string }[]): Promise<string> {
+async function buildSystemPrompt(
+  memoriaEquipo: { clave: string; valor: string }[],
+  sesion: SesionChat | null
+): Promise<string> {
   const hoy = fechaHoyDominicana();
   const diaSemana = diaSemanaEspanol(hoy);
 
@@ -156,6 +169,13 @@ async function buildSystemPrompt(memoriaEquipo: { clave: string; valor: string }
     ? `\nMEMORIA DEL EQUIPO (lo que has aprendido sobre las personas y el negocio — úsalo en cada respuesta):\n${memoriaEquipo.map((m) => `- ${m.clave}: ${m.valor}`).join('\n')}\n`
     : '';
 
+  const seccionSesion = sesion
+    ? `\nCONTEXTO DE SESIÓN ACTUAL (cliente que se está discutiendo — úsalo cuando el usuario diga "él", "ese cliente", "el mismo", "Si", sin especificar otro):
+- Código: ${sesion.codigo_cliente}
+- Nombre: ${sesion.nombre_cliente}${sesion.ultimo_tema ? `\n- Último tema: ${sesion.ultimo_tema}` : ''}
+Si el usuario se refiere a "el cliente" sin dar nombre, asume que es este.\n`
+    : '';
+
   return `FECHA DE HOY (Santo Domingo): ${hoy} (${diaSemana}).
 
 CALENDARIO DE LOS PRÓXIMOS 14 DÍAS (úsalo como tabla de lookup, NO calcules tú las fechas):
@@ -169,7 +189,7 @@ REGLAS PARA RESOLVER FECHAS RELATIVAS:
 - "el próximo lunes" → si HOY es lunes, salta al lunes de la siguiente fila; si no, igual que "el lunes".
 - "en N días" → cuenta N filas hacia abajo desde HOY.
 - Siempre verifica que la fecha que envías a crear_tarea coincida con el día de la semana de la tabla.
-${seccionMemoria}
+${seccionSesion}${seccionMemoria}
 ${promptBase}`;
 }
 
@@ -191,10 +211,11 @@ export async function procesarMensajeBot(input: MensajeUsuario): Promise<string>
 
   const client = new Anthropic({ apiKey });
 
-  // Cargar historial + memoria del equipo en paralelo
-  const [historial, memoriaEquipo] = await Promise.all([
+  // Cargar historial + memoria del equipo + sesión Redis en paralelo
+  const [historial, memoriaEquipo, sesion] = await Promise.all([
     cargarHistorial(input.chatId, 30).catch(() => []),
     cargarMemoriaEquipo(input.telegramUserId).catch(() => []),
+    obtenerSesion(input.chatId).catch(() => null),
   ]);
 
   // Guardar el mensaje del usuario ANTES de llamar a Claude
@@ -209,7 +230,7 @@ export async function procesarMensajeBot(input: MensajeUsuario): Promise<string>
     { role: 'user' as const, content: input.texto },
   ];
 
-  const systemPrompt = await buildSystemPrompt(memoriaEquipo);
+  const systemPrompt = await buildSystemPrompt(memoriaEquipo, sesion);
   let respuestaFinal = '';
   let turn = 0;
 
@@ -254,6 +275,33 @@ export async function procesarMensajeBot(input: MensajeUsuario): Promise<string>
             telegramUserId: input.telegramUserId,
           }
         );
+
+        // Actualizar sesión Redis cuando Claude identifica un cliente (best-effort)
+        if (resultado.ok && resultado.data) {
+          const data = resultado.data as Record<string, unknown>;
+          if (
+            (tool.name === 'consultar_saldo_cliente' || tool.name === 'buscar_cliente') &&
+            data.codigo && data.cliente
+          ) {
+            guardarSesion(input.chatId, {
+              codigo_cliente: String(data.codigo),
+              nombre_cliente: String(data.cliente),
+              ultimo_tema: tool.name === 'consultar_saldo_cliente' ? 'saldo/facturas' : undefined,
+            }).catch(() => {});
+          }
+          // buscar_cliente devuelve lista — guardar el primero si hay exactamente uno o si el término era un código exacto
+          if (tool.name === 'buscar_cliente' && Array.isArray(data.clientes)) {
+            const clientes = data.clientes as Array<{ codigo: string; nombre: string }>;
+            if (clientes.length === 1) {
+              guardarSesion(input.chatId, {
+                codigo_cliente: clientes[0].codigo,
+                nombre_cliente: clientes[0].nombre,
+                ultimo_tema: 'búsqueda',
+              }).catch(() => {});
+            }
+          }
+        }
+
         toolResults.push({
           type: 'tool_result',
           tool_use_id: tool.id,

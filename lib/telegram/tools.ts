@@ -302,6 +302,35 @@ export const TOOLS: Anthropic.Tool[] = [
     },
   },
   {
+    name: 'obtener_perfil_riesgo_cliente',
+    description:
+      'Devuelve el perfil de riesgo pre-calculado de un cliente: score (0-100), nivel (VERDE/AMARILLO/ROJO/CRITICO), tendencia, acciones recomendadas (crédito, ventas, cobranza) y el resumen completo. Úsalo cuando el usuario pregunte por el riesgo de un cliente, si se le puede vender, si hay que suspenderle crédito, o antes de proponer una gestión de cobranza agresiva.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        codigo_cliente: {
+          type: 'string',
+          description: 'Código del cliente en Softec (7 dígitos, ej. "0000274")',
+        },
+      },
+      required: ['codigo_cliente'],
+    },
+  },
+  {
+    name: 'analizar_riesgo_cartera',
+    description:
+      'Resumen ejecutivo del riesgo de toda la cartera: distribución por nivel de riesgo, clientes críticos, clientes con tendencia a empeorar, clientes a los que no se debería vender. Úsalo cuando el usuario pregunte "cómo está la cartera de riesgo", "a quiénes no debemos venderles", "quiénes están en cobro legal", "dashboard de riesgo".',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        limite_criticos: {
+          type: 'number',
+          description: 'Cuántos clientes críticos listar (default 5)',
+        },
+      },
+    },
+  },
+  {
     name: 'guardar_memoria_equipo',
     description:
       'Guarda un dato permanente sobre el equipo, sus preferencias o el contexto del negocio. Úsalo cuando el usuario comparta algo que debas recordar en futuras conversaciones: cómo prefiere trabajar, quién maneja qué clientes, acuerdos internos, contexto de la empresa.',
@@ -404,6 +433,12 @@ export async function ejecutarTool(
       case 'guardar_memoria_equipo':
         return await guardarMemoriaEquipoTool(argumentos, ctx);
 
+      case 'obtener_perfil_riesgo_cliente':
+        return await obtenerPerfilRiesgoCliente(String(argumentos.codigo_cliente));
+
+      case 'analizar_riesgo_cartera':
+        return await analizarRiesgoCartera(Number(argumentos.limite_criticos) || 5);
+
       default:
         return { ok: false, error: `Tool desconocida: ${nombre}` };
     }
@@ -467,6 +502,21 @@ async function consultarSaldoCliente(termino: string): Promise<ResultadoTool> {
   const saldoFavor = saldosFavor.get(codigo) ?? 0;
   const ajuste = ajustarSaldoCliente(totalSaldo, saldoFavor);
 
+  // Enriquecer con perfil de riesgo si existe (Capa 2)
+  const perfilRows = await cobranzasQuery<{
+    risk_score: number;
+    risk_level: string;
+    tendencia: string;
+    accion_credito: string;
+    accion_ventas: string;
+    accion_cobranza: string;
+    resumen: string | null;
+  }>(
+    'SELECT risk_score, risk_level, tendencia, accion_credito, accion_ventas, accion_cobranza, resumen FROM cobranza_cliente_inteligencia WHERE codigo_cliente = ?',
+    [codigo]
+  );
+  const perfil = perfilRows[0] ?? null;
+
   return {
     ok: true,
     data: {
@@ -477,6 +527,17 @@ async function consultarSaldoCliente(termino: string): Promise<ResultadoTool> {
       saldo_a_favor: ajuste.saldo_a_favor,
       saldo_neto: ajuste.saldo_neto,
       cubierto_por_anticipo: ajuste.cubierto_por_anticipo,
+      perfil_riesgo: perfil
+        ? {
+            risk_score: perfil.risk_score,
+            risk_level: perfil.risk_level,
+            tendencia: perfil.tendencia,
+            accion_credito: perfil.accion_credito,
+            accion_ventas: perfil.accion_ventas,
+            accion_cobranza: perfil.accion_cobranza,
+            resumen: perfil.resumen,
+          }
+        : null,
       facturas: facturas.map((f) => ({
         factura: f.factura,
         fecha_vence: new Date(f.fecha_vence).toISOString().split('T')[0],
@@ -1242,6 +1303,192 @@ async function marcarTareaHecha(
   await logAccion(ctx?.userId || null, 'TAREA_HECHA_BOT', 'tarea', String(id), { via: 'telegram' });
 
   return { ok: true, data: { id, titulo: t.titulo, mensaje: 'Marcada HECHA' } };
+}
+
+// =====================================================================
+// Capa 2 — Inteligencia pre-computada de clientes
+// =====================================================================
+
+async function obtenerPerfilRiesgoCliente(codigoCliente: string): Promise<ResultadoTool> {
+  const codigo = codigoCliente.trim().padStart(7, '0');
+
+  const rows = await cobranzasQuery<{
+    risk_score: number;
+    risk_level: string;
+    tendencia: string;
+    saldo_pendiente: number;
+    saldo_neto: number;
+    saldo_a_favor: number;
+    total_facturas: number;
+    dias_mora_promedio: number;
+    factura_mas_antigua_dias: number;
+    promesas_total: number;
+    promesas_cumplidas: number;
+    tasa_cumplimiento_promesas: number;
+    accion_credito: string;
+    accion_ventas: string;
+    accion_cobranza: string;
+    razones: string | null;
+    resumen: string | null;
+    calculado_at: string;
+  }>(
+    `SELECT risk_score, risk_level, tendencia,
+            saldo_pendiente, saldo_neto, saldo_a_favor, total_facturas,
+            dias_mora_promedio, factura_mas_antigua_dias,
+            promesas_total, promesas_cumplidas, tasa_cumplimiento_promesas,
+            accion_credito, accion_ventas, accion_cobranza,
+            razones, resumen, calculado_at
+     FROM cobranza_cliente_inteligencia
+     WHERE codigo_cliente = ?`,
+    [codigo]
+  );
+
+  if (rows.length === 0) {
+    return {
+      ok: true,
+      data: {
+        codigo_cliente: codigo,
+        tiene_perfil: false,
+        mensaje: 'Perfil no calculado aún. El job nocturno lo generará esta noche si el cliente tiene saldo pendiente. Puedes ver el saldo actual con consultar_saldo_cliente.',
+      },
+    };
+  }
+
+  const r = rows[0];
+  let razonesArr: string[] = [];
+  try { razonesArr = r.razones ? JSON.parse(r.razones) : []; } catch { /* ignorar */ }
+
+  return {
+    ok: true,
+    data: {
+      codigo_cliente: codigo,
+      tiene_perfil: true,
+      risk_score: r.risk_score,
+      risk_level: r.risk_level,
+      tendencia: r.tendencia,
+      saldo_pendiente: Number(r.saldo_pendiente),
+      saldo_neto: Number(r.saldo_neto),
+      saldo_a_favor: Number(r.saldo_a_favor),
+      total_facturas: r.total_facturas,
+      dias_mora_promedio: Number(r.dias_mora_promedio),
+      factura_mas_antigua_dias: r.factura_mas_antigua_dias,
+      promesas: {
+        total: r.promesas_total,
+        cumplidas: r.promesas_cumplidas,
+        tasa_cumplimiento: Number(r.tasa_cumplimiento_promesas),
+      },
+      acciones_recomendadas: {
+        credito: r.accion_credito,
+        ventas: r.accion_ventas,
+        cobranza: r.accion_cobranza,
+      },
+      razones: razonesArr,
+      resumen: r.resumen,
+      calculado_at: r.calculado_at,
+    },
+  };
+}
+
+async function analizarRiesgoCartera(limiteCriticos: number): Promise<ResultadoTool> {
+  // Distribución por nivel
+  const distribucion = await cobranzasQuery<{
+    risk_level: string;
+    cantidad: number;
+    saldo_neto_total: number;
+  }>(
+    `SELECT risk_level, COUNT(*) AS cantidad, SUM(saldo_neto) AS saldo_neto_total
+     FROM cobranza_cliente_inteligencia
+     GROUP BY risk_level
+     ORDER BY FIELD(risk_level, 'CRITICO','ROJO','AMARILLO','VERDE')`
+  );
+
+  // Top clientes críticos
+  const criticos = await cobranzasQuery<{
+    codigo_cliente: string;
+    nombre_cliente: string;
+    risk_score: number;
+    risk_level: string;
+    saldo_neto: number;
+    accion_credito: string;
+    accion_ventas: string;
+    tendencia: string;
+  }>(
+    `SELECT codigo_cliente, nombre_cliente, risk_score, risk_level, saldo_neto,
+            accion_credito, accion_ventas, tendencia
+     FROM cobranza_cliente_inteligencia
+     WHERE risk_level IN ('CRITICO','ROJO')
+     ORDER BY risk_score DESC, saldo_neto DESC
+     LIMIT ?`,
+    [limiteCriticos]
+  );
+
+  // Clientes con tendencia empeorando
+  const empeorando = await cobranzasQuery<{
+    codigo_cliente: string;
+    nombre_cliente: string;
+    risk_level: string;
+    saldo_neto: number;
+  }>(
+    `SELECT codigo_cliente, nombre_cliente, risk_level, saldo_neto
+     FROM cobranza_cliente_inteligencia
+     WHERE tendencia = 'EMPEORANDO'
+     ORDER BY saldo_neto DESC
+     LIMIT 10`
+  );
+
+  // No vender
+  const noVender = await cobranzasQuery<{
+    codigo_cliente: string;
+    nombre_cliente: string;
+    accion_ventas: string;
+    risk_level: string;
+  }>(
+    `SELECT codigo_cliente, nombre_cliente, accion_ventas, risk_level
+     FROM cobranza_cliente_inteligencia
+     WHERE accion_ventas IN ('NO_VENDER','REQUIERE_ABONO')
+     ORDER BY FIELD(accion_ventas,'NO_VENDER','REQUIERE_ABONO'), risk_score DESC
+     LIMIT 15`
+  );
+
+  // Total de clientes en tabla
+  const totalRows = await cobranzasQuery<{ total: number; calculado_at: string }>(
+    `SELECT COUNT(*) AS total, MAX(calculado_at) AS calculado_at FROM cobranza_cliente_inteligencia`
+  );
+
+  return {
+    ok: true,
+    data: {
+      total_clientes_en_cartera: Number(totalRows[0]?.total) || 0,
+      ultimo_calculo: totalRows[0]?.calculado_at || null,
+      distribucion_riesgo: distribucion.map((d) => ({
+        nivel: d.risk_level,
+        cantidad: Number(d.cantidad),
+        saldo_neto: Number(d.saldo_neto_total),
+      })),
+      clientes_criticos_rojo: criticos.map((c) => ({
+        codigo: c.codigo_cliente,
+        nombre: c.nombre_cliente,
+        score: c.risk_score,
+        nivel: c.risk_level,
+        saldo_neto: Number(c.saldo_neto),
+        accion_credito: c.accion_credito,
+        accion_ventas: c.accion_ventas,
+        tendencia: c.tendencia,
+      })),
+      clientes_empeorando: empeorando.map((c) => ({
+        codigo: c.codigo_cliente,
+        nombre: c.nombre_cliente,
+        nivel: c.risk_level,
+        saldo_neto: Number(c.saldo_neto),
+      })),
+      restriccion_ventas: noVender.map((c) => ({
+        codigo: c.codigo_cliente,
+        nombre: c.nombre_cliente,
+        restriccion: c.accion_ventas,
+        nivel: c.risk_level,
+      })),
+    },
+  };
 }
 
 async function estadoConciliacion(): Promise<ResultadoTool> {
