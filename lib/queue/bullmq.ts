@@ -18,6 +18,7 @@ export const QUEUES = {
 export const JOBS = {
   EMPUJE_MATUTINO: 'empuje-matutino',
   CADENCIAS_HORARIAS: 'cadencias-horarias',
+  REPORTE_DIARIO: 'reporte-diario',
 } as const;
 
 let cronQueue: Queue | null = null;
@@ -78,6 +79,26 @@ export async function scheduleCadenciasHorarias() {
   );
 
   console.log('[BullMQ] Cadencias horarias programadas: 0 * * * *');
+}
+
+export async function scheduleReporteDiario() {
+  const queue = getCronQueue();
+
+  const repeatables = await queue.getRepeatableJobs();
+  for (const job of repeatables) {
+    if (job.name === JOBS.REPORTE_DIARIO) {
+      await queue.removeRepeatableByKey(job.key);
+    }
+  }
+
+  // 8:30 AM AST = 12:30 UTC — 30 min después del empuje matutino
+  await queue.add(
+    JOBS.REPORTE_DIARIO,
+    {},
+    { repeat: { pattern: '30 12 * * 1-5', tz: 'UTC' } }
+  );
+
+  console.log('[BullMQ] Reporte diario programado: 8:30 AM AST L-V (12:30 UTC)');
 }
 
 export function createCronWorker(

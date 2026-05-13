@@ -1,0 +1,22 @@
+# Dockerfile para el worker BullMQ de cobranzas.
+# No usa el standalone de Next.js — necesita los fuentes y tsx.
+# Comparte el mismo Redis que el servicio principal.
+
+FROM node:20-alpine AS deps
+RUN apk add --no-cache libc6-compat
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci
+
+FROM node:20-alpine AS runner
+RUN apk add --no-cache libc6-compat
+WORKDIR /app
+RUN addgroup --system --gid 1001 nodejs
+RUN adduser --system --uid 1001 worker
+
+COPY --from=deps /app/node_modules ./node_modules
+COPY --chown=worker:nodejs . .
+
+USER worker
+
+CMD ["npm", "run", "worker"]

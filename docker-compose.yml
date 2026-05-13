@@ -10,6 +10,18 @@ services:
     networks:
       - dokploy-network
 
+  cobranzas-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+    networks:
+      - dokploy-network
+    depends_on:
+      - cobranzas-redis
+
   cobranzas-redis:
     image: redis:7-alpine
     restart: unless-stopped
