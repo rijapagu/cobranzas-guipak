@@ -192,6 +192,14 @@ export async function enviarGestion(gestionId: number): Promise<ResultadoEnvio> 
 
     const result = await enviarEmail(emailDestino, asunto, cuerpo, adjuntos);
 
+    if (result.status === 'failed') {
+      await cobranzasExecute(
+        "UPDATE cobranza_gestiones SET estado='FALLIDO', motivo_descarte=? WHERE id = ?",
+        [(result.error || 'Error SMTP').substring(0, 200), gestionId]
+      );
+      return { ok: false, error: result.error || 'Error enviando email' };
+    }
+
     await cobranzasExecute(
       `UPDATE cobranza_gestiones SET estado='ENVIADO', fecha_envio=NOW(), email_message_id=? WHERE id = ?`,
       [result.messageId || null, gestionId]
