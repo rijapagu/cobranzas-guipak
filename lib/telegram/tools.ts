@@ -459,8 +459,12 @@ async function consultarSaldoCliente(termino: string): Promise<ResultadoTool> {
   if (!softecOk) return { ok: false, error: 'No hay conexión a Softec' };
 
   const esCodigo = /^\d+$/.test(termino.trim());
-  const filtro = esCodigo ? 'c.IC_CODE = ?' : 'c.IC_NAME LIKE ?';
-  const param = esCodigo ? termino.trim().padStart(7, '0') : `%${termino}%`;
+  const filtro = esCodigo
+    ? 'c.IC_CODE = ?'
+    : '(c.IC_NAME LIKE ? OR c.IC_CODE = ?)';
+  const params = esCodigo
+    ? [termino.trim().padStart(7, '0')]
+    : [`%${termino}%`, termino.trim()];
 
   const facturas = await softecQuery<{
     codigo: string;
@@ -486,7 +490,7 @@ async function consultarSaldoCliente(termino: string): Promise<ResultadoTool> {
       AND (f.IJ_TOT - f.IJ_TOTAPPL) > 0
     ORDER BY f.IJ_DUEDATE ASC
     LIMIT 50`,
-    [param]
+    params
   );
 
   if (facturas.length === 0) {
@@ -745,6 +749,7 @@ async function buscarCliente(termino: string): Promise<ResultadoTool> {
   const softecOk = await testSoftecConnection();
   if (!softecOk) return { ok: false, error: 'Sin conexión a Softec' };
 
+  const esCodigo = /^\d+$/.test(termino.trim());
   const rows = await softecQuery<{
     codigo: string;
     nombre: string;
@@ -763,7 +768,7 @@ async function buscarCliente(termino: string): Promise<ResultadoTool> {
      GROUP BY c.IC_CODE, c.IC_NAME
      ORDER BY saldo DESC
      LIMIT 15`,
-    [`%${termino}%`, termino.padStart(7, '0')]
+    [`%${termino}%`, esCodigo ? termino.padStart(7, '0') : termino.trim()]
   );
 
   // CP-15: enriquecer con saldo a favor y reordenar por saldo neto. Solo
