@@ -795,4 +795,48 @@ Tabla hijo para libramientos/pagos multi-recibo — una línea del banco que cub
 
 ---
 
-*Versión: 1.4 — 12 Mayo 2026*
+---
+
+## Tabla: `cobranza_cliente_inteligencia` (Migración 021)
+
+Tabla de inteligencia pre-computada por cliente. Populada cada noche (1 AM AST) por job BullMQ. Claude lee de aquí, nunca calcula.
+
+| Columna | Tipo | Descripción |
+|---|---|---|
+| id | INT UNSIGNED PK AUTO_INCREMENT | ID interno |
+| codigo_cliente | VARCHAR(10) UNIQUE | Código Softec del cliente |
+| nombre_cliente | VARCHAR(255) | Nombre del cliente (snapshot) |
+| risk_score | TINYINT UNSIGNED (0-100) | Score de riesgo — mayor = peor |
+| risk_level | ENUM | VERDE / AMARILLO / ROJO / CRITICO |
+| saldo_pendiente | DECIMAL(15,2) | Saldo bruto del cliente |
+| saldo_neto | DECIMAL(15,2) | Saldo menos anticipos (CP-15) |
+| saldo_a_favor | DECIMAL(15,2) | Recibos sin aplicar |
+| total_facturas | INT | Cantidad de facturas pendientes |
+| dias_mora_promedio | DECIMAL(6,1) | Promedio ponderado de días vencidos |
+| factura_mas_antigua_dias | INT | Días vencida de la factura más vieja |
+| monto_bucket_0_15 | DECIMAL(15,2) | Monto en bucket 1-15 días |
+| monto_bucket_16_30 | DECIMAL(15,2) | Monto en bucket 16-30 días |
+| monto_bucket_31_60 | DECIMAL(15,2) | Monto en bucket 31-60 días |
+| monto_bucket_60_plus | DECIMAL(15,2) | Monto en bucket >60 días |
+| tendencia | ENUM | MEJORANDO / ESTABLE / EMPEORANDO |
+| score_anterior | TINYINT UNSIGNED | Score del cálculo anterior |
+| saldo_anterior | DECIMAL(15,2) | Saldo del cálculo anterior |
+| promesas_total | INT | Total promesas de pago últimos 90 días |
+| promesas_cumplidas | INT | Cuántas cumplió |
+| tasa_cumplimiento_promesas | DECIMAL(5,2) | Porcentaje de cumplimiento |
+| accion_credito | ENUM | NORMAL / REDUCIR_LIMITE / AUTORIZAR_MANUAL / SUSPENDER |
+| accion_ventas | ENUM | NORMAL / SUBIR_MARGEN / REQUIERE_ABONO / NO_VENDER |
+| accion_cobranza | ENUM | CADENCIA_NORMAL / SEGUIMIENTO_INTENSIVO / GESTION_DIRECTA / COBRO_LEGAL |
+| razones | JSON | Array de strings explicando el score |
+| resumen | TEXT | Párrafo de síntesis listo para inyectar en prompts |
+| calculado_at | DATETIME | Timestamp del último cálculo |
+| calculado_por | VARCHAR(50) | Quién ejecutó (default: 'sistema') |
+
+**Relación:** Esta tabla es consumida por:
+- Tools del agente Telegram/chat web (perfil de riesgo por cliente)
+- API de conversaciones (LEFT JOIN para obtener nombre_cliente)
+- Correos consolidados (nombre del cliente)
+
+---
+
+*Versión: 1.5 — 13 Mayo 2026*

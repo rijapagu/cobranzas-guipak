@@ -433,7 +433,7 @@ INTERNAL_CRON_SECRET=...
 
 ---
 
-*Versión: 4.0 — 11 Abril 2026*
+*Versión: 5.0 — 13 Mayo 2026*
 
 ---
 
@@ -742,3 +742,78 @@ portal con un cliente cubierto. Detalle completo en
 - `lib/queue/worker.ts` — handler REPORTE_DIARIO
 - `Dockerfile.worker` — NEW
 - `docker-compose.yml` — servicio cobranzas-worker
+
+---
+
+## Sesión 13-Mayo-2026 (sesión 2) — Supervisor IA con memoria de elefante
+
+### Completado
+
+#### Arquitectura de 4 Capas para inteligencia de clientes
+- **Capa 1 — Redis sesión:** estado por chat con TTL 4h (`lib/redis/client.ts`, `lib/telegram/session.ts`)
+- **Capa 2 — Tabla pre-computada:** `cobranza_cliente_inteligencia` con score 0-100, aging buckets, tendencia, cumplimiento promesas, acciones recomendadas
+- **Capa 3 — Algoritmo de scoring:** job BullMQ nocturno 1AM AST, reglas puras sin IA (`lib/queue/jobs/inteligencia-clientes.ts`)
+- **Capa 4 — Claude comunica:** lee datos pre-computados, nunca calcula
+- Migración 021 aplicada en producción — 271 clientes procesados, 0 errores
+
+#### Fórmula del Score (0-100)
+- Mora promedio: 0-35 pts (>90d=35, >60d=25, >30d=15, >15d=5)
+- Tendencia vs anterior: 0-20 pts
+- Cumplimiento promesas 90d: 0-30 pts (<30%=30, <50%=20, <70%=10)
+- Volumen deuda neta: 0-15 pts (>500k=15, >200k=10, >50k=5)
+
+#### Niveles: VERDE (0-30), AMARILLO (31-45), ROJO (46-75), CRITICO (76-100)
+- Cada nivel tiene acción recomendada para crédito, ventas y cobranza
+
+#### Tools del agente nuevos
+- `obtener_perfil_riesgo_cliente` — perfil completo desde tabla inteligencia
+- `analizar_riesgo_cartera` — reporte portafolio: distribución, críticos, empeorando
+
+#### Correos consolidados
+- `proponerCorreoCliente()` reescrita — ya no genera correo por 1 factura sino correo consolidado cubriendo TODA la deuda del cliente (LIMIT 50 facturas)
+- Claude genera email con detalle de facturas, saldo neto, tono por segmento, firma departamental
+
+#### Fix códigos alfanuméricos (ej. RV0003)
+- Búsqueda de clientes ahora usa `(c.IC_NAME LIKE ? OR c.IC_CODE = ?)` para términos no numéricos
+- Corregido en: `draft-correo.ts`, `draft-whatsapp.ts`, `tools.ts`
+
+#### Conversaciones page — nombre + búsqueda
+- API: `LEFT JOIN cobranza_cliente_inteligencia` para obtener `nombre_cliente`
+- ListaConversaciones: barra de búsqueda por nombre/código, muestra ambos
+- Chat title: `código · nombre` del cliente seleccionado
+
+#### Fix envío email desde Telegram
+- `enviar-gestion.ts` ahora valida `result.status === 'failed'` antes de marcar ENVIADO
+- Antes: siempre marcaba como ENVIADO sin importar si SMTP fallaba
+
+### Bugs encontrados y corregidos
+| Bug | Fix |
+|---|---|
+| `proponerCorreoCliente` devolvía "sin facturas" para código RV0003 | Búsqueda con `IC_NAME LIKE ? OR IC_CODE = ?` |
+| Correo de cobranza cubría solo 1 factura ($1,548) en vez de toda la deuda ($61,764) | Reescritura: query sin LIMIT 1, correo consolidado |
+| Endpoint inteligencia-clientes devolvía 401 | Usaba CRON_SECRET en vez de INTERNAL_CRON_SECRET |
+| Conversaciones vacías tras agregar LEFT JOIN | `GROUP BY c.codigo_cliente, ci.nombre_cliente` → solo `GROUP BY c.codigo_cliente` |
+| Email "enviado" sin realmente enviarse | Validar `result.status` antes de marcar ENVIADO en BD |
+
+### Archivos nuevos
+- `db/migrations/021_cliente_inteligencia.sql`
+- `lib/redis/client.ts`
+- `lib/telegram/session.ts`
+- `lib/queue/jobs/inteligencia-clientes.ts`
+- `app/api/internal/cron/inteligencia-clientes/route.ts`
+
+### Archivos modificados
+- `lib/telegram/tools.ts` — 2 tools nuevos + fix búsqueda alfanumérica
+- `lib/telegram/agent.ts` — sesión Redis + perfil riesgo en system prompt
+- `lib/telegram/draft-correo.ts` — correo consolidado + fix alfanumérico
+- `lib/telegram/draft-whatsapp.ts` — fix alfanumérico
+- `lib/telegram/enviar-gestion.ts` — validar resultado SMTP
+- `lib/queue/bullmq.ts` — job inteligencia-clientes programado
+- `lib/queue/worker.ts` — handler inteligencia-clientes
+- `app/api/cobranzas/conversaciones/route.ts` — LEFT JOIN + fix GROUP BY
+- `components/conversaciones/ListaConversaciones.tsx` — búsqueda + nombre
+- `app/(dashboard)/conversaciones/page.tsx` — nombre_cliente en título
+
+### Pendiente
+- **SMTP email**: credenciales configuradas en Dokploy (mail.guipak.com:465, cobros@guipak.com, CobrosGuipak2022) — contraseña actualizada en cPanel, por verificar entrega real
+- **Verificar Conversaciones page** post-deploy con datos reales
