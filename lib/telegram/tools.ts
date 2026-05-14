@@ -5,6 +5,7 @@ import {
   obtenerSaldoAFavorPorCliente,
   ajustarSaldoCliente,
 } from '@/lib/cobranzas/saldo-favor';
+import { obtenerContactos, resolverEmailPropio, resolverWhatsAppPropio } from '@/lib/cobranzas/contactos';
 import { proponerCorreoCliente } from './draft-correo';
 import { proponerWhatsAppCliente } from './draft-whatsapp';
 import { guardarMemoriaEquipo } from './historial';
@@ -173,6 +174,21 @@ export const TOOLS: Anthropic.Tool[] = [
         email_destino: {
           type: 'string',
           description: 'Email destino explícito proporcionado por el usuario (ej. "cuentas@padron.com"). Omitir si el usuario no especificó un email.',
+        },
+      },
+      required: ['termino'],
+    },
+  },
+  {
+    name: 'obtener_contactos_cliente',
+    description:
+      'Devuelve TODOS los emails y teléfonos disponibles para un cliente: los guardados en nuestra BD (contactos_cliente + enriquecidos) y el de Softec (IC_ARCONTC). Úsalo SIEMPRE antes de proponer_correo_cliente para presentar las opciones al usuario.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        termino: {
+          type: 'string',
+          description: 'Código de cliente o nombre parcial',
         },
       },
       required: ['termino'],
@@ -403,6 +419,9 @@ export async function ejecutarTool(
         const result = await proponerCorreoCliente(String(argumentos.termino), emailDestino);
         return { ok: result.ok, data: result };
       }
+
+      case 'obtener_contactos_cliente':
+        return await obtenerContactosCliente(String(argumentos.termino));
 
       case 'guardar_dato_cliente':
         return await guardarDatoCliente(
@@ -949,6 +968,83 @@ async function listarTareas(args: Record<string, unknown>): Promise<ResultadoToo
 
 // =====================================================================
 // Datos de cliente (Capa C)
+// =====================================================================
+
+async function obtenerContactosCliente(termino: string): Promise<{
+  ok: boolean;
+  codigo?: string;
+  nombre?: string;
+  emails: { valor: string; fuente: string; es_principal: boolean }[];
+  telefonos: { valor: string; fuente: string }[];
+  error?: string;
+}> {
+  const softecOk = await testSoftecConnection();
+  if (!softecOk) return { ok: false, error: 'Sin conexión a Softec', emails: [], telefonos: [] };
+
+  const esCodigo = /^\d+$/.test(termino.trim());
+  const filtro = esCodigo ? 'IC_CODE = ?' : 'IC_NAME LIKE ?';
+  const param = esCodigo ? termino.trim().padStart(7, '0') : `%${termino.trim()}%`;
+
+  const clientes = await softecQuery<{
+    codigo: string;
+    nombre: string;
+    email_softec: string | null;
+    telefono_softec: string | null;
+  }>(
+    `SELECT IC_CODE AS codigo, IC_NAME AS nombre, IC_ARCONTC AS email_softec, IC_PHONE AS telefono_softec
+     FROM v_cobr_icust WHERE ${filtro} AND IC_STATUS='A' LIMIT 1`,
+    [param]
+  );
+
+  if (clientes.length === 0) {
+    return { ok: false, error: 'Cliente no encontrado', emails: [], telefonos: [] };
+  }
+
+  const { codigo, nombre, email_softec, telefono_softec } = clientes[0];
+  const cod = String(codigo).trim();
+
+  // Emails de nuestra BD
+  const contactosEmail = await obtenerContactos(cod, 'EMAIL');
+  const emailPropio = await resolverEmailPropio(cod);
+
+  // Teléfonos de nuestra BD
+  const contactosWa = await obtenerContactos(cod, 'WHATSAPP');
+  const waPropio = await resolverWhatsAppPropio(cod);
+
+  const emails: { valor: string; fuente: string; es_principal: boolean }[] = [];
+  const telefonos: { valor: string; fuente: string }[] = [];
+
+  // Primero emails de nuestra tabla nueva
+  for (const c of contactosEmail) {
+    emails.push({ valor: c.valor, fuente: 'BD propia', es_principal: c.es_principal });
+  }
+
+  // Email legacy enriquecidos (si no está ya en la lista)
+  if (emailPropio && !contactosEmail.find((c) => c.valor === emailPropio)) {
+    emails.push({ valor: emailPropio, fuente: 'BD propia (legacy)', es_principal: false });
+  }
+
+  // Email de Softec IC_ARCONTC
+  const emailS = email_softec?.trim() || '';
+  if (emailS && !emails.find((e) => e.valor === emailS)) {
+    emails.push({ valor: emailS, fuente: 'Softec CxP', es_principal: false });
+  }
+
+  // WhatsApp
+  for (const c of contactosWa) {
+    telefonos.push({ valor: c.valor, fuente: 'BD propia' });
+  }
+  if (waPropio && !contactosWa.find((c) => c.valor === waPropio)) {
+    telefonos.push({ valor: waPropio, fuente: 'BD propia (legacy)' });
+  }
+  const telS = telefono_softec?.trim() || '';
+  if (telS && !telefonos.find((t) => t.valor === telS)) {
+    telefonos.push({ valor: telS, fuente: 'Softec' });
+  }
+
+  return { ok: true, codigo: cod, nombre: String(nombre).trim(), emails, telefonos };
+}
+
 // =====================================================================
 
 async function guardarDatoCliente(

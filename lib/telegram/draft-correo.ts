@@ -167,14 +167,7 @@ export async function proponerCorreoCliente(
     const emailPropio = await resolverEmailPropio(codigoCliente);
     emailDestino = emailPropio || (masUrgente.email || '').trim();
   }
-  // Si se especificó un email distinto al que ya teníamos, guardarlo para futuras veces
-  if (emailDestinoParam?.trim() && emailDestinoParam.trim() !== (masUrgente.email || '').trim()) {
-    await guardarContacto(codigoCliente, 'EMAIL', emailDestinoParam.trim(), {
-      origen: 'TELEGRAM',
-      creado_por: 'bot-telegram',
-      notas: 'Email especificado durante propuesta de correo',
-    });
-  }
+  // El bot pregunta al usuario si desea guardar el email nuevo — no auto-guardar aquí.
 
   // 6. Memoria del cliente
   const memoriaRows = await cobranzasQuery<{

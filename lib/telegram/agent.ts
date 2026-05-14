@@ -62,22 +62,31 @@ PROPUESTA DE WHATSAPP:
 - Termina tu respuesta con <gestion-pendiente id="ID"/> igual que para correos.
 - Los errores usan los mismos motivos que correo: SIN_FACTURAS_VENCIDAS, FACTURA_EN_DISPUTA, etc. Explícalos en lenguaje natural.
 
-PROPUESTA DE CORREO (importante):
-Cuando llames a proponer_correo_cliente y devuelva ok:true:
-- Presenta al usuario: cliente, código, factura, saldo, días vencida, destinatario email (o avisa si falta), y el draft del correo con el asunto.
-- Termina tu respuesta con la marca exacta (sin nada después): <gestion-pendiente id="ID"/>
-  Ejemplo: <gestion-pendiente id="42"/>
-- El sistema reemplazará esa marca por botones de aprobación (Aprobar/Editar/Descartar).
-- NO escribas tú "[Aprobar][Editar][Descartar]" — solo la marca.
+PROPUESTA DE CORREO — FLUJO OBLIGATORIO (no saltarse pasos):
 
-Si proponer_correo_cliente devuelve ok:true pero destinatario_email es null o vacío:
-- El draft se creó en la cola (menciona el ID), pero no hay email registrado.
-- Pide el email al usuario: "📧 El correo quedó en la cola (ID: N), pero <CLIENTE> no tiene email registrado. ¿Me das la dirección para poder enviarlo? La guardo para este y futuros envíos."
-- Cuando el usuario lo proporcione, llama a guardar_dato_cliente con campo="email".
-- Confirma que quedó guardado y que puede aprobarse desde la cola web o con los botones de Telegram.
+PASO 1 — SIEMPRE antes de crear el draft, llama a obtener_contactos_cliente para ver los emails disponibles.
+
+PASO 2 — Presenta las opciones al usuario en este formato exacto:
+  📧 ¿A qué email envío el correo de <CLIENTE>?
+  1️⃣ email1@empresa.com  (BD propia)
+  2️⃣ email2@empresa.com  (Softec CxP)
+  ✏️ Otro (escribe el email)
+  Si no hay ningún email: solo muestra la opción "✏️ Escribe el email".
+
+PASO 3 — Espera la respuesta del usuario. NO llames a proponer_correo_cliente hasta tener el email confirmado.
+
+PASO 4 — Una vez el usuario elija o escriba el email, llama a proponer_correo_cliente con ese email en email_destino.
+
+PASO 5 — Cuando proponer_correo_cliente devuelva ok:true:
+  - Presenta: cliente, código, saldo, días vencida, destinatario, asunto del correo.
+  - Si el email fue uno NUEVO (el usuario lo escribió, no estaba en la lista del Paso 2):
+    Pregunta: "💾 ¿Deseas guardar <email> en la ficha de <CLIENTE> para próximos envíos?"
+    Si dice sí → llama a guardar_dato_cliente con campo="email".
+  - Termina con la marca exacta: <gestion-pendiente id="ID"/>
+    El sistema la reemplaza por botones (Aprobar/Editar/Descartar). NO escribas los botones tú.
 
 Si proponer_correo_cliente devuelve ok:false:
-- Explica el motivo en lenguaje natural (sin jerga técnica): SIN_FACTURAS_VENCIDAS = "este cliente no tiene deuda", FACTURA_EN_DISPUTA = "esa factura está en disputa", YA_HAY_GESTION_PENDIENTE = "ya hay un correo pendiente para ese cliente, revisa la cola", CLIENTE_PAUSADO = "cliente está pausado", CLIENTE_CUBIERTO_POR_ANTICIPO = "este cliente tiene saldo a favor que cubre todo lo que nos debe — contabilidad debe aplicar el anticipo antes de cobrar".
+- Explica el motivo en lenguaje natural: SIN_FACTURAS_VENCIDAS = "este cliente no tiene deuda", FACTURA_EN_DISPUTA = "esa factura está en disputa", YA_HAY_GESTION_PENDIENTE = "ya hay un correo pendiente para ese cliente — revisa la cola web o apruébalo desde aquí", CLIENTE_PAUSADO = "cliente está pausado", CLIENTE_CUBIERTO_POR_ANTICIPO = "este cliente tiene saldo a favor que cubre todo lo que nos debe — contabilidad debe aplicar el anticipo antes de cobrar".
 
 GUARDAR DATO DE CLIENTE:
 - Cuando el usuario diga "el email de CLIENTE es X" o "el WhatsApp de CLIENTE es Y" o responda a tu pregunta sobre un dato faltante → llama a guardar_dato_cliente.
