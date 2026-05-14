@@ -1,20 +1,20 @@
 /**
- * Genera un draft de correo CONSOLIDADO para un cliente: cubre TODA su deuda,
- * no solo una factura.
+ * Genera un draft de correo CONSOLIDADO para un cliente: cubre TODA su deuda.
  *
  * CP-02: el correo NO se envía. Solo se crea el draft.
- * CP-10: Claude solo genera texto.
- * CP-15: si el cliente tiene saldo a favor que cubre su pendiente, NO se
- *        genera draft.
+ * CP-15: si el cliente tiene saldo a favor que cubre su pendiente, NO se genera draft.
+ *
+ * El texto del correo SIEMPRE proviene de una plantilla activa en cobranza_plantillas_email.
+ * No se usa Claude para generar texto libre — así el equipo controla exactamente lo que sale.
+ * Si no hay plantilla aplicable, la función devuelve error SIN_PLANTILLA.
  */
 
 import { cobranzasQuery, cobranzasExecute } from '@/lib/db/cobranzas';
 import { softecQuery, testSoftecConnection } from '@/lib/db/softec';
 import { obtenerSaldoAFavorPorCliente } from '@/lib/cobranzas/saldo-favor';
-import { resolverEmailPropio, guardarContacto } from '@/lib/cobranzas/contactos';
-import { seleccionarPlantillaById } from '@/lib/templates/seleccionar';
+import { resolverEmailPropio } from '@/lib/cobranzas/contactos';
+import { seleccionarPlantilla, seleccionarPlantillaById } from '@/lib/templates/seleccionar';
 import { renderPlantilla } from '@/lib/templates/render';
-import Anthropic from '@anthropic-ai/sdk';
 import type { SegmentoRiesgo } from '@/lib/types/cartera';
 
 interface FacturaCliente {
@@ -45,6 +45,7 @@ export interface DraftCorreoResult {
   asunto?: string;
   mensaje_email?: string;
   destinatario_email?: string | null;
+  plantilla_usada?: number;
   error?: string;
   motivo?:
     | 'CLIENTE_NO_ENCONTRADO'
@@ -52,6 +53,7 @@ export interface DraftCorreoResult {
     | 'FACTURA_EN_DISPUTA'
     | 'YA_HAY_GESTION_PENDIENTE'
     | 'ERROR_GENERAR'
+    | 'SIN_PLANTILLA'
     | 'CLIENTE_PAUSADO'
     | 'CLIENTE_CUBIERTO_POR_ANTICIPO';
   saldo_pendiente?: number;
@@ -170,74 +172,46 @@ export async function proponerCorreoCliente(
     const emailPropio = await resolverEmailPropio(codigoCliente);
     emailDestino = emailPropio || (masUrgente.email || '').trim();
   }
-  // El bot pregunta al usuario si desea guardar el email nuevo — no auto-guardar aquí.
 
-  // 6. Memoria del cliente
-  const memoriaRows = await cobranzasQuery<{
-    patron_pago: string | null;
-    canal_efectivo: string | null;
-    contacto_real: string | null;
-    mejor_momento: string | null;
-    notas_daria: string | null;
-  }>(
-    'SELECT patron_pago, canal_efectivo, contacto_real, mejor_momento, notas_daria FROM cobranza_memoria_cliente WHERE codigo_cliente = ?',
+  // 6. Contacto para saludo (memoria si existe, luego Softec IC_CONTACT, luego nombre empresa)
+  const memoriaRows = await cobranzasQuery<{ contacto_real: string | null }>(
+    'SELECT contacto_real FROM cobranza_memoria_cliente WHERE codigo_cliente = ?',
     [codigoCliente]
   );
-  const memoria = memoriaRows[0] || null;
-
-  // 7. Generar correo: plantilla explícita → renderizar; si no, Claude
-  let asunto = '';
-  let mensajeEmail = '';
   const contactoNombre =
-    memoria?.contacto_real ||
+    memoriaRows[0]?.contacto_real ||
     (masUrgente.contacto_cobros ? String(masUrgente.contacto_cobros).trim() : '') ||
     nombreCliente;
 
-  if (plantillaId) {
-    const plantilla = await seleccionarPlantillaById(plantillaId);
-    if (!plantilla) {
-      return { ok: false, motivo: 'ERROR_GENERAR', error: `Plantilla #${plantillaId} no encontrada o inactiva` };
-    }
-    const rendered = renderPlantilla(
-      { asunto: plantilla.asunto, cuerpo: plantilla.cuerpo },
-      {
-        cliente: contactoNombre,
-        empresa_cliente: nombreCliente,
-        numero_factura: facturas.length === 1 ? facturas[0].ij_inum : `${facturas.length} facturas`,
-        ncf_fiscal: facturas.length === 1 ? String(masUrgente.ncf_fiscal || '').trim() : '',
-        monto: Math.max(0, saldoTotal - saldoFavor),
-        moneda: 'DOP',
-        fecha_vencimiento: new Date(masUrgente.fecha_vencimiento).toISOString().split('T')[0],
-        dias_vencida: diasMaxVencido,
-      }
-    );
-    asunto = rendered.asunto;
-    mensajeEmail = rendered.cuerpo;
-  } else {
-    try {
-      const generado = await generarCorreoConsolidado(
-        nombreCliente,
-        codigoCliente,
-        facturas,
-        saldoTotal,
-        saldoFavor,
-        segmento,
-        contactoNombre,
-        memoria
-      );
-      asunto = generado.asunto;
-      mensajeEmail = generado.cuerpo;
-    } catch (err) {
-      return {
-        ok: false,
-        motivo: 'ERROR_GENERAR',
-        error: err instanceof Error ? err.message : String(err),
-      };
-    }
+  // 7. Seleccionar plantilla — siempre obligatoria
+  const saldoNeto = Math.max(0, saldoTotal - saldoFavor);
+
+  const plantilla = plantillaId
+    ? await seleccionarPlantillaById(plantillaId)
+    : await seleccionarPlantilla({ segmento, diasVencido: diasMaxVencido });
+
+  if (!plantilla) {
+    const msg = plantillaId
+      ? `Plantilla #${plantillaId} no encontrada o inactiva`
+      : `No hay plantilla activa para segmento ${segmento} con ${diasMaxVencido} días vencido. Crea una en el panel de Plantillas.`;
+    return { ok: false, motivo: 'SIN_PLANTILLA', error: msg };
   }
 
+  const rendered = renderPlantilla(
+    { asunto: plantilla.asunto, cuerpo: plantilla.cuerpo },
+    {
+      cliente: contactoNombre,
+      empresa_cliente: nombreCliente,
+      numero_factura: facturas.length === 1 ? facturas[0].ij_inum : `${facturas.length} facturas`,
+      ncf_fiscal: facturas.length === 1 ? String(masUrgente.ncf_fiscal || '').trim() : '',
+      monto: saldoNeto,
+      moneda: 'DOP',
+      fecha_vencimiento: new Date(masUrgente.fecha_vencimiento).toISOString().split('T')[0],
+      dias_vencida: diasMaxVencido,
+    }
+  );
+
   // 8. Insertar gestión (referencia la factura más urgente pero saldo = total)
-  const saldoNeto = Math.max(0, saldoTotal - saldoFavor);
   const insertResult = await cobranzasExecute(
     `INSERT INTO cobranza_gestiones (
       ij_local, ij_typedoc, ij_inum, codigo_cliente,
@@ -257,8 +231,8 @@ export async function proponerCorreoCliente(
       new Date(masUrgente.fecha_vencimiento).toISOString().split('T')[0],
       diasMaxVencido,
       segmento,
-      mensajeEmail,
-      asunto,
+      rendered.cuerpo,
+      rendered.asunto,
       'bot-telegram',
     ]
   );
@@ -276,136 +250,9 @@ export async function proponerCorreoCliente(
     factura: masUrgente.ij_inum,
     total_facturas: facturas.length,
     saldo: saldoNeto,
-    asunto,
-    mensaje_email: mensajeEmail,
+    asunto: rendered.asunto,
+    mensaje_email: rendered.cuerpo,
     destinatario_email: emailDestino || null,
-  };
-}
-
-// =====================================================================
-// Generación de correo consolidado con Claude
-// =====================================================================
-
-interface MemoriaCliente {
-  patron_pago: string | null;
-  canal_efectivo: string | null;
-  contacto_real: string | null;
-  mejor_momento: string | null;
-  notas_daria: string | null;
-}
-
-const TONOS: Record<SegmentoRiesgo, string> = {
-  VERDE: 'amigable y preventivo — recordatorio cordial',
-  AMARILLO: 'cordial con urgencia moderada — solicitar fecha de pago',
-  NARANJA: 'formal y directo — solicitar pago inmediato o acuerdo',
-  ROJO: 'firme y urgente — exigir pago, advertir gestión legal sin amenazas',
-};
-
-async function generarCorreoConsolidado(
-  nombreCliente: string,
-  codigoCliente: string,
-  facturas: FacturaCliente[],
-  saldoTotal: number,
-  saldoFavor: number,
-  segmento: SegmentoRiesgo,
-  contacto: string,
-  memoria: MemoriaCliente | null
-): Promise<{ asunto: string; cuerpo: string }> {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
-    return generarCorreoConsolidadoMock(nombreCliente, facturas, saldoTotal);
-  }
-
-  const saldoNeto = Math.max(0, saldoTotal - saldoFavor);
-  const facturasTexto = facturas
-    .slice(0, 20)
-    .map((f) => {
-      const fecha = new Date(f.fecha_vencimiento).toISOString().split('T')[0];
-      return `  - Factura #${f.ij_inum} | Vcto: ${fecha} | ${Number(f.dias_vencido)}d vencida | RD$${Number(f.saldo_pendiente).toLocaleString('es-DO')}`;
-    })
-    .join('\n');
-
-  const contextoMemoria = memoria
-    ? `\nCONTEXTO DEL CLIENTE (personaliza sin inventar datos):
-${memoria.patron_pago ? `- Patrón de pago: ${memoria.patron_pago}` : ''}
-${memoria.contacto_real ? `- Contacto real: ${memoria.contacto_real}` : ''}
-${memoria.notas_daria ? `- Notas del equipo: ${memoria.notas_daria}` : ''}`.trim()
-    : '';
-
-  const prompt = `Eres asistente de cobranzas de Suministros Guipak, S.R.L. (distribuidora B2B, República Dominicana).
-
-Genera UN correo de cobranza CONSOLIDADO para este cliente. El correo debe cubrir TODA la deuda, no solo una factura.
-
-DATOS DEL CLIENTE:
-- Empresa: ${nombreCliente}
-- Código: ${codigoCliente}
-- Contacto: ${contacto || nombreCliente}
-- Saldo total pendiente: RD$${saldoTotal.toLocaleString('es-DO')}${saldoFavor > 0 ? `\n- Saldo a favor: RD$${saldoFavor.toLocaleString('es-DO')} (ya descontado)` : ''}
-- Saldo neto a cobrar: RD$${saldoNeto.toLocaleString('es-DO')}
-- Total facturas pendientes: ${facturas.length}
-- Factura más antigua: ${Number(facturas[0].dias_vencido)} días vencida
-- Segmento: ${segmento}
-
-DETALLE DE FACTURAS:
-${facturasTexto}${facturas.length > 20 ? `\n  ... y ${facturas.length - 20} facturas más` : ''}
-${contextoMemoria}
-
-TONO: ${TONOS[segmento]}
-
-REGLAS:
-- Dirigir a "${contacto || nombreCliente}" (no "Estimado cliente").
-- Mencionar el SALDO TOTAL NETO (RD$${saldoNeto.toLocaleString('es-DO')}), no factura por factura.
-- Si hay más de 5 facturas, no listarlas todas — resumir ("${facturas.length} facturas pendientes, la más antigua de ${Number(facturas[0].dias_vencido)} días").
-- Si hay 5 o menos, puedes listar los números de factura.
-- Firma: "Departamento de Cuentas por Cobrar\nSuministros Guipak, S.R.L."
-- NO inventes datos, montos ni fechas.
-
-Responde EXACTAMENTE en JSON:
-{
-  "asunto": "asunto del correo",
-  "cuerpo": "cuerpo del correo"
-}
-
-Solo JSON, sin texto adicional.`;
-
-  try {
-    const client = new Anthropic({ apiKey });
-    const response = await client.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 2000,
-      messages: [{ role: 'user', content: prompt }],
-    });
-
-    const text = response.content[0].type === 'text' ? response.content[0].text : '';
-    const match = text.match(/\{[\s\S]*\}/);
-    if (!match) return generarCorreoConsolidadoMock(nombreCliente, facturas, saldoTotal);
-
-    const parsed = JSON.parse(match[0]);
-    if (typeof parsed.asunto !== 'string' || typeof parsed.cuerpo !== 'string') {
-      return generarCorreoConsolidadoMock(nombreCliente, facturas, saldoTotal);
-    }
-    return { asunto: parsed.asunto, cuerpo: parsed.cuerpo };
-  } catch (err) {
-    console.error('[draft-correo] Error generando correo consolidado:', err);
-    return generarCorreoConsolidadoMock(nombreCliente, facturas, saldoTotal);
-  }
-}
-
-function generarCorreoConsolidadoMock(
-  nombreCliente: string,
-  facturas: FacturaCliente[],
-  saldoTotal: number
-): { asunto: string; cuerpo: string } {
-  return {
-    asunto: `Estado de cuenta pendiente - ${nombreCliente}`,
-    cuerpo: `Estimado/a ${nombreCliente},
-
-Le informamos que su cuenta presenta un saldo pendiente de RD$${saldoTotal.toLocaleString('es-DO')} correspondiente a ${facturas.length} factura(s).
-
-Le solicitamos coordinar el pago a la brevedad posible.
-
-Saludos,
-Departamento de Cuentas por Cobrar
-Suministros Guipak, S.R.L.`,
+    plantilla_usada: plantilla.id,
   };
 }
