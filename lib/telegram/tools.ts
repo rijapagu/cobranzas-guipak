@@ -162,13 +162,17 @@ export const TOOLS: Anthropic.Tool[] = [
   {
     name: 'proponer_correo_cliente',
     description:
-      'Genera un draft de correo de cobranza para un cliente y lo deja en cola PENDIENTE de aprobación. NO envía el correo. Devuelve el ID de gestión, el draft completo y los datos del cliente. El bot debe presentar este draft al usuario con botones para aprobar/editar/descartar (CP-02). Si devuelve destinatario_email=null, el cliente no tiene email — el bot debe pedir el email al usuario y luego llamar a guardar_dato_cliente antes de presentar los botones de aprobación.',
+      'Genera un draft de correo de cobranza para un cliente y lo deja en cola PENDIENTE de aprobación. NO envía el correo. Devuelve el ID de gestión, el draft completo y los datos del cliente. El bot debe presentar este draft al usuario con botones para aprobar/editar/descartar (CP-02). Si el usuario especificó un email destino explícito (ej. "envía el correo a cuentas@empresa.com"), pásalo en email_destino. Si devuelve destinatario_email=null y no se especificó email_destino, el cliente no tiene email — pedir el email al usuario y luego llamar a guardar_dato_cliente antes de presentar los botones.',
     input_schema: {
       type: 'object' as const,
       properties: {
         termino: {
           type: 'string',
           description: 'Código de cliente (ej. "0000274") o nombre parcial',
+        },
+        email_destino: {
+          type: 'string',
+          description: 'Email destino explícito proporcionado por el usuario (ej. "cuentas@padron.com"). Omitir si el usuario no especificó un email.',
         },
       },
       required: ['termino'],
@@ -395,7 +399,8 @@ export async function ejecutarTool(
         return await marcarTareaHecha(argumentos, ctx);
 
       case 'proponer_correo_cliente': {
-        const result = await proponerCorreoCliente(String(argumentos.termino));
+        const emailDestino = argumentos.email_destino ? String(argumentos.email_destino).trim() : undefined;
+        const result = await proponerCorreoCliente(String(argumentos.termino), emailDestino);
         return { ok: result.ok, data: result };
       }
 
@@ -1011,7 +1016,7 @@ async function listarClientesSinDatos(
     SELECT
       c.IC_CODE  AS codigo,
       c.IC_NAME  AS nombre,
-      c.IC_EMAIL AS email_softec,
+      c.IC_ARCONTC AS email_softec,
       c.IC_PHONE AS telefono_softec,
       SUM(f.IJ_TOT - f.IJ_TOTAPPL) AS saldo_bruto,
       COUNT(f.IJ_INUM) AS facturas
@@ -1020,7 +1025,7 @@ async function listarClientesSinDatos(
     WHERE f.IJ_TYPEDOC = 'IN' AND f.IJ_INVTORF = 'T' AND f.IJ_PAID = 'F'
       AND (f.IJ_TOT - f.IJ_TOTAPPL) > 0
       AND DATEDIFF(CURDATE(), f.IJ_DUEDATE) > 0
-    GROUP BY c.IC_CODE, c.IC_NAME, c.IC_EMAIL, c.IC_PHONE
+    GROUP BY c.IC_CODE, c.IC_NAME, c.IC_ARCONTC, c.IC_PHONE
     ORDER BY saldo_bruto DESC
     LIMIT 200
   `);

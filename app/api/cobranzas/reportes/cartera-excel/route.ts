@@ -43,9 +43,9 @@ export async function GET(request: NextRequest) {
             WHEN DATEDIFF(CURDATE(), f.IJ_DUEDATE) > 30 THEN 'ROJO'
             ELSE 'VERDE'
           END AS 'Segmento',
-          c.IC_EMAIL AS 'Email',
+          c.IC_ARCONTC AS 'Email CxP',
           c.IC_PHONE AS 'Teléfono',
-          c.IC_ARCONTC AS 'Contacto Cobros'
+          c.IC_CONTACT AS 'Contacto General'
         FROM v_cobr_ijnl f
         INNER JOIN v_cobr_icust c ON c.IC_CODE = f.IJ_CCODE AND c.IC_STATUS = 'A'
         WHERE f.IJ_TYPEDOC = 'IN' AND f.IJ_INVTORF = 'T' AND f.IJ_PAID = 'F'

@@ -9,6 +9,7 @@
 import { cobranzasQuery, cobranzasExecute } from '@/lib/db/cobranzas';
 import { softecQuery, testSoftecConnection } from '@/lib/db/softec';
 import { obtenerSaldoAFavorPorCliente } from '@/lib/cobranzas/saldo-favor';
+import { resolverWhatsAppPropio } from '@/lib/cobranzas/contactos';
 import { getPdfUrl } from '@/lib/drive/client';
 import Anthropic from '@anthropic-ai/sdk';
 
@@ -79,8 +80,8 @@ export async function proponerWhatsAppCliente(
        (f.IJ_TOT - f.IJ_TOTAPPL) AS saldo_pendiente,
        f.IJ_DUEDATE          AS fecha_vencimiento,
        DATEDIFF(CURDATE(), f.IJ_DUEDATE) AS dias_vencido,
-       c.IC_ARCONTC          AS contacto_cobros,
-       c.IC_EMAIL            AS email,
+       c.IC_CONTACT          AS contacto_cobros,
+       c.IC_ARCONTC          AS email,
        c.IC_PHONE            AS telefono
      FROM v_cobr_ijnl f
      INNER JOIN v_cobr_icust c ON c.IC_CODE = f.IJ_CCODE AND c.IC_STATUS='A'
@@ -158,14 +159,9 @@ export async function proponerWhatsAppCliente(
     };
   }
 
-  // Número de WhatsApp: enriquecido primero, fallback Softec
-  const enr = await cobranzasQuery<{ whatsapp: string | null }>(
-    'SELECT whatsapp FROM cobranza_clientes_enriquecidos WHERE codigo_cliente = ?',
-    [codigoCliente]
-  );
-  const telefonoDestino =
-    (enr[0]?.whatsapp ? enr[0].whatsapp.trim() : '') ||
-    (f.telefono ? String(f.telefono).trim() : '');
+  // Número de WhatsApp: nuestra BD primero, fallback Softec IC_PHONE
+  const waPropio = await resolverWhatsAppPropio(codigoCliente);
+  const telefonoDestino = waPropio || (f.telefono ? String(f.telefono).trim() : '');
 
   // PDF disponible en Drive?
   const docRows = await cobranzasQuery<{ google_drive_id: string }>(

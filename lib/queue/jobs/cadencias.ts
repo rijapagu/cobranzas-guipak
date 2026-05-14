@@ -108,8 +108,8 @@ export async function ejecutarCadenciasHorarias(): Promise<{
         WHEN DATEDIFF(CURDATE(), f.IJ_DUEDATE) > 30               THEN 'ROJO'
         ELSE 'VERDE'
       END AS segmento,
-      c.IC_ARCONTC         AS contacto_cobros,
-      c.IC_EMAIL           AS email,
+      c.IC_CONTACT         AS contacto_cobros,
+      c.IC_ARCONTC         AS email,
       c.IC_PHONE           AS telefono
     FROM v_cobr_ijnl f
     INNER JOIN v_cobr_icust c ON c.IC_CODE = f.IJ_CCODE AND c.IC_STATUS = 'A'

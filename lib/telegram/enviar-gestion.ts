@@ -12,6 +12,7 @@ import { softecQuery } from '@/lib/db/softec';
 import { enviarEmail } from '@/lib/email/sender';
 import { enviarWhatsApp } from '@/lib/evolution/client';
 import { downloadPdfBuffer } from '@/lib/drive/client';
+import { resolverEmailPropio, resolverWhatsAppPropio } from '@/lib/cobranzas/contactos';
 import { differenceInHours } from 'date-fns';
 
 interface GestionRow {
@@ -74,21 +75,21 @@ export async function enviarGestion(gestionId: number): Promise<ResultadoEnvio> 
   }
 
   const codigo = String(gestion.codigo_cliente).trim();
-  const clienteSoftec = await softecQuery<{ email: string | null; telefono: string | null; nombre: string }>(
-    "SELECT IC_EMAIL AS email, IC_PHONE AS telefono, IC_NAME AS nombre FROM v_cobr_icust WHERE IC_CODE = ? LIMIT 1",
+  const clienteSoftec = await softecQuery<{ email_softec: string | null; telefono: string | null; nombre: string }>(
+    "SELECT IC_ARCONTC AS email_softec, IC_PHONE AS telefono, IC_NAME AS nombre FROM v_cobr_icust WHERE IC_CODE = ? LIMIT 1",
     [codigo]
   );
   const nombreCliente = clienteSoftec[0]?.nombre
     ? String(clienteSoftec[0].nombre).trim()
     : codigo;
 
-  const enr = await cobranzasQuery<{ email: string | null; whatsapp: string | null }>(
-    'SELECT email, whatsapp FROM cobranza_clientes_enriquecidos WHERE codigo_cliente = ?',
-    [codigo]
-  );
-  const emailDestino = (clienteSoftec[0]?.email ? String(clienteSoftec[0].email).trim() : '') ||
-    (enr[0]?.email ? enr[0].email.trim() : '');
-  const telefonoDestino = (enr[0]?.whatsapp ? enr[0].whatsapp.trim() : '') ||
+  // Prioridad: nuestra BD (contactos + enriquecidos) > Softec IC_ARCONTC
+  const emailPropio = await resolverEmailPropio(codigo);
+  const emailDestino = emailPropio ||
+    (clienteSoftec[0]?.email_softec ? String(clienteSoftec[0].email_softec).trim() : '');
+
+  const telefonoPropio = await resolverWhatsAppPropio(codigo);
+  const telefonoDestino = telefonoPropio ||
     (clienteSoftec[0]?.telefono ? String(clienteSoftec[0].telefono).trim() : '');
 
   // Intentar adjuntar PDF de Drive si existe

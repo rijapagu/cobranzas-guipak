@@ -235,7 +235,7 @@ async function queryCarteraSoftec(): Promise<FacturaVencida[]> {
     SELECT
       c.IC_CODE AS codigo_cliente, c.IC_NAME AS nombre_cliente,
       c.IC_RAZON AS razon_social, c.IC_RNC AS rnc,
-      c.IC_EMAIL AS email, c.IC_PHONE AS telefono, c.IC_PHONE2 AS telefono2,
+      c.IC_ARCONTC AS email, c.IC_PHONE AS telefono, c.IC_PHONE2 AS telefono2,
       c.IC_CONTACT AS contacto_general, c.IC_ARCONTC AS contacto_cobros,
       c.IC_CRDLMT AS limite_credito,
       f.IJ_LOCAL AS localidad, f.IJ_TYPEDOC AS tipo_doc, f.IJ_INUM AS numero_interno,

@@ -4,6 +4,7 @@ import { cobranzasQuery, cobranzasExecute, logAccion } from '@/lib/db/cobranzas'
 import { softecQuery, testSoftecConnection } from '@/lib/db/softec';
 import { enviarWhatsApp } from '@/lib/evolution/client';
 import { enviarEmail } from '@/lib/email/sender';
+import { resolverEmailPropio, resolverWhatsAppPropio } from '@/lib/cobranzas/contactos';
 import { differenceInHours } from 'date-fns';
 
 interface GestionRow {
@@ -211,37 +212,30 @@ export async function POST(
 
 /**
  * Obtiene teléfono y email del cliente.
- * Prioridad: datos enriquecidos → Softec.
+ * Prioridad: nuestra BD (contactos + enriquecidos) → Softec IC_ARCONTC → Softec IC_PHONE.
  */
 async function obtenerContactoCliente(codigoCliente: string): Promise<ClienteContacto> {
-  // Primero buscar en datos enriquecidos
-  const enriquecidos = await cobranzasQuery<{ whatsapp: string; email: string }>(
-    'SELECT whatsapp, email FROM cobranza_clientes_enriquecidos WHERE codigo_cliente = ?',
-    [codigoCliente]
-  );
-
-  if (enriquecidos.length > 0) {
-    const e = enriquecidos[0];
-    if (e.whatsapp || e.email) {
-      return { telefono: e.whatsapp || null, email: e.email || null };
-    }
+  // Nuestra BD primero (contactos múltiples + enriquecidos legacy)
+  const emailPropio = await resolverEmailPropio(codigoCliente);
+  const waPropio = await resolverWhatsAppPropio(codigoCliente);
+  if (emailPropio || waPropio) {
+    return { email: emailPropio, telefono: waPropio };
   }
 
-  // Fallback a Softec
+  // Fallback a Softec (IC_ARCONTC para email, IC_PHONE para teléfono)
   const softecOk = await testSoftecConnection();
   if (softecOk) {
-    const clientes = await softecQuery<{ IC_PHONE: string; IC_EMAIL: string }>(
-      'SELECT IC_PHONE, IC_EMAIL FROM v_cobr_icust WHERE IC_CODE = ? LIMIT 1',
+    const clientes = await softecQuery<{ IC_PHONE: string; IC_ARCONTC: string }>(
+      'SELECT IC_PHONE, IC_ARCONTC FROM v_cobr_icust WHERE IC_CODE = ? LIMIT 1',
       [codigoCliente]
     );
     if (clientes.length > 0) {
       return {
         telefono: clientes[0].IC_PHONE?.trim() || null,
-        email: clientes[0].IC_EMAIL?.trim() || null,
+        email: clientes[0].IC_ARCONTC?.trim() || null,
       };
     }
   }
 
-  // Mock fallback
-  return { telefono: '8095550101', email: 'mock@guipak.com' };
+  return { telefono: null, email: null };
 }

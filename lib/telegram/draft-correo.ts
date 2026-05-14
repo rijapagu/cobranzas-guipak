@@ -11,6 +11,7 @@
 import { cobranzasQuery, cobranzasExecute } from '@/lib/db/cobranzas';
 import { softecQuery, testSoftecConnection } from '@/lib/db/softec';
 import { obtenerSaldoAFavorPorCliente } from '@/lib/cobranzas/saldo-favor';
+import { resolverEmailPropio, guardarContacto } from '@/lib/cobranzas/contactos';
 import Anthropic from '@anthropic-ai/sdk';
 import type { SegmentoRiesgo } from '@/lib/types/cartera';
 
@@ -63,7 +64,8 @@ function calcularSegmento(diasVencido: number): SegmentoRiesgo {
 }
 
 export async function proponerCorreoCliente(
-  termino: string
+  termino: string,
+  emailDestinoParam?: string
 ): Promise<DraftCorreoResult> {
   const softecOk = await testSoftecConnection();
   if (!softecOk) return { ok: false, error: 'Sin conexión a Softec' };
@@ -90,8 +92,8 @@ export async function proponerCorreoCliente(
        'DOP'                 AS moneda,
        f.IJ_DUEDATE          AS fecha_vencimiento,
        DATEDIFF(CURDATE(), f.IJ_DUEDATE) AS dias_vencido,
-       c.IC_ARCONTC          AS contacto_cobros,
-       c.IC_EMAIL            AS email,
+       c.IC_CONTACT          AS contacto_cobros,
+       c.IC_ARCONTC          AS email,
        c.IC_PHONE            AS telefono
      FROM v_cobr_ijnl f
      INNER JOIN v_cobr_icust c ON c.IC_CODE = f.IJ_CCODE AND c.IC_STATUS='A'
@@ -159,14 +161,19 @@ export async function proponerCorreoCliente(
     };
   }
 
-  // 5. Buscar email
-  let emailDestino = (masUrgente.email || '').trim();
+  // 5. Buscar email — prioridad: override explícito > nuestra BD > Softec IC_ARCONTC
+  let emailDestino = (emailDestinoParam || '').trim();
   if (!emailDestino) {
-    const enr = await cobranzasQuery<{ email: string | null }>(
-      'SELECT email FROM cobranza_clientes_enriquecidos WHERE codigo_cliente = ?',
-      [codigoCliente]
-    );
-    if (enr[0]?.email) emailDestino = enr[0].email.trim();
+    const emailPropio = await resolverEmailPropio(codigoCliente);
+    emailDestino = emailPropio || (masUrgente.email || '').trim();
+  }
+  // Si se especificó un email distinto al que ya teníamos, guardarlo para futuras veces
+  if (emailDestinoParam?.trim() && emailDestinoParam.trim() !== (masUrgente.email || '').trim()) {
+    await guardarContacto(codigoCliente, 'EMAIL', emailDestinoParam.trim(), {
+      origen: 'TELEGRAM',
+      creado_por: 'bot-telegram',
+      notas: 'Email especificado durante propuesta de correo',
+    });
   }
 
   // 6. Memoria del cliente
