@@ -53,9 +53,10 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ respuesta: texto, gestion_id });
   } catch (error) {
-    console.error('[ASISTENTE-CHAT]', error);
+    const msg = error instanceof Error ? error.message : String(error);
+    console.error('[ASISTENTE-CHAT]', msg, error);
     return NextResponse.json(
-      { error: 'Error procesando mensaje' },
+      { error: `Error procesando mensaje: ${msg}` },
       { status: 500 }
     );
   }

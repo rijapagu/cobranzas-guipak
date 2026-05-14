@@ -36,10 +36,12 @@ export async function enviarEmail(
   const from = process.env.SMTP_FROM || 'cobros@guipak.com';
 
   if (!host || !user || !pass) {
-    console.log('[EMAIL] Mock: Sin credenciales SMTP, simulando envío a', to);
+    const faltante = [!host && 'SMTP_HOST', !user && 'SMTP_USER', !pass && 'SMTP_PASS'].filter(Boolean).join(', ');
+    console.error(`[EMAIL] Sin credenciales SMTP (${faltante}) — correo NO enviado a ${to}`);
     return {
-      messageId: `mock_email_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-      status: 'sent',
+      messageId: '',
+      status: 'failed',
+      error: `Configuración SMTP incompleta: falta ${faltante}. Configura las variables de entorno en el servidor.`,
     };
   }
 
