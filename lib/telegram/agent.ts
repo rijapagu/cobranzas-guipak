@@ -182,15 +182,24 @@ function tablaProximosDias(hoyIso: string): string {
   return lineas.join('\n');
 }
 
+/**
+ * Devuelve el system prompt en dos partes para aprovechar prompt caching:
+ * - staticPart: SYSTEM_PROMPT_BASE + FLUJOS_OPERACIONALES — cambia raramente
+ *   (solo si alguien edita Configuración). Se marca con cache_control=ephemeral.
+ * - dynamicPart: fecha de hoy, calendario, sesión del cliente, memoria del equipo —
+ *   cambia en cada conversación. NO se cachea.
+ *
+ * Ahorro: Anthropic cobra el 10% del precio normal para tokens cacheados.
+ * Con ~5000 tokens estáticos por llamada y 3-4 llamadas por mensaje, el
+ * caching reduce el costo de input en ~60-70%.
+ */
 async function buildSystemPrompt(
   memoriaEquipo: { clave: string; valor: string }[],
   sesion: SesionChat | null
-): Promise<string> {
+): Promise<{ staticPart: string; dynamicPart: string }> {
   const hoy = fechaHoyDominicana();
   const diaSemana = diaSemanaEspanol(hoy);
 
-  // La parte personalizable puede sobreescribirse desde Configuración (prompt_agente).
-  // FLUJOS_OPERACIONALES siempre se inyecta al final desde código — no sobreescribible.
   let promptPersonalizable = SYSTEM_PROMPT_BASE;
   try {
     const custom = await getConfig('prompt_agente');
@@ -210,7 +219,11 @@ async function buildSystemPrompt(
 Si el usuario se refiere a "el cliente" sin dar nombre, asume que es este.\n`
     : '';
 
-  return `FECHA DE HOY (Santo Domingo): ${hoy} (${diaSemana}).
+  return {
+    // Parte cacheable — no varía entre mensajes del mismo día/usuario
+    staticPart: `${promptPersonalizable}\n\n${FLUJOS_OPERACIONALES}`,
+    // Parte dinámica — fecha, sesión de cliente activa, memoria del equipo
+    dynamicPart: `FECHA DE HOY (Santo Domingo): ${hoy} (${diaSemana}).
 
 CALENDARIO DE LOS PRÓXIMOS 14 DÍAS (úsalo como tabla de lookup, NO calcules tú las fechas):
 ${tablaProximosDias(hoy)}
@@ -223,9 +236,8 @@ REGLAS PARA RESOLVER FECHAS RELATIVAS:
 - "el próximo lunes" → si HOY es lunes, salta al lunes de la siguiente fila; si no, igual que "el lunes".
 - "en N días" → cuenta N filas hacia abajo desde HOY.
 - Siempre verifica que la fecha que envías a crear_tarea coincida con el día de la semana de la tabla.
-${seccionSesion}${seccionMemoria}
-${promptPersonalizable}
-${FLUJOS_OPERACIONALES}`;
+${seccionSesion}${seccionMemoria}`,
+  };
 }
 
 const MAX_TURNS = 8;
@@ -246,9 +258,9 @@ export async function procesarMensajeBot(input: MensajeUsuario): Promise<string>
 
   const client = new Anthropic({ apiKey });
 
-  // Cargar historial + memoria del equipo + sesión Redis en paralelo
+  // Cargar historial (15 mensajes — suficiente contexto, menor costo) + paralelo
   const [historial, memoriaEquipo, sesion] = await Promise.all([
-    cargarHistorial(input.chatId, 30).catch(() => []),
+    cargarHistorial(input.chatId, 15).catch(() => []),
     cargarMemoriaEquipo(input.telegramUserId).catch(() => []),
     obtenerSesion(input.chatId).catch(() => null),
   ]);
@@ -265,7 +277,21 @@ export async function procesarMensajeBot(input: MensajeUsuario): Promise<string>
     { role: 'user' as const, content: input.texto },
   ];
 
-  const systemPrompt = await buildSystemPrompt(memoriaEquipo, sesion);
+  const { staticPart, dynamicPart } = await buildSystemPrompt(memoriaEquipo, sesion);
+
+  // Prompt caching: staticPart (~5000 tokens) se cachea por 5 min → ~90% ahorro en esos tokens.
+  // dynamicPart (fecha, sesión, memoria) cambia cada conversación → no se cachea.
+  // tools también se cachean en el último elemento (nunca cambian en runtime).
+  const systemBlocks = [
+    { type: 'text' as const, text: staticPart, cache_control: { type: 'ephemeral' as const } },
+    { type: 'text' as const, text: dynamicPart },
+  ];
+  const toolsConCache = TOOLS.map((t, i) =>
+    i === TOOLS.length - 1
+      ? { ...t, cache_control: { type: 'ephemeral' as const } }
+      : t
+  );
+
   let respuestaFinal = '';
   let turn = 0;
 
@@ -275,8 +301,8 @@ export async function procesarMensajeBot(input: MensajeUsuario): Promise<string>
     const response = await client.messages.create({
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 1024,
-      system: systemPrompt,
-      tools: TOOLS,
+      system: systemBlocks,
+      tools: toolsConCache as typeof TOOLS,
       messages,
     });
 
