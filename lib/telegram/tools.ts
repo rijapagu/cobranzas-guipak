@@ -9,6 +9,7 @@ import { obtenerContactos, resolverEmailPropio, resolverWhatsAppPropio } from '@
 import { proponerCorreoCliente } from './draft-correo';
 import { proponerWhatsAppCliente } from './draft-whatsapp';
 import { guardarMemoriaEquipo } from './historial';
+import { listarPlantillasActivas } from '@/lib/templates/seleccionar';
 
 /**
  * Definición de herramientas que Claude puede invocar desde el bot de Telegram.
@@ -175,8 +176,21 @@ export const TOOLS: Anthropic.Tool[] = [
           type: 'string',
           description: 'Email destino explícito proporcionado por el usuario (ej. "cuentas@padron.com"). Omitir si el usuario no especificó un email.',
         },
+        plantilla_id: {
+          type: 'number',
+          description: 'ID numérico de la plantilla a usar (ej. 7). Si se omite, Claude genera el correo. Obtén el ID con listar_plantillas si el usuario dijo "usa la plantilla X" o "con la plantilla estado de cuenta".',
+        },
       },
       required: ['termino'],
+    },
+  },
+  {
+    name: 'listar_plantillas',
+    description:
+      'Devuelve todas las plantillas de correo activas con su ID, nombre, descripción, segmento, categoría y tono. Úsala cuando el usuario quiera ver las plantillas disponibles o cuando necesites buscar el ID de una plantilla por nombre.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {},
     },
   },
   {
@@ -416,8 +430,14 @@ export async function ejecutarTool(
 
       case 'proponer_correo_cliente': {
         const emailDestino = argumentos.email_destino ? String(argumentos.email_destino).trim() : undefined;
-        const result = await proponerCorreoCliente(String(argumentos.termino), emailDestino);
+        const plantillaId = argumentos.plantilla_id ? Number(argumentos.plantilla_id) : undefined;
+        const result = await proponerCorreoCliente(String(argumentos.termino), emailDestino, plantillaId);
         return { ok: result.ok, data: result };
+      }
+
+      case 'listar_plantillas': {
+        const plantillas = await listarPlantillasActivas();
+        return { ok: true, data: { total: plantillas.length, plantillas } };
       }
 
       case 'obtener_contactos_cliente':

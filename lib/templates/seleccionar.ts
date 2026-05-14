@@ -110,6 +110,32 @@ export async function seleccionarPlantilla(
 }
 
 /**
+ * Busca una plantilla activa por ID exacto.
+ * Devuelve null si no existe o está inactiva.
+ */
+export async function seleccionarPlantillaById(id: number): Promise<PlantillaDB | null> {
+  const rows = await cobranzasQuery<PlantillaDB>(
+    'SELECT * FROM cobranza_plantillas_email WHERE id = ? AND activa = 1 LIMIT 1',
+    [id]
+  );
+  return rows[0] || null;
+}
+
+/**
+ * Devuelve la lista de plantillas activas (sin cuerpo) para mostrar al usuario.
+ */
+export async function listarPlantillasActivas(): Promise<Omit<PlantillaDB, 'cuerpo'>[]> {
+  return cobranzasQuery<Omit<PlantillaDB, 'cuerpo'>>(
+    `SELECT id, nombre, descripcion, segmento, dia_desde_vencimiento,
+            orden_secuencia, categoria, asunto, tono, requiere_aprobacion, activa
+     FROM cobranza_plantillas_email
+     WHERE activa = 1
+     ORDER BY categoria ASC, segmento ASC, dia_desde_vencimiento ASC, orden_secuencia ASC`,
+    []
+  );
+}
+
+/**
  * Helper: calcula el segmento a partir de los días vencidos.
  */
 export function calcularSegmento(diasVencido: number): SegmentoRiesgo {

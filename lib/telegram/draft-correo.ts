@@ -12,6 +12,8 @@ import { cobranzasQuery, cobranzasExecute } from '@/lib/db/cobranzas';
 import { softecQuery, testSoftecConnection } from '@/lib/db/softec';
 import { obtenerSaldoAFavorPorCliente } from '@/lib/cobranzas/saldo-favor';
 import { resolverEmailPropio, guardarContacto } from '@/lib/cobranzas/contactos';
+import { seleccionarPlantillaById } from '@/lib/templates/seleccionar';
+import { renderPlantilla } from '@/lib/templates/render';
 import Anthropic from '@anthropic-ai/sdk';
 import type { SegmentoRiesgo } from '@/lib/types/cartera';
 
@@ -65,7 +67,8 @@ function calcularSegmento(diasVencido: number): SegmentoRiesgo {
 
 export async function proponerCorreoCliente(
   termino: string,
-  emailDestinoParam?: string
+  emailDestinoParam?: string,
+  plantillaId?: number
 ): Promise<DraftCorreoResult> {
   const softecOk = await testSoftecConnection();
   if (!softecOk) return { ok: false, error: 'Sin conexión a Softec' };
@@ -182,29 +185,55 @@ export async function proponerCorreoCliente(
   );
   const memoria = memoriaRows[0] || null;
 
-  // 7. Generar correo consolidado con Claude
+  // 7. Generar correo: plantilla explícita → renderizar; si no, Claude
   let asunto = '';
   let mensajeEmail = '';
+  const contactoNombre =
+    memoria?.contacto_real ||
+    (masUrgente.contacto_cobros ? String(masUrgente.contacto_cobros).trim() : '') ||
+    nombreCliente;
 
-  try {
-    const generado = await generarCorreoConsolidado(
-      nombreCliente,
-      codigoCliente,
-      facturas,
-      saldoTotal,
-      saldoFavor,
-      segmento,
-      memoria?.contacto_real || (masUrgente.contacto_cobros ? String(masUrgente.contacto_cobros).trim() : ''),
-      memoria
+  if (plantillaId) {
+    const plantilla = await seleccionarPlantillaById(plantillaId);
+    if (!plantilla) {
+      return { ok: false, motivo: 'ERROR_GENERAR', error: `Plantilla #${plantillaId} no encontrada o inactiva` };
+    }
+    const rendered = renderPlantilla(
+      { asunto: plantilla.asunto, cuerpo: plantilla.cuerpo },
+      {
+        cliente: contactoNombre,
+        empresa_cliente: nombreCliente,
+        numero_factura: facturas.length === 1 ? facturas[0].ij_inum : `${facturas.length} facturas`,
+        ncf_fiscal: facturas.length === 1 ? String(masUrgente.ncf_fiscal || '').trim() : '',
+        monto: Math.max(0, saldoTotal - saldoFavor),
+        moneda: 'DOP',
+        fecha_vencimiento: new Date(masUrgente.fecha_vencimiento).toISOString().split('T')[0],
+        dias_vencida: diasMaxVencido,
+      }
     );
-    asunto = generado.asunto;
-    mensajeEmail = generado.cuerpo;
-  } catch (err) {
-    return {
-      ok: false,
-      motivo: 'ERROR_GENERAR',
-      error: err instanceof Error ? err.message : String(err),
-    };
+    asunto = rendered.asunto;
+    mensajeEmail = rendered.cuerpo;
+  } else {
+    try {
+      const generado = await generarCorreoConsolidado(
+        nombreCliente,
+        codigoCliente,
+        facturas,
+        saldoTotal,
+        saldoFavor,
+        segmento,
+        contactoNombre,
+        memoria
+      );
+      asunto = generado.asunto;
+      mensajeEmail = generado.cuerpo;
+    } catch (err) {
+      return {
+        ok: false,
+        motivo: 'ERROR_GENERAR',
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
   }
 
   // 8. Insertar gestión (referencia la factura más urgente pero saldo = total)
