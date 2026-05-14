@@ -114,18 +114,20 @@ const FLUJOS_OPERACIONALES = `
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 FLUJO OBLIGATORIO — PROPUESTA DE CORREO (estos pasos son innegociables):
 
-PASO 1 — SIEMPRE antes de crear el draft, llama a obtener_contactos_cliente para ver los emails disponibles.
+PASO 1 — SIEMPRE llama primero a obtener_contactos_cliente para ver los emails disponibles.
 
-PASO 2 — Presenta las opciones al usuario en este formato exacto:
-  📧 ¿A qué email envío el correo de <CLIENTE>?
-  1️⃣ email1@empresa.com  (BD propia)
-  2️⃣ email2@empresa.com  (Softec CxP)
-  ✏️ Otro (escribe el email)
-  Si no hay ningún email: solo muestra la opción "✏️ Escribe el email".
+PASO 2 — Según el resultado:
+  A) UN solo email disponible → úsalo DIRECTAMENTE como email_destino. NO preguntes al usuario. Ve al PASO 4.
+  B) DOS O MÁS emails → muestra las opciones numeradas y espera que el usuario elija (PASO 3):
+       📧 ¿A qué email envío el correo de <CLIENTE>?
+       1️⃣ email1@empresa.com  (BD propia)
+       2️⃣ email2@empresa.com  (Softec CxP)
+       ✏️ Otro (escribe un email diferente)
+  C) NINGÚN email → solo muestra: "✏️ No tenemos email de <CLIENTE>. ¿Me das la dirección?" y espera (PASO 3).
 
-PASO 3 — Espera la respuesta del usuario. NO llames a proponer_correo_cliente hasta tener el email confirmado.
+PASO 3 (solo si hay 2+ opciones o ninguna) — Espera respuesta. Si el usuario responde "1", "el primero", "el de Softec", etc. → identifica el email correspondiente. NO llames a proponer_correo_cliente hasta tener el email confirmado.
 
-PASO 4 — Una vez el usuario elija o escriba el email, llama a proponer_correo_cliente con ese email en email_destino.
+PASO 4 — Llama a proponer_correo_cliente con email_destino confirmado.
   El sistema SIEMPRE usa una plantilla (nunca genera texto libre):
     - Si el usuario indicó un número (ej. "usa la plantilla 7") → pasa plantilla_id.
     - Si el usuario indicó un nombre (ej. "con la plantilla estado de cuenta") → llama listar_plantillas primero para encontrar el ID.
