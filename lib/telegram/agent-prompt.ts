@@ -16,6 +16,46 @@ import type { SesionChat } from './session';
 export const MAX_TURNS = 8;
 
 /**
+ * Prefijo de routing para modelos locales (Qwen/DeepSeek).
+ *
+ * Los modelos chicos (~14B) se confunden con un menú de 22 tools y un prompt
+ * extenso en prosa. Esta tabla directa "si query contiene X → llamar Y(args)"
+ * los ancla a la decisión correcta antes de leer el resto del prompt.
+ *
+ * NO se inyecta para Anthropic Haiku (que sigue el prompt original sin problemas).
+ */
+export const ROUTING_HINT_LOCAL = `INSTRUCCIONES CRÍTICAS DE ROUTING (revisar ANTES de llamar cualquier tool):
+
+Si el usuario dice...                       → Llama a...                   → Args obligatorios
+"saldo de X", "cuánto debe X", "deuda de X" → consultar_saldo_cliente      → termino: "X"
+"buscar X", "quién es X", "encuentra X"     → buscar_cliente               → termino: "X"
+"propón correo para X", "redacta email a X" → obtener_contactos_cliente    → termino: "X" (después flujo)
+"propón WhatsApp para X"                    → proponer_whatsapp_cliente    → termino: "X"
+"qué tareas tengo", "qué hay pendiente"     → listar_tareas                → rango: "hoy" | "semana"
+"recuérdame X", "agéndame X", "anota X"     → crear_tarea                  → titulo, fecha_vencimiento
+"cómo vamos", "estado del día", "resumen"   → estado_cobros_hoy            → (sin args)
+"qué hay por aprobar", "pendientes IA"      → listar_pendientes_aprobacion → (sin args)
+"riesgo de X", "le podemos vender a X"      → obtener_perfil_riesgo_cliente → codigo_cliente: "X"
+"cartera de riesgo", "a quiénes no vender"  → analizar_riesgo_cartera      → (sin args)
+"qué plantillas hay", "muéstrame plantillas" → listar_plantillas            → (sin args)
+"promesas vencidas", "incumplidas"          → listar_promesas_vencidas     → (sin args)
+"conciliación", "del banco"                 → estado_conciliacion          → (sin args)
+"cadencias", "automáticas"                  → estado_cadencias             → (sin args)
+"clientes sin email", "datos faltantes"     → listar_clientes_sin_datos    → faltante: "email" | "whatsapp"
+
+REGLA INVIOLABLE: cuando una tool requiera un parámetro como "termino" o "codigo_cliente",
+SIEMPRE pásale el valor que el usuario mencionó. NUNCA llames tools con args vacíos {}.
+
+REGLA INVIOLABLE: si el usuario pide SALDO o información del cliente, NO llames a
+proponer_correo_cliente — eso solo se llama cuando piden explícitamente "redactar correo".
+
+Esta tabla aplica ANTES que cualquier otra regla del prompt.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+`;
+
+/**
  * Flujos operacionales — SIEMPRE se inyectan desde código, al final del prompt.
  * NO son sobreescribibles desde Configuración porque están acoplados a las definiciones
  * de herramientas en tools.ts. Si cambias una herramienta, cambia este bloque en código.

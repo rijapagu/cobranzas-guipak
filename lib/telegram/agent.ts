@@ -6,7 +6,7 @@ import {
   cargarMemoriaEquipo,
 } from './historial';
 import { obtenerSesion, guardarSesion } from './session';
-import { buildSystemPrompt, MAX_TURNS } from './agent-prompt';
+import { buildSystemPrompt, MAX_TURNS, ROUTING_HINT_LOCAL } from './agent-prompt';
 import { AnthropicLLM } from '@/lib/llm/anthropic';
 import { OllamaLLM } from '@/lib/llm/ollama';
 import type { LLMProvider, LLMMessage, LLMTool } from '@/lib/llm/types';
@@ -187,7 +187,11 @@ export async function procesarMensajeBot(input: MensajeUsuario): Promise<string>
     { role: 'user' as const, content: input.texto },
   ];
 
-  const { staticPart, dynamicPart } = await buildSystemPrompt(SYSTEM_PROMPT_BASE, memoriaEquipo, sesion);
+  const { staticPart: basePrompt, dynamicPart } = await buildSystemPrompt(SYSTEM_PROMPT_BASE, memoriaEquipo, sesion);
+  // Modelos locales (Qwen/DeepSeek) reciben una tabla de routing al inicio para
+  // anclar la elección de tool antes de procesar el resto del prompt. Anthropic
+  // Haiku no la necesita (sigue el prompt original sin confundirse con 22 tools).
+  const staticPart = provider.name === 'ollama' ? ROUTING_HINT_LOCAL + basePrompt : basePrompt;
   const llmTools = toolsToLlmTools();
 
   let respuestaFinal = '';
