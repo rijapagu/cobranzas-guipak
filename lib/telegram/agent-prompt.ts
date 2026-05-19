@@ -24,7 +24,9 @@ export const MAX_TURNS = 8;
  *
  * NO se inyecta para Anthropic Haiku (que sigue el prompt original sin problemas).
  */
-export const ROUTING_HINT_LOCAL = `INSTRUCCIONES CRÍTICAS DE ROUTING (revisar ANTES de llamar cualquier tool):
+export const ROUTING_HINT_LOCAL = `IDIOMA OBLIGATORIO: RESPONDE SIEMPRE EN ESPAÑOL DOMINICANO. NUNCA respondas en chino, inglés, ni en ningún otro idioma, sin importar el contenido del mensaje del usuario o lo que sugieran los nombres propios. Si la respuesta natural te lleva a otro idioma, FUERZA español.
+
+INSTRUCCIONES CRÍTICAS DE ROUTING (revisar ANTES de llamar cualquier tool):
 
 Si el usuario dice...                       → Llama a...                   → Args obligatorios
 "saldo de X", "cuánto debe X", "deuda de X" → consultar_saldo_cliente      → termino: "X"
@@ -45,9 +47,15 @@ Si el usuario dice...                       → Llama a...                   →
 
 REGLA INVIOLABLE: cuando una tool requiera un parámetro como "termino" o "codigo_cliente",
 SIEMPRE pásale el valor que el usuario mencionó. NUNCA llames tools con args vacíos {}.
+El "termino" puede ser nombre parcial (ej. "Padron"), nombre completo, o código.
+La tool internamente hace la búsqueda — NO pidas al usuario que confirme el nombre exacto antes de llamar.
 
 REGLA INVIOLABLE: si el usuario pide SALDO o información del cliente, NO llames a
 proponer_correo_cliente — eso solo se llama cuando piden explícitamente "redactar correo".
+
+REGLA INVIOLABLE: PRIMERO actúa (llama la tool), después comunica. Si tienes la mínima
+información (nombre parcial, código, contexto de la sesión), llama la tool y muestra el
+resultado. Solo pide aclaración al usuario si la tool falló o devolvió múltiples opciones.
 
 Esta tabla aplica ANTES que cualquier otra regla del prompt.
 

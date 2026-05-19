@@ -50,6 +50,8 @@ interface OpenAIChatRequest {
   model: string;
   messages: OpenAIMessage[];
   max_tokens?: number;
+  temperature?: number;
+  top_p?: number;
   tools?: Array<{
     type: 'function';
     function: { name: string; description: string; parameters: object };
@@ -109,6 +111,10 @@ export class OllamaLLM implements LLMProvider {
       model: this.model,
       messages,
       max_tokens: req.maxTokens,
+      // Temperatura baja: reduce drift de idioma (chino → español) y mejora la
+      // consistencia del tool routing. 0.2 da algo de variabilidad sin que se desboque.
+      temperature: 0.2,
+      top_p: 0.9,
       stream: false,
       ...(tools && tools.length > 0 ? { tools, tool_choice: 'auto' as const } : {}),
       ...(req.jsonMode ? { response_format: { type: 'json_object' as const } } : {}),
