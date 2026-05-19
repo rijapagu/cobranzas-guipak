@@ -1,0 +1,4 @@
+msg_id	chat_hash	user_hash	fecha	categoria	chars	contenido_oneline
+1	a	b	2026-05-19	saldo_cliente	30	dame el saldo de CLI0001
+2	a	b	2026-05-19	tareas	40	recuérdame llamar a CLI0001 mañana
+3	a	b	2026-05-19	estado_dia	20	cómo vamos hoy
