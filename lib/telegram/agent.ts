@@ -193,6 +193,8 @@ export async function procesarMensajeBot(input: MensajeUsuario): Promise<string>
   let respuestaFinal = '';
   let turn = 0;
 
+  console.error(`[agent][${provider.name}] start chat=${input.chatId} user=${input.telegramUserId} text=${JSON.stringify(input.texto.slice(0, 100))}`);
+
   while (turn < MAX_TURNS) {
     turn++;
 
@@ -209,6 +211,13 @@ export async function procesarMensajeBot(input: MensajeUsuario): Promise<string>
       const errMsg = e instanceof Error ? e.message : String(e);
       console.error(`[agent][${provider.name}] error:`, errMsg);
       return `⚠️ Error llamando al modelo (${provider.name}): ${errMsg.slice(0, 200)}`;
+    }
+
+    console.error(`[agent][${provider.name}] turn=${turn} stop=${resp.stopReason} text_len=${resp.text.length} tool_calls=${resp.toolCalls.length} latency=${resp.latencyMs}ms`);
+    if (resp.toolCalls.length > 0) {
+      for (const tc of resp.toolCalls) {
+        console.error(`[agent][${provider.name}]   call: ${tc.name} args=${JSON.stringify(tc.arguments)}`);
+      }
     }
 
     // Si solo respondió texto, guardar en historial y devolver
@@ -239,6 +248,7 @@ export async function procesarMensajeBot(input: MensajeUsuario): Promise<string>
             telegramUserId: input.telegramUserId,
           }
         );
+        console.error(`[agent][${provider.name}]   result: ${tc.name} ok=${resultado.ok} ${resultado.ok ? '' : 'error=' + JSON.stringify(resultado.error)} data_snippet=${JSON.stringify(resultado.data ?? null).slice(0, 300)}`);
 
         // Actualizar sesión Redis cuando el modelo identifica un cliente (best-effort)
         if (resultado.ok && resultado.data) {
