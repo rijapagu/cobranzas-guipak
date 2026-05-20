@@ -198,9 +198,13 @@ export const TOOLS: Anthropic.Tool[] = [
     },
   },
   {
-    name: 'proponer_correo_cliente',
+    name: 'proponer_correo_cobranza_cliente',
     description:
-      'Genera un draft de correo de cobranza para un cliente y lo deja en cola PENDIENTE de aprobación. NO envía el correo. Devuelve el ID de gestión, el draft completo y los datos del cliente. El bot debe presentar este draft al usuario con botones para aprobar/editar/descartar (CP-02). Si el usuario especificó un email destino explícito (ej. "envía el correo a cuentas@empresa.com"), pásalo en email_destino. Si devuelve destinatario_email=null y no se especificó email_destino, el cliente no tiene email — pedir el email al usuario y luego llamar a guardar_dato_cliente antes de presentar los botones.',
+      'Cuándo usar: el usuario dice "propón un correo a X", "redacta email para X", "envíale a X", "mándale a X" — siempre referido a generar UN mensaje de cobranza a un cliente específico.\n' +
+      'Qué hace: genera un draft de correo basado en aging del cliente, perfil de riesgo y la plantilla más adecuada por segmento. NO envía — deja el draft en cola PENDIENTE de aprobación humana (CP-02). El bot lo presenta con botones aprobar/editar/descartar.\n' +
+      'Devuelve: { gestion_id, cliente, saldo_neto, asunto, preview, destinatario_email } o error con motivo (SIN_FACTURAS_VENCIDAS, CLIENTE_PAUSADO, etc.). Si destinatario_email=null y no se pasó email_destino, el cliente no tiene email — pedirlo al usuario y llamar a guardar_email_cliente antes de presentar botones.\n' +
+      'Pre-condiciones: antes de llamar, usar consultar_contactos_cliente_detalle para saber qué email destino usar y de dónde viene. Si el usuario dijo "con la plantilla X", primero listar_plantillas_email para resolver plantilla_id.\n' +
+      'NO usar si: el usuario solo consulta el saldo o pide información (eso es consultar_saldo_cliente). Tampoco para WhatsApp (proponer_whatsapp_cobranza_cliente).',
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -221,9 +225,13 @@ export const TOOLS: Anthropic.Tool[] = [
     },
   },
   {
-    name: 'listar_plantillas',
+    name: 'listar_plantillas_email',
     description:
-      'Devuelve todas las plantillas de correo activas con su ID, nombre, descripción, segmento, categoría y tono. Úsala cuando el usuario quiera ver las plantillas disponibles o cuando necesites buscar el ID de una plantilla por nombre.',
+      'Cuándo usar: el usuario quiere ver las plantillas de correo disponibles, dijo "usa la plantilla X", o necesitas resolver un plantilla_id por nombre antes de llamar proponer_correo_cobranza_cliente.\n' +
+      'Qué hace: devuelve todas las plantillas de correo activas (ID, nombre, descripción, segmento, categoría, tono).\n' +
+      'Devuelve: { total, plantillas: [{id, nombre, descripcion, segmento, categoria, tono}] }.\n' +
+      'Pre-condiciones: ninguna.\n' +
+      'NO usar si: el usuario quiere CREAR una plantilla nueva o EDITAR una existente — eso tiene endpoint propio, no va por el agente. Tampoco para listar plantillas de WhatsApp (no aplica: el draft de WhatsApp se genera libre).',
     input_schema: {
       type: 'object' as const,
       properties: {},
@@ -237,6 +245,25 @@ export const TOOLS: Anthropic.Tool[] = [
       'Devuelve: { codigo_cliente, nombre, emails: [string], whatsapps: [string], total_contactos }.\n' +
       'Pre-condiciones: acepta código o nombre parcial.\n' +
       'NO usar si: vas a redactar un correo/whatsapp y necesitas saber DE DÓNDE viene cada contacto (BD vs Softec) para decidir el destinatario — en ese caso usa consultar_contactos_cliente_detalle (gestion_cobranza).',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        termino: {
+          type: 'string',
+          description: 'Código de cliente o nombre parcial',
+        },
+      },
+      required: ['termino'],
+    },
+  },
+  {
+    name: 'consultar_contactos_cliente_detalle',
+    description:
+      'Cuándo usar: antes de proponer_correo_cobranza_cliente o proponer_whatsapp_cobranza_cliente, cuando necesites decidir QUÉ email/teléfono usar como destinatario y de DÓNDE viene (BD interna vs Softec).\n' +
+      'Qué hace: devuelve emails y teléfonos del cliente con la fuente de cada contacto (BD propia, enriquecido, Softec IC_ARCONTC), permitiendo elegir el destinatario más confiable.\n' +
+      'Devuelve: { codigo_cliente, nombre, emails: [{valor, fuente, principal}], whatsapps: [{valor, fuente, principal}], total_contactos }.\n' +
+      'Pre-condiciones: acepta código o nombre parcial.\n' +
+      'NO usar si: el usuario solo está consultando "qué contactos tiene X" en plan informativo (eso es consultar_contactos_cliente, modo resumen).',
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -309,9 +336,13 @@ export const TOOLS: Anthropic.Tool[] = [
     },
   },
   {
-    name: 'proponer_whatsapp_cliente',
+    name: 'proponer_whatsapp_cobranza_cliente',
     description:
-      'Genera un draft de mensaje WhatsApp de cobranza para un cliente y lo deja en cola PENDIENTE de aprobación. NO envía el mensaje. Si hay factura en Drive, incluye el link. Si devuelve destinatario_telefono=null, el cliente no tiene WhatsApp registrado — pide el número y llama a guardar_dato_cliente con campo="whatsapp".',
+      'Cuándo usar: el usuario dice "mándale un whatsapp a X", "propón un wa para X", "escríbele por whatsapp a X" — generar UN mensaje WhatsApp de cobranza para un cliente.\n' +
+      'Qué hace: genera un draft de WhatsApp de cobranza y lo deja en cola PENDIENTE de aprobación (CP-02). Si hay factura escaneada en Drive, incluye el link en el mensaje.\n' +
+      'Devuelve: { gestion_id, cliente, saldo_neto, preview, destinatario_telefono } o error con motivo. Si destinatario_telefono=null, el cliente no tiene WhatsApp — pedirlo y llamar a guardar_whatsapp_cliente antes de presentar botones.\n' +
+      'Pre-condiciones: antes de llamar, usar consultar_contactos_cliente_detalle para saber qué teléfono usar.\n' +
+      'NO usar si: el usuario quiere correo (proponer_correo_cobranza_cliente). Tampoco para responder a un cliente que escribió primero — eso es otro flujo.',
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -495,20 +526,23 @@ export async function ejecutarTool(
       case 'marcar_tarea_completada':
         return await marcarTareaHecha(argumentos, ctx);
 
-      case 'proponer_correo_cliente': {
+      case 'proponer_correo_cliente': // alias deprecado, retirar tras 1 release
+      case 'proponer_correo_cobranza_cliente': {
         const emailDestino = argumentos.email_destino ? String(argumentos.email_destino).trim() : undefined;
         const plantillaId = argumentos.plantilla_id ? Number(argumentos.plantilla_id) : undefined;
         const result = await proponerCorreoCliente(String(argumentos.termino), emailDestino, plantillaId);
         return { ok: result.ok, data: result };
       }
 
-      case 'listar_plantillas': {
+      case 'listar_plantillas': // alias deprecado, retirar tras 1 release
+      case 'listar_plantillas_email': {
         const plantillas = await listarPlantillasActivas();
         return { ok: true, data: { total: plantillas.length, plantillas } };
       }
 
       case 'obtener_contactos_cliente': // alias deprecado, retirar tras 1 release
       case 'consultar_contactos_cliente':
+      case 'consultar_contactos_cliente_detalle':
         return await obtenerContactosCliente(String(argumentos.termino));
 
       case 'guardar_dato_cliente':
@@ -534,7 +568,8 @@ export async function ejecutarTool(
       case 'resumen_conciliacion_bancaria':
         return await estadoConciliacion();
 
-      case 'proponer_whatsapp_cliente': {
+      case 'proponer_whatsapp_cliente': // alias deprecado, retirar tras 1 release
+      case 'proponer_whatsapp_cobranza_cliente': {
         const result = await proponerWhatsAppCliente(String(argumentos.termino));
         return { ok: result.ok, data: result };
       }
