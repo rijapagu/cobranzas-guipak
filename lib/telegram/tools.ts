@@ -456,9 +456,13 @@ export const TOOLS: Anthropic.Tool[] = [
     },
   },
   {
-    name: 'guardar_memoria_equipo',
+    name: 'guardar_preferencia_equipo',
     description:
-      'Guarda un dato permanente sobre el equipo, sus preferencias o el contexto del negocio. Úsalo cuando el usuario comparta algo que debas recordar en futuras conversaciones: cómo prefiere trabajar, quién maneja qué clientes, acuerdos internos, contexto de la empresa.',
+      'Cuándo usar: el usuario dice "recuerda mi preferencia X", "de ahora en adelante haz Y", "anota para el equipo Z", "siempre que pase X haz Y" — registrar una preferencia DEL EQUIPO o del negocio (no de un cliente).\n' +
+      'Qué hace: guarda un dato permanente clave-valor sobre el equipo, sus preferencias o el contexto del negocio (cómo prefiere trabajar el usuario, quién maneja qué clientes, acuerdos internos, contexto de la empresa).\n' +
+      'Devuelve: { clave, valor, actualizado_por, actualizado_en }. Si la clave ya existía: la sobreescribe.\n' +
+      'Pre-condiciones: clave en formato snake_case descriptivo (ej. "preferencia_correos_ricardo", "horario_reunion_semanal"). Valor claro y completo para ser útil en futuras sesiones.\n' +
+      'NO usar si: el usuario está hablando de UN cliente específico — eso es consultar_notas_cliente / guardar_patron_pago_cliente / guardar_canal_efectivo_cliente (contexto memoria).',
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -580,7 +584,8 @@ export async function ejecutarTool(
       case 'guardar_memoria_cliente':
         return await guardarMemoriaCliente(argumentos, ctx);
 
-      case 'guardar_memoria_equipo':
+      case 'guardar_memoria_equipo': // alias deprecado, retirar tras 1 release
+      case 'guardar_preferencia_equipo':
         return await guardarMemoriaEquipoTool(argumentos, ctx);
 
       case 'obtener_perfil_riesgo_cliente': // alias deprecado, retirar tras 1 release
