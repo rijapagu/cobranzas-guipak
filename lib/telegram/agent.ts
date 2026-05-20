@@ -156,7 +156,10 @@ function chooseProvider(chatId: number): LLMProvider {
         supervisorName: process.env.GATEWAY_SUPERVISOR ?? 'cobranzas',
         preferredTier: tier,
         authToken: process.env.GATEWAY_AUTH_TOKEN,
-        timeoutMs: 120_000,
+        // 240s: el primer turno del primer mensaje del día puede tomar 60-90s
+        // re-procesando el system prompt (~10K tokens). Suma del flujo completo
+        // (T1 tool_use + tool exec + T2 end_turn) puede llegar a ~150s.
+        timeoutMs: 240_000,
       });
     }
 

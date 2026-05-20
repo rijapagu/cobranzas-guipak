@@ -46,7 +46,13 @@ export interface GatewayLLMOptions {
   preferredTier?: 'fast' | 'std' | 'deep' | 'night';
   /** Bearer token opcional. */
   authToken?: string;
-  /** Timeout por llamada en ms (default 120s — tier deep cold start ~10s). */
+  /**
+   * Timeout por llamada en ms (default 240s).
+   * Subido de 120s → 240s el 2026-05-20 tarde: el primer turn del primer mensaje
+   * después de un período idle re-procesa el system prompt completo (~10K tokens)
+   * y puede tomar 60-90s. Sumado al segundo turn (respuesta natural ~30-50s),
+   * un flujo completo de cold-prompt puede acercarse a 150s.
+   */
   timeoutMs?: number;
 }
 
@@ -114,7 +120,7 @@ export class GatewayLLM implements LLMProvider {
     this.supervisorName = opts.supervisorName;
     this.preferredTier = opts.preferredTier;
     this.authToken = opts.authToken;
-    this.timeoutMs = opts.timeoutMs ?? 120_000;
+    this.timeoutMs = opts.timeoutMs ?? 240_000;
   }
 
   async generate(req: LLMRequest): Promise<LLMResponse> {
