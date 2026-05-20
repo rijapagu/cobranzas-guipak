@@ -107,9 +107,13 @@ export const TOOLS: Anthropic.Tool[] = [
     },
   },
   {
-    name: 'crear_tarea',
+    name: 'crear_tarea_recordatorio',
     description:
-      'Crea una tarea/recordatorio en el calendario del equipo. Úsala cuando el usuario diga "recuérdame", "agenda", "anota que mañana hay que...", "cliente me pidió que le llame el viernes". IMPORTANTE: la fecha debe pasarse en formato AAAA-MM-DD. Calcula la fecha tú mismo a partir de la fecha de hoy que aparece al inicio del system prompt. Confirma con el usuario después de crearla.',
+      'Cuándo usar: el usuario dice "recuérdame…", "agenda…", "anota que mañana hay que…", "el cliente me pidió que le llame el viernes", "ponle una tarea a fulano para el lunes" — toda intención de agendar un recordatorio o tarea con fecha.\n' +
+      'Qué hace: crea una entrada en el calendario del equipo con título, fecha, tipo (LLAMAR/DEPOSITAR_CHEQUE/SEGUIMIENTO/etc.) y opcionalmente cliente y hora.\n' +
+      'Devuelve: { tarea_id, titulo, fecha_vencimiento, hora, tipo, prioridad }. Confirmar al usuario tras crear.\n' +
+      'Pre-condiciones: la fecha DEBE pasarse en formato AAAA-MM-DD. Calcula la fecha relativa tú mismo a partir de la fecha de hoy del system prompt (ej. "el lunes" → calcula la fecha exacta).\n' +
+      'NO usar si: el usuario solo está describiendo un evento pasado o pidiendo el estado de una tarea existente (eso es listar_tareas_pendientes).',
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -142,9 +146,13 @@ export const TOOLS: Anthropic.Tool[] = [
     },
   },
   {
-    name: 'listar_tareas',
+    name: 'listar_tareas_pendientes',
     description:
-      'Lista tareas pendientes del equipo. Usa "rango" para filtrar: hoy, mañana, semana (próximos 7 días), atrasadas (vencidas no hechas), todas.',
+      'Cuándo usar: el usuario pregunta "qué tengo pendiente", "qué hay para hoy", "tareas atrasadas", "qué le toca a fulano esta semana" — cualquier consulta del listado de pendientes.\n' +
+      'Qué hace: lista tareas pendientes filtradas por rango (hoy / mañana / semana / atrasadas / todas) y opcionalmente por cliente.\n' +
+      'Devuelve: { rango, total, tareas: [{tarea_id, titulo, fecha_vencimiento, hora, tipo, cliente, prioridad}] }.\n' +
+      'Pre-condiciones: ninguna. Default rango="hoy".\n' +
+      'NO usar si: el usuario quiere CREAR una tarea (eso es crear_tarea_recordatorio) o MARCARLA como hecha (marcar_tarea_completada).',
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -161,9 +169,13 @@ export const TOOLS: Anthropic.Tool[] = [
     },
   },
   {
-    name: 'marcar_tarea_hecha',
+    name: 'marcar_tarea_completada',
     description:
-      'Marca una tarea como completada. Requiere el ID numérico de la tarea (lo obtienes de listar_tareas).',
+      'Cuándo usar: el usuario dice "ya hice X", "completé la tarea Y", "marca como hecho lo de Z", "lista" tras describir una acción terminada — cualquier confirmación de cierre de tarea existente.\n' +
+      'Qué hace: marca la tarea (por su ID) como completada y registra notas opcionales del cierre.\n' +
+      'Devuelve: { tarea_id, titulo, completada_en, notas }. Si la tarea no existe o ya estaba completada: error con motivo.\n' +
+      'Pre-condiciones: tener el tarea_id numérico exacto. Si solo hay descripción, primero usar listar_tareas_pendientes para resolverlo.\n' +
+      'NO usar si: la tarea aún no existe — usar crear_tarea_recordatorio primero.',
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -440,13 +452,16 @@ export async function ejecutarTool(
       case 'buscar_cliente':
         return await buscarCliente(String(argumentos.termino));
 
-      case 'crear_tarea':
+      case 'crear_tarea': // alias deprecado, retirar tras 1 release
+      case 'crear_tarea_recordatorio':
         return await crearTarea(argumentos, ctx);
 
-      case 'listar_tareas':
+      case 'listar_tareas': // alias deprecado, retirar tras 1 release
+      case 'listar_tareas_pendientes':
         return await listarTareas(argumentos);
 
-      case 'marcar_tarea_hecha':
+      case 'marcar_tarea_hecha': // alias deprecado, retirar tras 1 release
+      case 'marcar_tarea_completada':
         return await marcarTareaHecha(argumentos, ctx);
 
       case 'proponer_correo_cliente': {
