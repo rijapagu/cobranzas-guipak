@@ -9,6 +9,7 @@ import { obtenerSesion, guardarSesion } from './session';
 import { buildSystemPrompt, MAX_TURNS, ROUTING_HINT_LOCAL } from './agent-prompt';
 import { AnthropicLLM } from '@/lib/llm/anthropic';
 import { OllamaLLM } from '@/lib/llm/ollama';
+import { GatewayLLM } from '@/lib/llm/gateway';
 import type { LLMProvider, LLMMessage, LLMTool } from '@/lib/llm/types';
 
 /**
@@ -99,16 +100,27 @@ PROHIBIDO:
  * Elige qué proveedor de LLM usar para esta llamada.
  *
  * Reglas (precedencia):
- *  1. Si chat_id está en CANARY_CHAT_IDS → Ollama (canary opt-in)
- *  2. Si LLM_PROVIDER=ollama → Ollama para todos
- *  3. Default → Anthropic (comportamiento histórico)
+ *  1. Si chat_id está en CANARY_CHAT_IDS → provider local (preferido: gateway)
+ *  2. Si LLM_PROVIDER=gateway → GatewayLLM (router IA en :8080)
+ *  3. Si LLM_PROVIDER=ollama → OllamaLLM (legacy directo a Ollama; deprecated)
+ *  4. Default → Anthropic (comportamiento histórico)
  *
  * Env vars relevantes:
- *   LLM_PROVIDER          'anthropic' | 'ollama'  (default 'anthropic')
- *   CANARY_CHAT_IDS       Lista separada por comas de chat_ids que usan Ollama
+ *   LLM_PROVIDER          'anthropic' | 'gateway' | 'ollama'  (default 'anthropic')
+ *   CANARY_CHAT_IDS       Lista separada por comas de chat_ids que usan provider local
+ *
+ *   --- Gateway IA local (preferido) ---
+ *   GATEWAY_BASE_URL      Ej. 'http://100.67.128.72:8080' (Robocop vía Tailscale)
+ *   GATEWAY_SUPERVISOR    Nombre del supervisor (default 'cobranzas')
+ *   GATEWAY_TIER          Tier preferido: 'fast' | 'std' | 'deep' | 'night' (default 'deep')
+ *   GATEWAY_AUTH_TOKEN    Bearer opcional
+ *
+ *   --- Ollama directo (legacy, deprecated) ---
  *   OLLAMA_BASE_URL       Ej. 'https://ollama.midominio.com/v1' (cuando hay túnel)
  *   OLLAMA_MODEL          Ej. 'qwen2.5:14b-instruct-q4_K_M'
  *   OLLAMA_AUTH_TOKEN     Bearer opcional para el túnel
+ *
+ *   --- Anthropic ---
  *   ANTHROPIC_MODEL       Override del default 'claude-haiku-4-5-20251001'
  */
 function chooseProvider(chatId: number): LLMProvider {
@@ -119,12 +131,41 @@ function chooseProvider(chatId: number): LLMProvider {
     .map((s) => parseInt(s.trim(), 10))
     .filter((n) => !Number.isNaN(n));
 
-  const useOllama = flag === 'ollama' || canaryChats.includes(chatId);
+  const isCanary = canaryChats.includes(chatId);
+  const wantsLocal = flag === 'gateway' || flag === 'ollama' || isCanary;
 
-  if (useOllama) {
+  if (wantsLocal) {
+    // Para canary sin flag explícito, prefiere Gateway si está configurado.
+    const useGateway =
+      flag === 'gateway' || (isCanary && flag !== 'ollama' && !!process.env.GATEWAY_BASE_URL);
+
+    if (useGateway) {
+      const baseUrl = process.env.GATEWAY_BASE_URL;
+      if (!baseUrl) {
+        throw new Error(
+          'GATEWAY_BASE_URL no configurada — requerida cuando LLM_PROVIDER=gateway',
+        );
+      }
+      const tier = (process.env.GATEWAY_TIER ?? 'deep').toLowerCase() as
+        | 'fast'
+        | 'std'
+        | 'deep'
+        | 'night';
+      return new GatewayLLM({
+        baseUrl,
+        supervisorName: process.env.GATEWAY_SUPERVISOR ?? 'cobranzas',
+        preferredTier: tier,
+        authToken: process.env.GATEWAY_AUTH_TOKEN,
+        timeoutMs: 120_000,
+      });
+    }
+
+    // Modo Ollama directo (legacy).
     const baseUrl = process.env.OLLAMA_BASE_URL;
     if (!baseUrl) {
-      throw new Error('OLLAMA_BASE_URL no configurada — requerida cuando LLM_PROVIDER=ollama o chat es canary');
+      throw new Error(
+        'OLLAMA_BASE_URL no configurada (preferí GATEWAY_BASE_URL + LLM_PROVIDER=gateway)',
+      );
     }
     return new OllamaLLM({
       baseUrl,
