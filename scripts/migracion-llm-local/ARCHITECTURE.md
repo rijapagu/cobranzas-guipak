@@ -566,30 +566,37 @@ const ollamaResponse = await fetch(`${OLLAMA_BASE_URL}/chat/completions`, {
 
 ### 14b. Modelfile workaround para num_ctx (CRÍTICO)
 
-Como Ollama silenciosamente trunca el prompt a 4096 tokens cuando num_ctx no se aplica, y nuestro prompt + 27 tools verbose pasa de 10K tokens, el Modelfile es la única forma de garantizar que el modelo vea el prompt completo:
+Como Ollama silenciosamente trunca el prompt a 4096 tokens cuando num_ctx no se aplica vía `/v1/chat/completions`, y nuestro prompt + 27 tools verbose pasa de 10K tokens, el Modelfile es la única forma de garantizar que el modelo vea el prompt completo.
+
+**Estado 2026-05-20**: el Modelfile vive en el Gateway, no en este repo. Ver `C:\IA\gateway\modelfiles\qwen-deep.Modelfile`:
 
 ```Modelfile
-# scripts/migracion-llm-local/Modelfile.qwen-cobros
 FROM qwen2.5:14b-instruct-q4_K_M
 PARAMETER num_ctx 16384
-PARAMETER num_predict 1024
+PARAMETER num_gpu 99
+PARAMETER num_predict 2048
 PARAMETER temperature 0.2
-PARAMETER top_p 0.8
-PARAMETER top_k 20
 PARAMETER repeat_penalty 1.05
+PARAMETER top_p 0.9
+PARAMETER top_k 20
 ```
 
-Build:
+Build (en Robocop, una vez):
 ```powershell
-ollama create qwen2.5-cobros:14b -f scripts/migracion-llm-local/Modelfile.qwen-cobros
+ollama create qwen-deep -f C:\IA\gateway\modelfiles\qwen-deep.Modelfile
 ```
 
-Activar en `.env.local` (dev) y en Dokploy (prod):
+Activar Cobros para usar el Gateway:
 ```
-OLLAMA_MODEL=qwen2.5-cobros:14b
+LLM_PROVIDER=gateway
+GATEWAY_BASE_URL=http://100.67.128.72:8080
+GATEWAY_SUPERVISOR=cobranzas
+GATEWAY_TIER=deep
 ```
 
 **Importante**: los PARAMETER del Modelfile son DEFAULTS. Los params top-level OpenAI (`temperature`, `top_p`, `parallel_tool_calls`) pasados por request siguen sobrescribiendo cuando se mandan. Los Ollama-specific (`num_ctx`, `top_k`, `repeat_penalty`) solo se honran del Modelfile.
+
+**Histórico**: en una iteración intermedia armamos `qwen2.5-cobros:14b` (Modelfile en `scripts/migracion-llm-local/Modelfile.qwen-cobros`) cuando el cliente TS hablaba directo con Ollama. Al migrar Cobros al Gateway (commit `78729f0`) ese modelo se retiró por redundante — `qwen-deep` del Gateway cumple la misma función para todos los agentes.
 
 
 
