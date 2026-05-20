@@ -1,0 +1,3 @@
+msg_id	chat_hash	user_hash	fecha	categoria	chars	contenido_oneline
+TEST1	a	b	2026-05-20	estado_dia	60	¿Cómo va el día hoy? Dame el resumen del estado de cobros.
+TEST2	a	b	2026-05-20	tareas	60	Recuérdame llamar a Industria Padron el viernes a las 10am.

@@ -1,0 +1,31 @@
+# Modelfile derivado de qwen2.5:14b-instruct-q4_K_M con los parámetros recomendados
+# para tool calling (LLM_BEST_PRACTICES.md §6) builtin, porque el endpoint
+# OpenAI-compat de Ollama NO respeta `options.{num_ctx,top_k,repeat_penalty}`
+# pasado por request (verificado 2026-05-20: prompt_tokens queda fijo en 4096
+# con cualquier num_ctx solicitado). Como Modelfile-level PARAMETER se aplica al
+# cargar el modelo, esto sí funciona.
+#
+# Build:
+#   ollama create qwen2.5-cobros:14b -f scripts/migracion-llm-local/Modelfile.qwen-cobros
+#
+# Uso: setear en .env.local
+#   OLLAMA_MODEL=qwen2.5-cobros:14b
+#
+# Los params top-level OpenAI (temperature, top_p, parallel_tool_calls) siguen
+# respetándose, así que el código TS los pasa por request y sobreescribe estos
+# defaults cuando hace falta.
+
+FROM qwen2.5:14b-instruct-q4_K_M
+
+# Context window — el bloqueante principal: default Ollama 2048/4096 trunca
+# el prompt con 25+ tools verbose, causando degradación estocástica de tool calling.
+PARAMETER num_ctx 16384
+
+# Output cap — evita runaway, suficiente para tool call + texto natural.
+PARAMETER num_predict 1024
+
+# Sampling — recomendación oficial Qwen 3 para tool calling.
+PARAMETER temperature 0.2
+PARAMETER top_p 0.8
+PARAMETER top_k 20
+PARAMETER repeat_penalty 1.05

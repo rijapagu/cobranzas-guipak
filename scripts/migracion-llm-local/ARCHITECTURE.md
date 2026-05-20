@@ -503,6 +503,31 @@ Qwen llamó: `guardar_preferencia_equipo` (contexto meta) en vez de `crear_tarea
 
 **Lo que cierra el caso:** Fase 2 (router) que filtra contextos antes de pasar tools al LLM. Después de eso, Qwen solo verá 3-5 tools del contexto correcto y el TEST 2 debería pasar.
 
+### 13b. Re-validación 2026-05-20 con Modelfile fix (hallazgo inesperado)
+
+Aplicada la config Ollama recomendada (commit `2f12a37`) + Modelfile custom `qwen2.5-cobros:14b` con `PARAMETER num_ctx 16384`:
+
+| Test | Ayer (default) | Hoy (Modelfile) |
+|---|---|---|
+| TEST 1 — estado del día | `resumen_cadencias_automaticas` (sub-óptima) | `resumen_estado_cobros_hoy` ✓ |
+| TEST 2 — recuérdame llamar a Padron | `guardar_preferencia_equipo` ✗ | `crear_tarea_recordatorio` ✓ |
+| Routing | 1/2 mal | **2/2 OK** |
+
+**Diagnóstico revisado**: el síntoma principal NO era solo "27 tools simultáneas confunden a Qwen". Era "27 tools + prompt truncado silenciosamente a 4096 tokens" (el endpoint `/v1/chat/completions` ignora `options.num_ctx`). Con el prompt completo visible (10523 tokens), Qwen 14B rutea correctamente incluso con 27 tools.
+
+**Implicación para Fase 2 (router)**: sigue siendo valiosa pero baja de "bloqueante crítico" a "optimización significativa". Razones para hacerla igual:
+- Latencia: con 27 tools verbose el LLM tarda 8-14s. Con 3-5 tools post-router → estimado 2-4s. Crítico para Telegram.
+- Robustez: el Modelfile resuelve esta versión, pero modelos más chicos (xLAM 8B) podrían no aguantar 27 tools aunque el prompt entre completo.
+- Escalabilidad: agregar el 28°, 29°, 30° tool sin router degrada de nuevo.
+- BFCL evidence: <10 tools sigue siendo el rango óptimo para 14B.
+
+**El Modelfile fix se prioriza ANTES del router** porque es:
+- 5 minutos de trabajo
+- Aplica a prod sin código TS nuevo (solo cambio de `OLLAMA_MODEL` env)
+- Da el 80% del beneficio inmediato
+
+Ver §14b para el workaround completo.
+
 ## 14. Configuración Ollama recomendada
 
 Resumen ejecutivo. Detalle completo en §6 del [LLM_BEST_PRACTICES.md](LLM_BEST_PRACTICES.md).
@@ -537,6 +562,36 @@ const ollamaResponse = await fetch(`${OLLAMA_BASE_URL}/chat/completions`, {
 **Limitaciones Ollama conocidas:**
 - `tool_choice` no soportado. Workaround: pasar solo la tool deseada en `tools: []`.
 - `logit_bias` no soportado (anclar idioma a nivel logits no es viable).
+- **`options.num_ctx` (y otros options.*) IGNORADOS vía /v1/chat/completions** — verificado empíricamente 2026-05-20. `prompt_tokens` queda fijo en 4096 sin importar el num_ctx solicitado. Workaround: Modelfile (ver §14b).
+
+### 14b. Modelfile workaround para num_ctx (CRÍTICO)
+
+Como Ollama silenciosamente trunca el prompt a 4096 tokens cuando num_ctx no se aplica, y nuestro prompt + 27 tools verbose pasa de 10K tokens, el Modelfile es la única forma de garantizar que el modelo vea el prompt completo:
+
+```Modelfile
+# scripts/migracion-llm-local/Modelfile.qwen-cobros
+FROM qwen2.5:14b-instruct-q4_K_M
+PARAMETER num_ctx 16384
+PARAMETER num_predict 1024
+PARAMETER temperature 0.2
+PARAMETER top_p 0.8
+PARAMETER top_k 20
+PARAMETER repeat_penalty 1.05
+```
+
+Build:
+```powershell
+ollama create qwen2.5-cobros:14b -f scripts/migracion-llm-local/Modelfile.qwen-cobros
+```
+
+Activar en `.env.local` (dev) y en Dokploy (prod):
+```
+OLLAMA_MODEL=qwen2.5-cobros:14b
+```
+
+**Importante**: los PARAMETER del Modelfile son DEFAULTS. Los params top-level OpenAI (`temperature`, `top_p`, `parallel_tool_calls`) pasados por request siguen sobrescribiendo cuando se mandan. Los Ollama-specific (`num_ctx`, `top_k`, `repeat_penalty`) solo se honran del Modelfile.
+
+
 
 ## 15. Cascada de fallback (3 niveles)
 

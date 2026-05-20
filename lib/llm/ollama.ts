@@ -60,8 +60,12 @@ interface OpenAIChatRequest {
   tool_choice?: 'auto' | 'none';
   response_format?: { type: 'json_object' };
   stream: false;
-  // Ollama-specific: pasthrough hacia la API nativa (la openai-compat lo acepta).
-  // Necesario porque num_ctx default Ollama es 2048 — insuficiente con tools.
+  // Ollama-specific options. ⚠️ VERIFICADO 2026-05-20: el endpoint /v1/chat/completions
+  // IGNORA SILENCIOSAMENTE este campo — prompt_tokens queda fijo en 4096 sin importar
+  // el num_ctx solicitado. La solución real es definir PARAMETER num_ctx en un Modelfile
+  // custom (ver scripts/migracion-llm-local/Modelfile.qwen-cobros y usar
+  // OLLAMA_MODEL=qwen2.5-cobros:14b). Se mantiene el campo en el body para que el día
+  // que Ollama lo arregle (o migremos a /api/chat) el código ya esté preparado.
   options?: {
     num_ctx?: number;
     num_predict?: number;
