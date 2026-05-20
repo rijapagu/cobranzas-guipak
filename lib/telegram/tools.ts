@@ -413,9 +413,13 @@ export const TOOLS: Anthropic.Tool[] = [
     },
   },
   {
-    name: 'consultar_memoria_cliente',
+    name: 'consultar_notas_cliente',
     description:
-      'Consulta la memoria estructurada del asistente sobre un cliente: patrón de pago, canal efectivo, contacto real, mejor momento de contacto, notas del equipo. Úsala antes de proponer un correo o WhatsApp para personalizar la gestión.',
+      'Cuándo usar: el usuario pregunta "qué sabes de X", "qué hemos anotado sobre X", "cuál es el patrón de X", "memoria de X", "cómo le gusta pagar a X" — recuperar contexto guardado del cliente antes de redactar una gestión.\n' +
+      'Qué hace: consulta las notas estructuradas guardadas para el cliente (patrón de pago, canal efectivo, contacto real, mejor momento, notas libres del equipo).\n' +
+      'Devuelve: { codigo_cliente, tiene_memoria: bool, patron_pago, canal_efectivo, contacto_real, mejor_momento, notas_daria, actualizado_por, updated_at }.\n' +
+      'Pre-condiciones: código exacto del cliente (no acepta nombre parcial).\n' +
+      'NO usar si: el usuario pregunta por la cuenta, saldo o facturas (consultar_saldo_cliente). Tampoco para historial de mensajes (consultar_historial_conversaciones).',
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -428,9 +432,13 @@ export const TOOLS: Anthropic.Tool[] = [
     },
   },
   {
-    name: 'guardar_memoria_cliente',
+    name: 'guardar_patron_pago_cliente',
     description:
-      'Guarda o actualiza la memoria del asistente sobre un cliente: patrón de pago, canal que ha funcionado mejor, nombre del contacto real, mejor momento para llamar, notas libres. Solo actualiza los campos que se proporcionan.',
+      'Cuándo usar: el usuario describe CÓMO suele pagar un cliente — "X siempre paga a fin de mes", "X solo paga con recordatorio", "X paga el día 15", "X tarda 60 días pero paga".\n' +
+      'Qué hace: guarda o actualiza el patrón de pago observado del cliente en la memoria estructurada.\n' +
+      'Devuelve: { codigo_cliente, patron_pago, actualizado_por }.\n' +
+      'Pre-condiciones: código exacto del cliente y texto descriptivo del patrón.\n' +
+      'NO usar si: el usuario menciona el CANAL preferido (guardar_canal_efectivo_cliente) o una nota libre/anécdota sobre el cliente (guardar_nota_libre_cliente).',
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -442,25 +450,55 @@ export const TOOLS: Anthropic.Tool[] = [
           type: 'string',
           description: 'Descripción del patrón de pago observado (ej. "paga a fin de mes", "siempre necesita recordatorio")',
         },
+      },
+      required: ['codigo_cliente', 'patron_pago'],
+    },
+  },
+  {
+    name: 'guardar_canal_efectivo_cliente',
+    description:
+      'Cuándo usar: el usuario indica QUÉ canal funciona mejor con un cliente — "a X solo le funciona el WhatsApp", "mejor llámale a X", "X responde por email pero no por WhatsApp".\n' +
+      'Qué hace: guarda o actualiza el canal de contacto más efectivo del cliente en la memoria estructurada.\n' +
+      'Devuelve: { codigo_cliente, canal_efectivo, actualizado_por }.\n' +
+      'Pre-condiciones: código exacto del cliente y canal en {EMAIL, WHATSAPP, LLAMADA, OTRO}.\n' +
+      'NO usar si: el usuario describe el patrón de pago (guardar_patron_pago_cliente) o quiere REDACTAR un mensaje (proponer_correo_cobranza_cliente / proponer_whatsapp_cobranza_cliente).',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        codigo_cliente: {
+          type: 'string',
+          description: 'Código del cliente (7 dígitos)',
+        },
         canal_efectivo: {
           type: 'string',
           enum: ['EMAIL', 'WHATSAPP', 'LLAMADA', 'OTRO'],
-          description: 'Canal que ha respondido mejor',
-        },
-        contacto_real: {
-          type: 'string',
-          description: 'Nombre real del contacto de cobros (puede diferir del registrado en Softec)',
-        },
-        mejor_momento: {
-          type: 'string',
-          description: 'Cuándo es mejor contactar (ej. "lunes por la mañana", "después de las 3pm")',
-        },
-        notas_daria: {
-          type: 'string',
-          description: 'Notas libres del equipo de cobros sobre este cliente',
+          description: 'Canal que ha respondido mejor con este cliente',
         },
       },
-      required: ['codigo_cliente'],
+      required: ['codigo_cliente', 'canal_efectivo'],
+    },
+  },
+  {
+    name: 'guardar_nota_libre_cliente',
+    description:
+      'Cuándo usar: el usuario comparte una observación, anécdota, contexto del cliente que no encaja en patrón_pago ni canal_efectivo — "X cambió de dueño en marzo", "X tiene problemas de flujo", "X siempre pide descuento".\n' +
+      'Qué hace: guarda una nota de texto libre sobre el cliente en la memoria estructurada (campo notas_daria).\n' +
+      'Devuelve: { codigo_cliente, notas_daria, actualizado_por }.\n' +
+      'Pre-condiciones: código exacto del cliente y texto de la nota.\n' +
+      'NO usar si: la información es un patrón de pago (guardar_patron_pago_cliente), un canal preferido (guardar_canal_efectivo_cliente), o un dato de contacto (guardar_email_cliente / guardar_whatsapp_cliente / guardar_contacto_cobros_cliente).',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        codigo_cliente: {
+          type: 'string',
+          description: 'Código del cliente (7 dígitos)',
+        },
+        nota: {
+          type: 'string',
+          description: 'Texto libre de la nota a guardar',
+        },
+      },
+      required: ['codigo_cliente', 'nota'],
     },
   },
   {
@@ -647,11 +685,30 @@ export async function ejecutarTool(
         return { ok: result.ok, data: result };
       }
 
-      case 'consultar_memoria_cliente':
+      case 'consultar_memoria_cliente': // alias deprecado, retirar tras 1 release
+      case 'consultar_notas_cliente':
         return await consultarMemoriaCliente(String(argumentos.codigo_cliente));
 
-      case 'guardar_memoria_cliente':
+      case 'guardar_memoria_cliente': // alias deprecado, retirar tras 1 release (acepta cualquier campo)
         return await guardarMemoriaCliente(argumentos, ctx);
+
+      case 'guardar_patron_pago_cliente':
+        return await guardarMemoriaCliente(
+          { codigo_cliente: argumentos.codigo_cliente, patron_pago: argumentos.patron_pago },
+          ctx
+        );
+
+      case 'guardar_canal_efectivo_cliente':
+        return await guardarMemoriaCliente(
+          { codigo_cliente: argumentos.codigo_cliente, canal_efectivo: argumentos.canal_efectivo },
+          ctx
+        );
+
+      case 'guardar_nota_libre_cliente':
+        return await guardarMemoriaCliente(
+          { codigo_cliente: argumentos.codigo_cliente, notas_daria: argumentos.nota },
+          ctx
+        );
 
       case 'guardar_memoria_equipo': // alias deprecado, retirar tras 1 release
       case 'guardar_preferencia_equipo':
@@ -1493,9 +1550,9 @@ async function consultarMemoriaCliente(codigoCliente: string): Promise<Resultado
     contacto_real: string | null;
     mejor_momento: string | null;
     notas_daria: string | null;
-    ultima_actualizacion: string;
+    updated_at: string;
   }>(
-    'SELECT patron_pago, canal_efectivo, contacto_real, mejor_momento, notas_daria, ultima_actualizacion FROM cobranza_memoria_cliente WHERE codigo_cliente = ?',
+    'SELECT patron_pago, canal_efectivo, contacto_real, mejor_momento, notas_daria, updated_at FROM cobranza_memoria_cliente WHERE codigo_cliente = ?',
     [codigo]
   );
 
