@@ -52,6 +52,7 @@ interface OpenAIChatRequest {
   max_tokens?: number;
   temperature?: number;
   top_p?: number;
+  parallel_tool_calls?: boolean;
   tools?: Array<{
     type: 'function';
     function: { name: string; description: string; parameters: object };
@@ -59,6 +60,14 @@ interface OpenAIChatRequest {
   tool_choice?: 'auto' | 'none';
   response_format?: { type: 'json_object' };
   stream: false;
+  // Ollama-specific: pasthrough hacia la API nativa (la openai-compat lo acepta).
+  // Necesario porque num_ctx default Ollama es 2048 — insuficiente con tools.
+  options?: {
+    num_ctx?: number;
+    num_predict?: number;
+    top_k?: number;
+    repeat_penalty?: number;
+  };
 }
 
 interface OpenAIChatResponse {
@@ -114,9 +123,17 @@ export class OllamaLLM implements LLMProvider {
       // Temperatura baja: reduce drift de idioma (chino → español) y mejora la
       // consistencia del tool routing. 0.2 da algo de variabilidad sin que se desboque.
       temperature: 0.2,
-      top_p: 0.9,
+      top_p: 0.8,
       stream: false,
-      ...(tools && tools.length > 0 ? { tools, tool_choice: 'auto' as const } : {}),
+      options: {
+        num_ctx: 16384,
+        num_predict: req.maxTokens ?? 1024,
+        top_k: 20,
+        repeat_penalty: 1.05,
+      },
+      ...(tools && tools.length > 0
+        ? { tools, tool_choice: 'auto' as const, parallel_tool_calls: false }
+        : {}),
       ...(req.jsonMode ? { response_format: { type: 'json_object' as const } } : {}),
     };
 
