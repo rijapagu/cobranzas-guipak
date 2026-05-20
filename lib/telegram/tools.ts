@@ -20,7 +20,11 @@ export const TOOLS: Anthropic.Tool[] = [
   {
     name: 'consultar_saldo_cliente',
     description:
-      'Devuelve el aging detallado de un cliente: facturas vencidas con días vencido, saldo y segmento. Buscar por código de cliente o por nombre parcial.',
+      'Cuándo usar: cuando el usuario pregunte "cuánto debe X", "saldo de X", "aging de X", "facturas de X", o variantes — siempre con un cliente identificable.\n' +
+      'Qué hace: devuelve el aging detallado del cliente (facturas vencidas con días-vencido, saldo total y por tramo, segmento).\n' +
+      'Devuelve: { codigo_cliente, nombre, saldo_total, segmento, facturas: [{numero, fecha, vencimiento, saldo, dias_vencido}] }. Si no se encuentra: error con motivo.\n' +
+      'Pre-condiciones: ninguna. Acepta código exacto o nombre parcial.\n' +
+      'NO usar si: el usuario pidió redactar un correo/whatsapp (eso es proponer_correo_cobranza_cliente). Tampoco para datos de contacto del cliente (eso es consultar_contactos_cliente).',
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -70,9 +74,13 @@ export const TOOLS: Anthropic.Tool[] = [
     },
   },
   {
-    name: 'historial_conversaciones_cliente',
+    name: 'consultar_historial_conversaciones',
     description:
-      'Devuelve las últimas conversaciones (WhatsApp/Email) intercambiadas con un cliente específico.',
+      'Cuándo usar: cuando el usuario pregunte "qué le dijimos a X", "qué nos respondió X", "historial con X", "última conversación con X" — siempre referido a un cliente concreto.\n' +
+      'Qué hace: trae los últimos mensajes (WhatsApp + Email) intercambiados con el cliente, ordenados del más reciente al más viejo.\n' +
+      'Devuelve: { cliente, total, mensajes: [{fecha, canal, direccion, asunto, preview}] }. Vacío si no hay historial.\n' +
+      'Pre-condiciones: tener el código exacto del cliente (no acepta nombre parcial). Si solo hay nombre, usar buscar_cliente primero.\n' +
+      'NO usar si: el usuario quiere ver mensajes pendientes de aprobación del bot (eso es listar_mensajes_pendientes_aprobacion, otro contexto).',
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -85,7 +93,11 @@ export const TOOLS: Anthropic.Tool[] = [
   {
     name: 'buscar_cliente',
     description:
-      'Busca clientes por nombre o código en Softec. Útil cuando el usuario menciona un cliente sin código exacto.',
+      'Cuándo usar: cuando el usuario mencione un cliente por nombre parcial y necesites resolver el código antes de cualquier acción que requiera código exacto.\n' +
+      'Qué hace: busca clientes en Softec por nombre o código parcial y devuelve coincidencias.\n' +
+      'Devuelve: { total, clientes: [{codigo, nombre, saldo, segmento}] }. Si total=0, no encontró; si total>1, hay que pedir desambiguación al usuario.\n' +
+      'Pre-condiciones: ninguna.\n' +
+      'NO usar si: el usuario ya dio un código de cliente válido (formato "0000274") — en ese caso ir directo a consultar_saldo_cliente u otra tool específica.',
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -194,9 +206,13 @@ export const TOOLS: Anthropic.Tool[] = [
     },
   },
   {
-    name: 'obtener_contactos_cliente',
+    name: 'consultar_contactos_cliente',
     description:
-      'Devuelve TODOS los emails y teléfonos disponibles para un cliente: los guardados en nuestra BD (contactos_cliente + enriquecidos) y el de Softec (IC_ARCONTC). Úsalo SIEMPRE antes de proponer_correo_cliente para presentar las opciones al usuario.',
+      'Cuándo usar: cuando el usuario pregunte "qué contactos tenemos de X", "tiene email X", "qué whatsapp tiene X", o necesites listar emails/teléfonos disponibles antes de cualquier otra acción.\n' +
+      'Qué hace: devuelve emails y teléfonos del cliente combinando nuestra BD (contactos_cliente, enriquecidos) y Softec (IC_ARCONTC), en modo resumen (sin fuente por contacto).\n' +
+      'Devuelve: { codigo_cliente, nombre, emails: [string], whatsapps: [string], total_contactos }.\n' +
+      'Pre-condiciones: acepta código o nombre parcial.\n' +
+      'NO usar si: vas a redactar un correo/whatsapp y necesitas saber DE DÓNDE viene cada contacto (BD vs Softec) para decidir el destinatario — en ese caso usa consultar_contactos_cliente_detalle (gestion_cobranza).',
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -336,9 +352,13 @@ export const TOOLS: Anthropic.Tool[] = [
     },
   },
   {
-    name: 'obtener_perfil_riesgo_cliente',
+    name: 'consultar_perfil_riesgo_cliente',
     description:
-      'Devuelve el perfil de riesgo pre-calculado de un cliente: score (0-100), nivel (VERDE/AMARILLO/ROJO/CRITICO), tendencia, acciones recomendadas (crédito, ventas, cobranza) y el resumen completo. Úsalo cuando el usuario pregunte por el riesgo de un cliente, si se le puede vender, si hay que suspenderle crédito, o antes de proponer una gestión de cobranza agresiva.',
+      'Cuándo usar: cuando el usuario pregunte por el riesgo de un cliente ("cómo está X de riesgo", "le podemos vender a X", "hay que suspender a X"), o antes de redactar una gestión de cobranza agresiva.\n' +
+      'Qué hace: devuelve el perfil de riesgo pre-calculado (score 0-100, nivel VERDE/AMARILLO/ROJO/CRITICO, tendencia) y las acciones recomendadas en crédito/ventas/cobranza.\n' +
+      'Devuelve: { codigo_cliente, score, nivel, tendencia, acciones: {credito, ventas, cobranza}, resumen }. Si no existe perfil: error CLIENTE_SIN_PERFIL.\n' +
+      'Pre-condiciones: código exacto del cliente (no acepta nombre parcial).\n' +
+      'NO usar si: el usuario está pidiendo el saldo o las facturas — eso es consultar_saldo_cliente. Tampoco para el resumen de la cartera completa (resumen_riesgo_cartera, otro contexto).',
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -410,7 +430,8 @@ export async function ejecutarTool(
       case 'listar_promesas_vencidas':
         return await listarPromesasVencidas(Number(argumentos.limite) || 10);
 
-      case 'historial_conversaciones_cliente':
+      case 'historial_conversaciones_cliente': // alias deprecado, retirar tras 1 release
+      case 'consultar_historial_conversaciones':
         return await historialConversacionesCliente(
           String(argumentos.codigo_cliente),
           Number(argumentos.limite) || 10
@@ -440,7 +461,8 @@ export async function ejecutarTool(
         return { ok: true, data: { total: plantillas.length, plantillas } };
       }
 
-      case 'obtener_contactos_cliente':
+      case 'obtener_contactos_cliente': // alias deprecado, retirar tras 1 release
+      case 'consultar_contactos_cliente':
         return await obtenerContactosCliente(String(argumentos.termino));
 
       case 'guardar_dato_cliente':
@@ -477,7 +499,8 @@ export async function ejecutarTool(
       case 'guardar_memoria_equipo':
         return await guardarMemoriaEquipoTool(argumentos, ctx);
 
-      case 'obtener_perfil_riesgo_cliente':
+      case 'obtener_perfil_riesgo_cliente': // alias deprecado, retirar tras 1 release
+      case 'consultar_perfil_riesgo_cliente':
         return await obtenerPerfilRiesgoCliente(String(argumentos.codigo_cliente));
 
       case 'analizar_riesgo_cartera':
