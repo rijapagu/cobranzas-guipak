@@ -276,9 +276,13 @@ export const TOOLS: Anthropic.Tool[] = [
     },
   },
   {
-    name: 'guardar_dato_cliente',
+    name: 'guardar_email_cliente',
     description:
-      'Guarda o actualiza un dato de contacto faltante de un cliente en la base de datos propia (CP-01: NUNCA modifica Softec). Úsalo cuando el usuario proporcione un email, WhatsApp o nombre de contacto para un cliente que lo tenga en blanco. Confirma siempre con el usuario antes de guardar.',
+      'Cuándo usar: el usuario dice "el email de X es Y", "agrégale el correo Y a X", "X tiene este email: Y" — siempre referido a registrar un email para un cliente.\n' +
+      'Qué hace: guarda o actualiza el email del cliente en la BD propia (CP-01: NUNCA toca Softec). Confirmar con el usuario antes de guardar.\n' +
+      'Devuelve: { codigo_cliente, campo: "email", valor, guardado_por }.\n' +
+      'Pre-condiciones: tener el código exacto del cliente y un valor que parezca email. Si solo hay nombre, primero buscar_cliente.\n' +
+      'NO usar si: el valor es un WhatsApp (guardar_whatsapp_cliente) o un nombre de contacto (guardar_contacto_cobros_cliente). Tampoco para REDACTAR un correo (proponer_correo_cobranza_cliente).',
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -286,17 +290,58 @@ export const TOOLS: Anthropic.Tool[] = [
           type: 'string',
           description: 'Código del cliente en Softec (7 dígitos, ej. "0000593")',
         },
-        campo: {
+        valor: {
           type: 'string',
-          enum: ['email', 'whatsapp', 'contacto_cobros'],
-          description: 'Qué dato se va a guardar',
+          description: 'El email a guardar (ej. "cuentas@padron.com")',
+        },
+      },
+      required: ['codigo_cliente', 'valor'],
+    },
+  },
+  {
+    name: 'guardar_whatsapp_cliente',
+    description:
+      'Cuándo usar: el usuario dice "el whatsapp de X es Y", "X tiene este número: Y", "guarda este wa para X" — registrar un teléfono WhatsApp para un cliente.\n' +
+      'Qué hace: guarda o actualiza el WhatsApp del cliente en la BD propia (CP-01: NUNCA toca Softec). Confirmar con el usuario antes de guardar.\n' +
+      'Devuelve: { codigo_cliente, campo: "whatsapp", valor, guardado_por }.\n' +
+      'Pre-condiciones: código exacto del cliente y un valor que parezca número (idealmente con código de país, ej. "+5358xxxxxxx").\n' +
+      'NO usar si: el valor es un email (guardar_email_cliente) o un nombre de contacto (guardar_contacto_cobros_cliente). Tampoco para REDACTAR un WhatsApp (proponer_whatsapp_cobranza_cliente).',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        codigo_cliente: {
+          type: 'string',
+          description: 'Código del cliente en Softec (7 dígitos, ej. "0000593")',
         },
         valor: {
           type: 'string',
-          description: 'El valor a guardar (email, número de WhatsApp con código de país, o nombre del contacto)',
+          description: 'El WhatsApp a guardar, con código de país (ej. "+593987654321")',
         },
       },
-      required: ['codigo_cliente', 'campo', 'valor'],
+      required: ['codigo_cliente', 'valor'],
+    },
+  },
+  {
+    name: 'guardar_contacto_cobros_cliente',
+    description:
+      'Cuándo usar: el usuario dice "el contacto de cobros en X es Juan", "habla con Juan de X", "el responsable de pagos en X se llama Y" — registrar el NOMBRE de la persona contacto para cobros en un cliente.\n' +
+      'Qué hace: guarda o actualiza el nombre del contacto cobros del cliente en la BD propia (CP-01: NUNCA toca Softec). Confirmar con el usuario antes de guardar.\n' +
+      'Devuelve: { codigo_cliente, campo: "contacto_cobros", valor, guardado_por }.\n' +
+      'Pre-condiciones: código exacto del cliente y el nombre del contacto.\n' +
+      'NO usar si: el valor es un email (guardar_email_cliente) o un teléfono (guardar_whatsapp_cliente).',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        codigo_cliente: {
+          type: 'string',
+          description: 'Código del cliente en Softec (7 dígitos, ej. "0000593")',
+        },
+        valor: {
+          type: 'string',
+          description: 'El nombre del contacto a guardar (ej. "Juan Pérez")',
+        },
+      },
+      required: ['codigo_cliente', 'valor'],
     },
   },
   {
@@ -549,10 +594,34 @@ export async function ejecutarTool(
       case 'consultar_contactos_cliente_detalle':
         return await obtenerContactosCliente(String(argumentos.termino));
 
-      case 'guardar_dato_cliente':
+      case 'guardar_dato_cliente': // alias deprecado, retirar tras 1 release
         return await guardarDatoCliente(
           String(argumentos.codigo_cliente),
           String(argumentos.campo) as 'email' | 'whatsapp' | 'contacto_cobros',
+          String(argumentos.valor),
+          ctx
+        );
+
+      case 'guardar_email_cliente':
+        return await guardarDatoCliente(
+          String(argumentos.codigo_cliente),
+          'email',
+          String(argumentos.valor),
+          ctx
+        );
+
+      case 'guardar_whatsapp_cliente':
+        return await guardarDatoCliente(
+          String(argumentos.codigo_cliente),
+          'whatsapp',
+          String(argumentos.valor),
+          ctx
+        );
+
+      case 'guardar_contacto_cobros_cliente':
+        return await guardarDatoCliente(
+          String(argumentos.codigo_cliente),
+          'contacto_cobros',
           String(argumentos.valor),
           ctx
         );
