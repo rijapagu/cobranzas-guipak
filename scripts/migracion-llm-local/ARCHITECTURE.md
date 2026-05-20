@@ -1,8 +1,9 @@
 # Refactor del Agente Cobros — Router + Tools Narrow
 
-> **Estado:** Spec. Pendiente implementar.
-> **Fecha:** 2026-05-19.
+> **Estado:** Fase 1 implementada (rama `feature/refactor-tools-narrow`, 7 commits). Fases 2-5 pendientes.
+> **Fecha original:** 2026-05-19. **Actualizado:** 2026-05-20 con findings del research técnico.
 > **Origen:** Tras 4 iteraciones de prompt fallidas para Qwen 14B con 22 tools, Ricardo identificó que el problema es arquitectónico, no de tuning. Este doc captura la arquitectura objetivo.
+> **Referencia técnica:** ver [LLM_BEST_PRACTICES.md](LLM_BEST_PRACTICES.md) para detalle sobre tool calling con LLMs locales (formato, esquemas, parámetros Ollama, BFCL benchmarks).
 
 ---
 
@@ -193,11 +194,21 @@ Cada tool con la misma estructura: **Cuándo usar / Qué hace / Devuelve / Pre-c
 
 ---
 
-## 6. Router — reglas iniciales
+## 6. Router — opciones (actualizado 2026-05-20)
 
 Implementación: función `routeIntent(texto: string, sesionActiva: SesionChat | null): { contexto, entidades }`.
 
-**Estrategia inicial — pura regex/keywords**, sin LLM:
+### 6.1. Tres estrategias posibles
+
+| Estrategia | Latencia | Determinismo | Esfuerzo setup | Recomendado para Cobros |
+|---|---|---|---|---|
+| **Embeddings + cosine similarity** (`nomic-embed-text`) | ~30-50 ms | Alto | Medio (requiere 10-20 queries-ejemplo por contexto) | **Sí — opción primaria** |
+| LLM pequeño (qwen2.5:3b o qwen-fast) | ~150-300 ms | Medio | Bajo (solo system prompt) | Alternativa si embeddings no escala |
+| Reglas/regex puras | <1 ms | Total | Alto (mantener reglas en sync) | First-pass + fallback a embeddings |
+
+**Decisión post-research:** **embeddings + cosine** como router primario. `nomic-embed-text` ya está en stack, sub-50ms, cero alucinación. Las reglas/regex se pueden usar como aceleración para queries triviales obvias (ej. detección de código de cliente).
+
+### 6.2. Estrategia inicial detallada (embeddings)
 
 ```typescript
 type Contexto = 'consulta_cliente' | 'gestion_cobranza' | 'tareas' | 'vista_general'
@@ -230,63 +241,183 @@ const REGLAS: Array<{ patrones: RegExp[]; contexto: Contexto; prioridad: number 
 ];
 ```
 
-**Fallback**: si ninguna regla matchea, contexto = `consulta_cliente` (el más común) PLUS warning en logs. Después de unos días, esos casos se vuelven nuevas reglas.
+**Fallback**: si ningún match supera el threshold de cosine (ej. <0.7), contexto = `consulta_cliente` (el más común) PLUS warning en logs. Después de unos días, esos casos se vuelven nuevos ejemplos.
 
-**Evolución futura** (no fase 1): si las reglas se vuelven inmanejables o las ambigüedades son frecuentes, agregamos un mini-LLM router (qwen-fast 3B, 1.8GB — cabe junto a YOLO y todo lo demás). Pero la regla de oro: **reglas primero, LLM router solo si las reglas no escalan**.
+### 6.3. Pseudocódigo del router con embeddings
+
+```typescript
+import { embeddingsClient } from '@/lib/ollama/embeddings';
+
+type Contexto = 'consulta_cliente' | 'gestion_cobranza' | 'tareas' | 'vista_general'
+              | 'memoria' | 'datos_contacto' | 'meta' | 'ambiguo';
+
+// Pre-computado al boot: vectores de los ejemplos por contexto
+const EJEMPLOS: Record<Contexto, string[]> = {
+  consulta_cliente: [
+    'cuánto debe Industria Padron',
+    'saldo de Acme Corp',
+    'aging del cliente 0000274',
+    // ... 10-20 ejemplos por contexto
+  ],
+  gestion_cobranza: [
+    'propón un correo a Padron',
+    'mándale un whatsapp al 0000274',
+    // ...
+  ],
+  // ...
+};
+
+const EMBEDDINGS_CACHE: Record<Contexto, number[][]> = {} as any; // precalcular al boot
+
+export async function routeIntent(texto: string): Promise<{ contexto: Contexto; score: number }> {
+  const queryVec = await embeddingsClient.embed(texto);
+
+  let best: { contexto: Contexto; score: number } = { contexto: 'ambiguo', score: 0 };
+  for (const [ctx, vectors] of Object.entries(EMBEDDINGS_CACHE)) {
+    for (const v of vectors) {
+      const sim = cosineSimilarity(queryVec, v);
+      if (sim > best.score) best = { contexto: ctx as Contexto, score: sim };
+    }
+  }
+
+  if (best.score < 0.7) {
+    console.warn('[router] low confidence', { texto, best });
+    return { contexto: 'consulta_cliente', score: best.score }; // fallback
+  }
+  return best;
+}
+```
+
+**Evolución futura**: si embeddings no separa bien queries muy ambiguas (ej. "Padron" sin verbo), añadir un mini-LLM router (qwen2.5:3b) como tiebreaker cuando el delta entre top-1 y top-2 sea pequeño.
 
 ---
 
-## 7. Estrategia de modelos
+## 7. Estrategia de modelos (actualizada 2026-05-20)
 
-| Rol | Modelo recomendado | Por qué |
-|---|---|---|
-| Router | Reglas TS (inicial) → qwen-fast 3B (si escala) | Determinismo, latencia mínima |
-| Tool calling / agente | **Hermes 3 8B (Llama 3.1)** | Específicamente tuneado para function calling agentic |
-| Communicator (respuesta natural) | Qwen 2.5 14B Instruct | Mejor español, buen razonamiento |
-| Reasoning complejo (futuro: análisis de cartera) | DeepSeek R1 14B | Chain-of-thought visible, mejor para math/lógica |
-| Fallback | Anthropic Haiku 4.5 | Si Hermes/Qwen fallan en algún contexto |
+> **Cambio importante respecto al spec original:** el research técnico identificó **xLAM-2-8b-fc-r** (Salesforce, fine-tune de Llama 3.1 8B sobre 60K samples function calling) como **top-1 entre modelos ≤8B en BFCL v3** (~0.78). Es mejor candidato que Hermes 3 8B para nuestro caso. Plan: A/B test pronto contra Qwen 14B usando el eval-runner existente. Ver §7 del [LLM_BEST_PRACTICES.md](LLM_BEST_PRACTICES.md) para protocolo.
 
-**Para fase 1**: solo tool calling con Hermes 3 8B en un contexto a la vez. Communicator y reasoning ya los hace el mismo modelo en una segunda llamada — overkill separarlos antes de medir.
+| Rol | Candidato 1 | Candidato 2 | Por qué |
+|---|---|---|---|
+| Router | `nomic-embed-text` + cosine similarity | qwen2.5:3b dedicado | Embeddings: sub-50ms, determinista, cero alucinación. Ya está en stack. |
+| Tool calling / agente | **xLAM-2-8b-fc-r** (a evaluar) | Qwen 2.5 14B (actual) | xLAM: top BFCL sub-8B + cabe en 5GB Q4 + ~40% menos latencia |
+| Communicator (respuesta natural) | Qwen 2.5 14B Instruct | xLAM si gana eval | Mejor español. Puede coexistir con xLAM como agente. |
+| Reasoning complejo (futuro: análisis de cartera) | DeepSeek R1 14B | — | Chain-of-thought visible. **NO usar para tool calling directo** — el `<think>` rompe el parser. |
+| Fallback | Anthropic Haiku 4.5 | — | Cascada de fallback nivel 2. **Solo prod**, en dev local validamos con LLMs locales. |
 
-**Modelo a descargar**: `ollama pull hermes3:8b` (~4.7GB Q4) — cabe holgado con YOLO + qwen-fast + lo que quieras.
+**Criterio de cambio de modelo principal:**
+- xLAM ≥95% del score de Qwen 14B con menor latencia → candidato a default.
+- 80-95% → Qwen sigue default, xLAM disponible para canary.
+- <80% → descartar xLAM.
+
+**Modelos a descargar (en orden de prioridad):**
+- `ollama pull hf.co/Salesforce/Llama-xLAM-2-8b-fc-r-gguf:Q4_K_M` (5GB) — para el A/B test
+- (opcional) `ollama pull hermes3:8b` (4.7GB) — alternativa si xLAM falla
+- (opcional) Qwen 3 14B — para multi-turn mejorado
+
+VRAM total disponible: 12GB compartido con YOLO. Restricción según [feedback_vram_budget](https://example.local) en memoria: Q4_K_M, num_parallel=1, max_loaded_models=1.
 
 ---
 
-## 8. Fases de implementación
+## 8. Fases de implementación (revisado 2026-05-20)
 
-### Fase 1 — Renombrar y dividir tools (sin tocar agente, días 1-2)
-- Renombrado en `lib/telegram/tools.ts` (tabla §4)
-- Split de tools multi-campo en tools específicas
-- Descripciones verbose (estilo §5) para cada una
-- **Compatibilidad temporal**: aliases de los nombres viejos por 1 release para no romper el agente actual
-- TypeCheck + producción sigue con Haiku usando los nombres nuevos
+### 8.1. Resumen por impacto/esfuerzo
 
-### Fase 2 — Implementar router (día 3)
-- `lib/telegram/router.ts` con función `routeIntent`
-- Tests unitarios con queries del export que ya teníamos
-- NO se conecta al agente todavía
+| # | Cambio | Impacto | Esfuerzo | Estado |
+|---|---|---|---|---|
+| **1** | **Fase 1 — Renames + splits + descripciones verbose** | Alto (base para router) | 1 sesión | ✓ Completa (rama `feature/refactor-tools-narrow`, 7 commits) |
+| **2** | **Pulir descripciones >200 tokens** de la Fase 1 | Medio | 2-3 horas | Pendiente |
+| **3** | **Quick wins Ollama** (parallel_tool_calls + temperature + num_ctx + sin streaming) | Alto | 1 hora | Pendiente |
+| **4** | **Defensive parsing** de `<tool_call>` leaked en `content` | Medio | 4 horas | Pendiente |
+| **5** | **Fase 2 — Router con `nomic-embed-text` + embeddings** | **Máximo** (resuelve ~70% de síntomas) | 2-3 días | Pendiente |
+| **6** | **Fase 3 — Conectar router al agente + filtrar TOOLS** | Alto | 1 día | Pendiente |
+| **7** | **Validación + retry + fallback estructurado a Haiku** | Alto | 1-2 días | Pendiente |
+| **8** | **A/B test xLAM-2-8b vs Qwen 14B** en eval-runner | Potencial alto | 1-2 días | Pendiente |
+| **9** | **Fase 4 — Canary + medición de routing accuracy** | Alto | 1-2 días | Pendiente |
+| **10** | **Fase 5 — Rollout progresivo** | Alto | Días-semanas | Pendiente |
 
-### Fase 3 — Conectar router al agente (día 3-4)
-- En `agent.ts`, después de cargar historial, llamar `routeIntent`
-- Filtrar `TOOLS` según el contexto resuelto
-- Pasar al LLM solo el subset
-- Agregar log temporal: `[router] contexto=X tools=[a,b,c]`
+**Orden recomendado para próxima sesión:** #3 (quick wins, 1h) → #5 (router) → #6 (conectar) → #7 (fallback) → #8 (eval xLAM en paralelo).
 
-### Fase 4 — Probar con Qwen 14B + canary (día 4-5)
-- Volver a encender canary con CANARY_CHAT_IDS=Ricardo
-- Probar los 20-30 queries del export real (los reales que tengamos)
-- Medir: % de routing correcto (vs Haiku como referencia)
-- Si Qwen 14B con narrow contexts da ≥85% routing OK, **listo** — soberanía para canary
+### 8.2. Detalle de fases
 
-### Fase 5 — Hermes 3 8B (solo si Qwen sigue fallando, día 5+)
-- `ollama pull hermes3:8b`
-- Probar como modelo agente
-- Si mejora significativamente, considerar como modelo default para tool calling
+#### Fase 1 — Renombrar y dividir tools ✓ COMPLETA
 
-### Fase 6 — Rollout progresivo (días 6+)
-- Si canary va bien, extender a un segundo chat de prueba
-- Si va bien por 1 semana, extender al grupo
-- Mantener Haiku como fallback explícito (si Ollama down → cae a Haiku)
+Rama: `feature/refactor-tools-narrow`. 7 commits con sub-fases A-G:
+- A: consulta_cliente (5 tools — 3 renames + 2 sin rename, descripciones verbose)
+- B: tareas (3 renames)
+- C: vista_general (7 renames)
+- D: gestion_cobranza (3 renames + 1 split detalle)
+- G: meta (1 rename)
+- F: datos_contacto (split `guardar_dato_cliente` → 3 tools narrow)
+- E: memoria + fix bug §11 (rename + split + columna `updated_at`)
+
+Aliases temporales en switch por 1 release. TypeCheck verde después de cada sub-fase.
+
+**Validación end-to-end:** ver §13.
+
+#### Fase 1.5 — Quick wins Ollama (1 hora, IMPACTO ALTO)
+
+Tres cambios en el cliente TS donde se construye el request a Ollama:
+
+```ts
+{
+  parallel_tool_calls: false,  // Qwen ≤14B paraleliza "por si acaso"
+  temperature: 0.2,            // Reduce alucinación de field names
+  stream: false,               // Streaming fragmenta el XML del tool call
+  options: {
+    num_ctx: 16384,            // Default Ollama es 2048 — con 25 tools NO ALCANZA
+    top_p: 0.8,
+    top_k: 20,
+    repeat_penalty: 1.05,
+  },
+}
+```
+
+Ver §6 del [LLM_BEST_PRACTICES.md](LLM_BEST_PRACTICES.md) para tabla completa de parámetros.
+
+#### Fase 2 — Router con embeddings (2-3 días)
+
+`lib/telegram/router.ts` con `routeIntent(texto)` que usa `nomic-embed-text` + cosine similarity (ver §6.3).
+
+Pre-requisito: armar el seed set de queries-ejemplo por contexto (10-20 ejemplos × 7 contextos = 70-140 frases). Usar el export del historial (`cobranza_telegram_historial`) categorizando manualmente.
+
+Tests unitarios contra ese seed. NO se conecta al agente todavía.
+
+#### Fase 3 — Conectar router al agente (1 día)
+
+En `agent.ts`, después de cargar historial:
+1. Llamar `routeIntent(texto)`.
+2. Filtrar `TOOLS` global según el contexto resuelto (mapping `Contexto → string[]` con los nombres de tools por contexto).
+3. Pasar al LLM solo el subset (≤7 tools).
+4. Log: `[router] contexto=X score=Y tools=[a,b,c]`.
+
+#### Fase 3.5 — Validación + retry + fallback (1-2 días)
+
+Cascada de 3 niveles (ver §15):
+
+1. **Local:** Qwen + tools narrow → si tool call no valida (Zod) → 1 retry con feedback estructurado.
+2. **Escalación:** Haiku con el mismo contexto.
+3. **Abort:** "no pude procesar, pasame más contexto".
+
+#### Fase 4 — Canary + medición (1-2 días)
+
+`CANARY_CHAT_IDS` en Dokploy con Ricardo + 1-2 chats de prueba. Banco de 30-60 queries reales. Métricas:
+- % routing correcto (vs categorización manual).
+- % tool correcto en T1.
+- # turnos hasta resolver.
+- Latencia p50/p95.
+- Errores de tool execution.
+
+**Criterio de éxito:** Qwen 14B + router + tools narrow → ≥85% del nivel de Haiku con 22 tools.
+
+#### Fase 4.5 — A/B test xLAM-2-8b vs Qwen 14B (1-2 días, en paralelo a Fase 4)
+
+Ver §7 del [LLM_BEST_PRACTICES.md](LLM_BEST_PRACTICES.md) para protocolo completo.
+
+#### Fase 5 — Rollout progresivo (días-semanas)
+
+- Si canary va bien por 1 semana, extender a grupo.
+- Mantener Haiku como fallback explícito (LLM_PROVIDER=anthropic en .env).
+- Documentar el cambio para el equipo.
 
 ---
 
@@ -322,19 +453,128 @@ En cualquier momento del rollout:
 
 ## 11. Cosas adyacentes que toca arreglar
 
-Detectadas durante la migración, no bloquean pero quedan:
+Detectadas durante la migración:
 
-- **Bug latente**: `consultar_memoria_cliente` referencia columna `ultima_actualizacion` que no existe en producción ([lib/telegram/tools.ts:1316](D:/IA/cobranzas-guipak/lib/telegram/tools.ts:1316)). Migración `015_memoria_cliente.sql` la declara — verificar si nunca se aplicó o se renombró. Causa error 500 cuando Qwen llama esa tool, y probablemente también cuando Haiku la llama (rare).
-- **Logs verbose temporales**: en `agent.ts` tenemos `console.error('[agent][...]')` con args y resultados. Útil durante el rollout, remover una vez estabilice.
-- **Idioma drift en Qwen**: ya parcheado con `RESPONDE SIEMPRE EN ESPAÑOL`, pero conviene monitorear.
+- ✓ **Bug `ultima_actualizacion` ARREGLADO** (sub-fase E del refactor, commit `136ee94`). La columna real es `updated_at` (migración `015_memoria_cliente.sql`). El SELECT en `consultarMemoriaCliente` fue corregido.
+- **Logs verbose temporales**: en `agent.ts` tenemos `console.error('[agent][...]')` con args y resultados. Útil durante el rollout, remover una vez estabilice. **Pendiente.**
+- **Idioma drift en Qwen**: parcheado con `RESPONDE SIEMPRE EN ESPAÑOL`, pero en validación de 2026-05-20 (TEST 1) Qwen respondió en inglés. Conviene aplicar técnica primacy+recency descrita en §5.1 del [LLM_BEST_PRACTICES.md](LLM_BEST_PRACTICES.md). **Mejora pendiente.**
+- **Descripciones verbose >200 tokens**: el research recomienda 50-150 tokens por descripción. Las sub-fases A-G generaron algunas descripciones que pasan ese límite. **Auditar y comprimir las largas (2-3 horas).**
 
 ---
 
-## 12. Decisiones pendientes
+## 12. Decisiones tomadas
 
-Antes de empezar implementación, confirmar con Ricardo:
+Sesión 2026-05-20:
 
-1. **¿Aliases o break clean en el rename?** Sugiero aliases por 1 release para reducir riesgo.
-2. **¿Empezamos por consulta_cliente o tareas?** Sugiero `consulta_cliente` — es el contexto más usado y el que probó fallar en canary.
-3. **¿Hermes ya o esperamos a ver si Qwen + narrow funciona?** Sugiero Qwen primero (sin descarga adicional, validamos hipótesis de "narrow > model").
-4. **¿Router solo regex o también un fallback LLM desde el inicio?** Sugiero solo regex para fase 1.
+1. ✓ **Aliases por 1 release** (no break clean) — todos los renames mantienen el nombre viejo en el switch como fall-through case.
+2. ✓ **Empezamos por consulta_cliente** (sub-fase A).
+3. ✓ **Qwen primero** — Hermes 3 8B no descargado todavía. El research sugiere **xLAM-2-8b-fc-r** como mejor candidato si Qwen sigue fallando post-router.
+4. ✓ **Router con embeddings** (cambio respecto al spec original que decía "regex primero"). `nomic-embed-text` ya está en stack.
+
+## 13. Hallazgos de la validación end-to-end (sesión 2026-05-20)
+
+Tras completar las 7 sub-fases (A-G) de Fase 1, se hicieron smoke tests contra Qwen 2.5 14B local.
+
+### TEST 1 — vista_general (estado del día) ✓
+
+Mensaje: `"¿Cómo va el día hoy? Dame el resumen del estado de cobros."`
+Qwen llamó: `resumen_cadencias_automaticas` + `resumen_conciliacion_bancaria` (nombres nuevos), ambas ejecutaron con datos reales.
+**Pendiente:** no llamó `resumen_estado_cobros_hoy` que sería la más obvia para la query. Es un caso de descripción no suficientemente atractiva para el modelo.
+**Side note:** Qwen respondió en INGLÉS (drift de idioma observado).
+
+### TEST 2 — tareas (crear) ❌ MAL ROUTING
+
+Mensaje: `"Recuérdame llamar a Industria Padron el viernes a las 10am."`
+Qwen llamó: `guardar_preferencia_equipo` (contexto meta) en vez de `crear_tarea_recordatorio` (contexto tareas).
+**Resultado:** la tarea NO se creó. La entrada quedó como preferencia errónea (limpiada del DB).
+**Causa:** ambas tools mencionan "recuérdame" en su `Cuándo usar`. Qwen con 25 tools simultáneas no separa "preferencia abstracta" de "tarea con fecha".
+
+### Diagnóstico
+
+**No es un bug del refactor.** Es el problema arquitectónico subyacente que motiva toda la Fase 2 (router). El §3 del [LLM_BEST_PRACTICES.md](LLM_BEST_PRACTICES.md) lo confirma:
+- LongFuncEval mide 30-50% degradación de accuracy con 20-25 tools en modelos 8B clase.
+- BFCL v3 recomienda <10 tools simultáneas para ≤14B.
+- Qwen 2.5 14B Q4 tiene umbral práctico de 8-10 tools.
+
+**El refactor está mecánicamente bien:**
+- Tools nuevas se invocan por nombre nuevo (no `obtener_*`).
+- Handlers ejecutan correctamente.
+- Aliases del switch funcionan para historial in-flight.
+
+**Lo que cierra el caso:** Fase 2 (router) que filtra contextos antes de pasar tools al LLM. Después de eso, Qwen solo verá 3-5 tools del contexto correcto y el TEST 2 debería pasar.
+
+## 14. Configuración Ollama recomendada
+
+Resumen ejecutivo. Detalle completo en §6 del [LLM_BEST_PRACTICES.md](LLM_BEST_PRACTICES.md).
+
+```ts
+const ollamaResponse = await fetch(`${OLLAMA_BASE_URL}/chat/completions`, {
+  method: 'POST',
+  body: JSON.stringify({
+    model: 'qwen2.5:14b-instruct-q4_K_M',
+    messages,
+    tools: filteredToolsForContext, // ← post-router, no las 25
+    parallel_tool_calls: false,
+    temperature: 0.2,
+    top_p: 0.8,
+    stream: false,
+    options: {
+      num_ctx: 16384,
+      num_predict: 1024,
+      top_k: 20,
+      repeat_penalty: 1.05,
+    },
+  }),
+});
+```
+
+**Razones (resumen):**
+- `parallel_tool_calls: false` — Qwen ≤14B paraleliza "por si acaso".
+- `temperature: 0.2` (vs 0.7 default) — reduce alucinación de field names.
+- `num_ctx: 16384` (vs 2048 default Ollama) — con 25 tools NO ALCANZA el default.
+- `stream: false` — streaming fragmenta el `<tool_call>` XML.
+
+**Limitaciones Ollama conocidas:**
+- `tool_choice` no soportado. Workaround: pasar solo la tool deseada en `tools: []`.
+- `logit_bias` no soportado (anclar idioma a nivel logits no es viable).
+
+## 15. Cascada de fallback (3 niveles)
+
+```
+[Nivel 1 — Local]
+  Qwen 2.5 14B con tools narrow del contexto (post-router)
+    │
+    │ Tool call no valida contra schema Zod?
+    ▼
+  1 retry con feedback estructurado al LLM:
+    "El campo X esperaba formato Y, recibió Z. Reintentá."
+    │
+    │ Falla el retry?
+    ▼
+[Nivel 2 — Escalación]
+  Anthropic Haiku 4.5 con el mismo contexto
+    (LLM_PROVIDER=anthropic temporal, solo prod, no dev local)
+    │
+    │ Falla Haiku?
+    ▼
+[Nivel 3 — Abort]
+  Devolver al usuario: "no pude procesar tu solicitud, pasame más contexto"
+  NUNCA inventar la respuesta.
+```
+
+**Anti-patrón:** retry infinito en Nivel 1. Modelos ≤14B colapsan en loops — siguen produciendo el mismo error. Máximo 1 retry, luego escalar.
+
+**En dev local:** Nivel 2 NO aplica (decisión [feedback_dev_solo_llms_locales](https://example.local) — dev solo con LLMs locales). Si Nivel 1 falla en dev, ir directo a Nivel 3 con log explícito.
+
+## 16. Histórico de cambios al doc
+
+- 2026-05-19: versión inicial. Spec del refactor router + tools narrow.
+- 2026-05-20: actualización con findings del research técnico. Cambios principales:
+  - §6 actualizado: router con embeddings como opción primaria (vs regex original).
+  - §7 actualizado: xLAM-2-8b-fc-r introducido como mejor candidato sub-8B.
+  - §8 reescrito: nueva tabla de fases por impacto/esfuerzo. Fase 1 marcada como completa.
+  - §11 actualizado: bug `ultima_actualizacion` marcado arreglado.
+  - §13 nuevo: hallazgos de validación end-to-end.
+  - §14 nuevo: configuración Ollama recomendada.
+  - §15 nuevo: cascada de fallback de 3 niveles.
+  - Referencias cruzadas a [LLM_BEST_PRACTICES.md](LLM_BEST_PRACTICES.md) (nueva referencia técnica).
