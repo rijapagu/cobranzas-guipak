@@ -37,18 +37,26 @@ export const TOOLS: Anthropic.Tool[] = [
     },
   },
   {
-    name: 'estado_cobros_hoy',
+    name: 'resumen_estado_cobros_hoy',
     description:
-      'Resumen ad-hoc del estado actual de cobros: cartera total, distribución por segmento, alertas activas, mensajes pendientes de aprobación, promesas que vencen hoy.',
+      'Cuándo usar: el usuario pregunta "cómo vamos", "estado del día", "dashboard", "qué hay hoy", "resumen de cobros" — sin mencionar a un cliente específico.\n' +
+      'Qué hace: resumen ad-hoc del estado actual de cobros (cartera total, distribución por segmento, alertas activas, mensajes pendientes de aprobación, promesas que vencen hoy).\n' +
+      'Devuelve: { cartera_total, segmentos: {...}, alertas: [...], pendientes_aprobacion: N, promesas_hoy: N, observaciones }.\n' +
+      'Pre-condiciones: ninguna.\n' +
+      'NO usar si: el usuario pregunta por un cliente específico (eso va al contexto consulta_cliente).',
     input_schema: {
       type: 'object' as const,
       properties: {},
     },
   },
   {
-    name: 'listar_pendientes_aprobacion',
+    name: 'listar_mensajes_pendientes_aprobacion',
     description:
-      'Lista los mensajes generados por la IA que están esperando aprobación humana antes de enviarse al cliente.',
+      'Cuándo usar: el usuario pregunta "qué hay pendiente de aprobar", "cola de aprobación", "qué mensajes están esperando", "qué tengo que revisar" — referido a drafts del bot esperando OK humano.\n' +
+      'Qué hace: lista los drafts (correo/WhatsApp) generados por la IA que aún no han sido aprobados, descartados ni enviados al cliente.\n' +
+      'Devuelve: { total, mensajes: [{gestion_id, cliente, canal, asunto, preview, creado_en}] }.\n' +
+      'Pre-condiciones: ninguna.\n' +
+      'NO usar si: el usuario quiere CREAR un nuevo mensaje (eso es proponer_correo_cobranza_cliente o proponer_whatsapp_cobranza_cliente) o ver tareas del equipo (listar_tareas_pendientes).',
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -60,9 +68,13 @@ export const TOOLS: Anthropic.Tool[] = [
     },
   },
   {
-    name: 'listar_promesas_vencidas',
+    name: 'listar_promesas_pago_incumplidas',
     description:
-      'Lista promesas de pago vencidas que no han sido cumplidas, ordenadas por días de retraso.',
+      'Cuándo usar: el usuario pregunta "qué promesas se vencieron", "quiénes no cumplieron", "promesas incumplidas", "deudores que prometieron pagar y no lo hicieron".\n' +
+      'Qué hace: lista promesas de pago cuya fecha venció y no fueron cumplidas, ordenadas por días de retraso (mayor a menor).\n' +
+      'Devuelve: { total, promesas: [{codigo_cliente, nombre, monto_prometido, fecha_prometida, dias_atraso}] }.\n' +
+      'Pre-condiciones: ninguna.\n' +
+      'NO usar si: el usuario pregunta por promesas FUTURAS o por el aging de un cliente específico (eso es consultar_saldo_cliente).',
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -261,9 +273,13 @@ export const TOOLS: Anthropic.Tool[] = [
     },
   },
   {
-    name: 'listar_clientes_sin_datos',
+    name: 'listar_clientes_con_datos_faltantes',
     description:
-      'Lista los clientes de la cartera vencida que tienen datos de contacto incompletos: sin email y/o sin WhatsApp. Úsalo cuando el usuario quiera saber a quiénes le falta completar datos antes de poder enviarles gestiones de cobranza.',
+      'Cuándo usar: el usuario pregunta "a quiénes les faltan datos", "clientes sin email", "quiénes no tienen WhatsApp", "a quién no podemos contactar" — referido a la cartera vencida.\n' +
+      'Qué hace: lista clientes de la cartera vencida con datos de contacto incompletos (sin email y/o sin WhatsApp).\n' +
+      'Devuelve: { faltante, total, clientes: [{codigo, nombre, saldo, falta_email, falta_whatsapp}] }.\n' +
+      'Pre-condiciones: ninguna. Filtros opcionales: faltante (email|whatsapp|cualquiera), limite (default 15).\n' +
+      'NO usar si: el usuario quiere GUARDAR un dato faltante específico (eso es guardar_email_cliente / guardar_whatsapp_cliente / guardar_contacto_cobros_cliente del contexto datos_contacto).',
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -280,9 +296,13 @@ export const TOOLS: Anthropic.Tool[] = [
     },
   },
   {
-    name: 'estado_cadencias',
+    name: 'resumen_cadencias_automaticas',
     description:
-      'Muestra el estado del sistema de cadencias automáticas: cuántas facturas tienen cadencia activa, cuántas se procesaron en el último run, las cadencias configuradas y cuántas facturas estarán listas para accionar hoy.',
+      'Cuándo usar: el usuario pregunta "cómo van las cadencias", "estado de las cadencias", "qué hace el bot automático" — el sistema de envíos cíclicos por edad de cartera.\n' +
+      'Qué hace: resumen del sistema de cadencias automáticas (facturas con cadencia activa, procesadas en el último run, cadencias configuradas, facturas listas para accionar hoy).\n' +
+      'Devuelve: { activas, ultimo_run: {fecha, procesadas, exitosas, fallidas}, configuradas: [...], pendientes_hoy: N }.\n' +
+      'Pre-condiciones: ninguna.\n' +
+      'NO usar si: el usuario quiere DRAFTS individuales (proponer_correo_cobranza_cliente, proponer_whatsapp_cobranza_cliente del contexto gestion_cobranza).',
     input_schema: {
       type: 'object' as const,
       properties: {},
@@ -304,9 +324,13 @@ export const TOOLS: Anthropic.Tool[] = [
     },
   },
   {
-    name: 'estado_conciliacion',
+    name: 'resumen_conciliacion_bancaria',
     description:
-      'Resumen del estado actual de la conciliación bancaria: transacciones conciliadas, desconocidas, cheques devueltos, tareas de seguimiento pendientes. Úsala cuando pregunten "cómo va la conciliación" o "hay algo pendiente del banco".',
+      'Cuándo usar: el usuario pregunta "cómo va la conciliación", "depósitos sin identificar", "cheques devueltos", "qué hay pendiente del banco".\n' +
+      'Qué hace: resumen del estado de la conciliación bancaria (transacciones conciliadas, desconocidas, cheques devueltos, tareas de seguimiento pendientes).\n' +
+      'Devuelve: { conciliadas, desconocidas, cheques_devueltos: N, tareas_seguimiento: N, ultimo_corte }.\n' +
+      'Pre-condiciones: ninguna.\n' +
+      'NO usar si: el usuario quiere CARGAR un nuevo estado bancario o ASIGNAR una transacción a un cliente — esas operaciones tienen endpoints propios, no van por el agente.',
     input_schema: {
       type: 'object' as const,
       properties: {},
@@ -383,9 +407,13 @@ export const TOOLS: Anthropic.Tool[] = [
     },
   },
   {
-    name: 'analizar_riesgo_cartera',
+    name: 'resumen_riesgo_cartera',
     description:
-      'Resumen ejecutivo del riesgo de toda la cartera: distribución por nivel de riesgo, clientes críticos, clientes con tendencia a empeorar, clientes a los que no se debería vender. Úsalo cuando el usuario pregunte "cómo está la cartera de riesgo", "a quiénes no debemos venderles", "quiénes están en cobro legal", "dashboard de riesgo".',
+      'Cuándo usar: el usuario pregunta por el riesgo agregado ("cómo está la cartera de riesgo", "a quiénes no debemos venderles", "quiénes están en cobro legal", "dashboard de riesgo") — SIN un cliente específico.\n' +
+      'Qué hace: resumen ejecutivo del riesgo de toda la cartera (distribución por nivel, clientes críticos, tendencias a empeorar, recomendaciones de no venta).\n' +
+      'Devuelve: { distribucion: {VERDE,AMARILLO,ROJO,CRITICO}, criticos: [...], a_no_vender: [...], deteriorando: [...] }.\n' +
+      'Pre-condiciones: ninguna.\n' +
+      'NO usar si: el usuario pregunta por UN cliente específico (eso es consultar_perfil_riesgo_cliente del contexto consulta_cliente).',
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -433,13 +461,16 @@ export async function ejecutarTool(
       case 'consultar_saldo_cliente':
         return await consultarSaldoCliente(String(argumentos.termino));
 
-      case 'estado_cobros_hoy':
+      case 'estado_cobros_hoy': // alias deprecado, retirar tras 1 release
+      case 'resumen_estado_cobros_hoy':
         return await estadoCobrosHoy();
 
-      case 'listar_pendientes_aprobacion':
+      case 'listar_pendientes_aprobacion': // alias deprecado, retirar tras 1 release
+      case 'listar_mensajes_pendientes_aprobacion':
         return await listarPendientesAprobacion(Number(argumentos.limite) || 10);
 
-      case 'listar_promesas_vencidas':
+      case 'listar_promesas_vencidas': // alias deprecado, retirar tras 1 release
+      case 'listar_promesas_pago_incumplidas':
         return await listarPromesasVencidas(Number(argumentos.limite) || 10);
 
       case 'historial_conversaciones_cliente': // alias deprecado, retirar tras 1 release
@@ -488,16 +519,19 @@ export async function ejecutarTool(
           ctx
         );
 
-      case 'listar_clientes_sin_datos':
+      case 'listar_clientes_sin_datos': // alias deprecado, retirar tras 1 release
+      case 'listar_clientes_con_datos_faltantes':
         return await listarClientesSinDatos(
           String(argumentos.faltante || 'cualquiera') as 'email' | 'whatsapp' | 'cualquiera',
           Number(argumentos.limite) || 15
         );
 
-      case 'estado_cadencias':
+      case 'estado_cadencias': // alias deprecado, retirar tras 1 release
+      case 'resumen_cadencias_automaticas':
         return await estadoCadencias();
 
-      case 'estado_conciliacion':
+      case 'estado_conciliacion': // alias deprecado, retirar tras 1 release
+      case 'resumen_conciliacion_bancaria':
         return await estadoConciliacion();
 
       case 'proponer_whatsapp_cliente': {
@@ -518,7 +552,8 @@ export async function ejecutarTool(
       case 'consultar_perfil_riesgo_cliente':
         return await obtenerPerfilRiesgoCliente(String(argumentos.codigo_cliente));
 
-      case 'analizar_riesgo_cartera':
+      case 'analizar_riesgo_cartera': // alias deprecado, retirar tras 1 release
+      case 'resumen_riesgo_cartera':
         return await analizarRiesgoCartera(Number(argumentos.limite_criticos) || 5);
 
       default:
