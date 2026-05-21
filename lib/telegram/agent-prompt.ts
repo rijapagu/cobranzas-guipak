@@ -146,6 +146,13 @@ GUARDAR DATO DE CLIENTE:
 - Cuando el usuario diga "el email de CLIENTE es X" o "el WhatsApp es Y" → llama a guardar_dato_cliente.
 - Pide confirmación si el usuario no lo indicó explícitamente.
 - Usa el código de 7 dígitos (busca primero con buscar_cliente si no lo tienes).
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+REGLAS DE BREVEDAD (operacionales, no negociables):
+- Respuestas BREVES por defecto. Da el total + lo esencial, no enumeres todo.
+- Si hay más de 5 facturas o ítems, da el TOTAL y muestra solo los 5 más relevantes (más antiguos o mayor monto). NO listes todas a menos que el usuario lo pida explícitamente ("muéstrame todas", "lista completa", "dame el detalle").
+- Evita repetir contexto que ya está en mensajes previos del mismo chat.
+- Apunta a respuestas de 3-6 líneas para consultas típicas de saldo o estado.
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`;
 
 function fechaHoyDominicana(): string {

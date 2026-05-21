@@ -4,6 +4,7 @@ import { procesarMensajeBot } from '@/lib/telegram/agent';
 import { getTelegraf } from '@/lib/telegram/client';
 import { cobranzasQuery, cobranzasExecute, logAccion } from '@/lib/db/cobranzas';
 import { enviarGestion } from '@/lib/telegram/enviar-gestion';
+import { marcarUpdateVisto } from '@/lib/telegram/idempotency';
 import type { InlineKeyboardMarkup } from 'telegraf/types';
 
 interface TelegramMessage {
@@ -49,46 +50,69 @@ const BOT_USERNAME_PREFIX = '@CobrosGuipakBot';
 
 /**
  * Webhook que recibe los updates de Telegram.
+ *
+ * El procesamiento real (LLM, DB, envío de mensajes) corre en background
+ * para que el webhook ACKee con 200 OK en menos de 1s. Si bloqueáramos
+ * esperando al LLM (1-3 min con qwen-deep), Telegram interpreta timeout
+ * y retransmite el update, disparando ejecuciones duplicadas.
+ *
+ * Idempotencia por update_id en Redis (24h) — si Telegram igual retransmite
+ * antes del ACK, las réplicas se descartan.
  */
 export async function POST(req: NextRequest) {
+  let update: TelegramUpdate;
   try {
-    const update = (await req.json()) as TelegramUpdate;
+    update = (await req.json()) as TelegramUpdate;
+  } catch (err) {
+    console.error('[telegram-webhook] JSON parse error:', err);
+    return NextResponse.json({ ok: true, ignored: 'bad-json' });
+  }
 
-    // Callback queries (botones inline)
+  if (typeof update.update_id === 'number') {
+    const primeraVez = await marcarUpdateVisto(update.update_id);
+    if (!primeraVez) {
+      console.info(
+        `[telegram-webhook] retry descartado update_id=${update.update_id}`
+      );
+      return NextResponse.json({ ok: true, duplicate: true });
+    }
+  }
+
+  void procesarUpdate(update).catch((err) => {
+    console.error('[telegram-webhook] background error:', err);
+  });
+
+  return NextResponse.json({ ok: true });
+}
+
+async function procesarUpdate(update: TelegramUpdate): Promise<void> {
+  try {
     if (update.callback_query) {
-      return await manejarCallback(update.callback_query);
+      await manejarCallback(update.callback_query);
+      return;
     }
 
     const message = update.message || update.edited_message;
-    if (!message || !message.text || !message.from) {
-      return NextResponse.json({ ok: true, ignored: 'no-message' });
-    }
-
-    if (message.from.is_bot) {
-      return NextResponse.json({ ok: true, ignored: 'bot-message' });
-    }
+    if (!message || !message.text || !message.from) return;
+    if (message.from.is_bot) return;
 
     const chatIdGrupo = process.env.TELEGRAM_CHAT_ID_GRUPO_COBROS;
     const esGrupoAutorizado = chatIdGrupo && String(message.chat.id) === chatIdGrupo;
     const esChatPrivado = message.chat.type === 'private';
-
-    if (!esGrupoAutorizado && !esChatPrivado) {
-      return NextResponse.json({ ok: true, ignored: 'chat-no-autorizado' });
-    }
+    if (!esGrupoAutorizado && !esChatPrivado) return;
 
     const texto = message.text.trim();
     let textoLimpio = texto;
     if (esGrupoAutorizado) {
       const mencionaBot = texto.includes(BOT_USERNAME_PREFIX);
       const esComando = texto.startsWith('/');
-      if (!mencionaBot && !esComando) {
-        return NextResponse.json({ ok: true, ignored: 'sin-mencion' });
-      }
+      if (!mencionaBot && !esComando) return;
       textoLimpio = texto.replace(BOT_USERNAME_PREFIX, '').trim();
     }
 
     if (textoLimpio.startsWith('/')) {
-      return await manejarComando(textoLimpio, message);
+      await manejarComando(textoLimpio, message);
+      return;
     }
 
     const auth = await resolverUsuarioTelegram(message.from.id);
@@ -98,7 +122,7 @@ export async function POST(req: NextRequest) {
         '⛔ No estás autorizado. Pídele a Ricardo que te dé acceso.',
         message.message_id
       );
-      return NextResponse.json({ ok: true, no_autorizado: true });
+      return;
     }
 
     const respuesta = await procesarMensajeBot({
@@ -108,13 +132,11 @@ export async function POST(req: NextRequest) {
       telegramUserId: message.from.id,
     });
 
-    // Detectar si la respuesta contiene una gestion_id pendiente
     const { texto: textoFinal, gestionId } = extraerGestionPendiente(respuesta);
     const teclado = gestionId ? construirBotonesGestion(gestionId) : undefined;
 
     await responderMensaje(message.chat.id, textoFinal, message.message_id, teclado);
 
-    // Audit log (CP-12)
     await logAccion(
       String(auth.usuario_id),
       'BOT_TELEGRAM_QUERY',
@@ -127,14 +149,19 @@ export async function POST(req: NextRequest) {
         gestion_id_propuesta: gestionId || null,
       }
     );
-
-    return NextResponse.json({ ok: true });
   } catch (error) {
-    console.error('[telegram-webhook]', error);
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Error desconocido' },
-      { status: 500 }
-    );
+    console.error('[telegram-webhook] procesarUpdate error:', error);
+    const chatId =
+      update.message?.chat.id ??
+      update.edited_message?.chat.id ??
+      update.callback_query?.message?.chat.id;
+    if (chatId) {
+      const msg = error instanceof Error ? error.message : String(error);
+      await responderMensaje(
+        chatId,
+        `⚠️ Error procesando tu mensaje: ${msg.slice(0, 200)}`
+      ).catch(() => {});
+    }
   }
 }
 

@@ -253,7 +253,10 @@ export async function procesarMensajeBot(input: MensajeUsuario): Promise<string>
         system: dynamicPart,
         messages,
         tools: llmTools,
-        maxTokens: 1024,
+        // 384 baja el T2 (end_turn generando respuesta natural) de ~157s a ~40-60s
+        // con qwen-deep. Junto con la regla "respuestas breves" del system prompt
+        // basta para los casos típicos (saldo, top facturas, estado del día).
+        maxTokens: 384,
       });
     } catch (e) {
       const errMsg = e instanceof Error ? e.message : String(e);
