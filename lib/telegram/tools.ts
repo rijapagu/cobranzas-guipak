@@ -21,8 +21,8 @@ export const TOOLS: Anthropic.Tool[] = [
     name: 'consultar_saldo_cliente',
     description:
       'Cuándo usar: cuando el usuario pregunte "cuánto debe X", "saldo de X", "aging de X", "facturas de X", o variantes — siempre con un cliente identificable.\n' +
-      'Qué hace: devuelve el aging detallado del cliente (facturas vencidas con días-vencido, saldo total y por tramo, segmento).\n' +
-      'Devuelve: { codigo_cliente, nombre, saldo_total, segmento, facturas: [{numero, fecha, vencimiento, saldo, dias_vencido}] }. Si no se encuentra: error con motivo.\n' +
+      'Qué hace: devuelve el aging del cliente. Por defecto SOLO incluye las 5 facturas más vencidas + conteo por segmento + total. Si el usuario pide explícitamente "todas las facturas", "lista completa", "detalle de todas", pasar mostrar_todas:true.\n' +
+      'Devuelve: { cliente, codigo, total_facturas, saldo_total, saldo_neto, perfil_riesgo, facturas_por_segmento:{VERDE,AMARILLO,NARANJA,ROJO}, facturas:[{factura,fecha_vence,dias_vencida,saldo}] (top 5 o todas según mostrar_todas), facturas_truncadas:bool }.\n' +
       'Pre-condiciones: ninguna. Acepta código exacto o nombre parcial.\n' +
       'NO usar si: el usuario pidió redactar un correo/whatsapp (eso es proponer_correo_cobranza_cliente). Tampoco para datos de contacto del cliente (eso es consultar_contactos_cliente).',
     input_schema: {
@@ -31,6 +31,10 @@ export const TOOLS: Anthropic.Tool[] = [
         termino: {
           type: 'string',
           description: 'Código de cliente (ej. "0000274") o parte del nombre',
+        },
+        mostrar_todas: {
+          type: 'boolean',
+          description: 'Si true, devuelve TODAS las facturas pendientes (hasta 50). Default false (solo top 5 más vencidas). Usar solo cuando el usuario pida explícitamente la lista completa.',
         },
       },
       required: ['termino'],
@@ -577,7 +581,10 @@ export async function ejecutarTool(
   try {
     switch (nombre) {
       case 'consultar_saldo_cliente':
-        return await consultarSaldoCliente(String(argumentos.termino));
+        return await consultarSaldoCliente(
+          String(argumentos.termino),
+          Boolean(argumentos.mostrar_todas)
+        );
 
       case 'estado_cobros_hoy': // alias deprecado, retirar tras 1 release
       case 'resumen_estado_cobros_hoy':
@@ -737,7 +744,12 @@ export async function ejecutarTool(
 // Implementaciones
 // =====================================================================
 
-async function consultarSaldoCliente(termino: string): Promise<ResultadoTool> {
+const TOP_FACTURAS_DEFAULT = 5;
+
+async function consultarSaldoCliente(
+  termino: string,
+  mostrarTodas: boolean = false
+): Promise<ResultadoTool> {
   const softecOk = await testSoftecConnection();
   if (!softecOk) return { ok: false, error: 'No hay conexión a Softec' };
 
@@ -804,6 +816,21 @@ async function consultarSaldoCliente(termino: string): Promise<ResultadoTool> {
   );
   const perfil = perfilRows[0] ?? null;
 
+  // Conteo por segmento (rangos definidos en system prompt).
+  const facturasPorSegmento = { VERDE: 0, AMARILLO: 0, NARANJA: 0, ROJO: 0 };
+  for (const f of facturas) {
+    const d = Number(f.dias_vencida);
+    if (d <= 0) facturasPorSegmento.VERDE++;
+    else if (d <= 15) facturasPorSegmento.AMARILLO++;
+    else if (d <= 30) facturasPorSegmento.NARANJA++;
+    else facturasPorSegmento.ROJO++;
+  }
+
+  // Top N facturas (ya vienen ordenadas por fecha_vence ASC = más vencidas primero).
+  const facturasMostradas = mostrarTodas
+    ? facturas
+    : facturas.slice(0, TOP_FACTURAS_DEFAULT);
+
   return {
     ok: true,
     data: {
@@ -825,12 +852,15 @@ async function consultarSaldoCliente(termino: string): Promise<ResultadoTool> {
             resumen: perfil.resumen,
           }
         : null,
-      facturas: facturas.map((f) => ({
+      facturas_por_segmento: facturasPorSegmento,
+      facturas: facturasMostradas.map((f) => ({
         factura: f.factura,
         fecha_vence: new Date(f.fecha_vence).toISOString().split('T')[0],
         dias_vencida: Number(f.dias_vencida),
         saldo: Number(f.saldo),
       })),
+      facturas_truncadas:
+        !mostrarTodas && facturas.length > TOP_FACTURAS_DEFAULT,
     },
   };
 }
