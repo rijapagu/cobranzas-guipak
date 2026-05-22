@@ -232,10 +232,14 @@ export async function procesarMensajeBot(input: MensajeUsuario): Promise<string>
   ];
 
   const { staticPart: basePrompt, dynamicPart } = await buildSystemPrompt(SYSTEM_PROMPT_BASE, memoriaEquipo, sesion);
-  // Modelos locales (Qwen/DeepSeek) reciben una tabla de routing al inicio para
-  // anclar la elección de tool antes de procesar el resto del prompt. Anthropic
-  // Haiku no la necesita (sigue el prompt original sin confundirse con 22 tools).
-  const staticPart = provider.name === 'ollama' ? ROUTING_HINT_LOCAL + basePrompt : basePrompt;
+  // Modelos locales (Qwen/DeepSeek via Ollama o Gateway) reciben una tabla de
+  // routing al inicio para anclar la elección de tool antes de procesar el
+  // resto del prompt. Anthropic no la necesita (sigue el prompt original sin
+  // confundirse con 22 tools).
+  // Pre-fix (2026-05-19): la condición era `provider.name === 'ollama'`,
+  // dejando al provider 'gateway' SIN routing hint — causa probable de la
+  // pérdida errática de memoria conversacional reportada el 2026-05-22.
+  const staticPart = provider.name === 'anthropic' ? basePrompt : ROUTING_HINT_LOCAL + basePrompt;
   const llmTools = toolsToLlmTools();
 
   let respuestaFinal = '';
