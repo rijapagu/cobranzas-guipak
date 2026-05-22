@@ -226,10 +226,20 @@ export async function buildSystemPrompt(
     : '';
 
   const seccionSesion = sesion
-    ? `\nCONTEXTO DE SESIÓN ACTUAL (cliente que se está discutiendo — úsalo cuando el usuario diga "él", "ese cliente", "el mismo", "Si", sin especificar otro):
+    ? `\nCONTEXTO DE SESIÓN ACTUAL (cliente activo en esta conversación):
 - Código: ${sesion.codigo_cliente}
 - Nombre: ${sesion.nombre_cliente}${sesion.ultimo_tema ? `\n- Último tema: ${sesion.ultimo_tema}` : ''}
-Si el usuario se refiere a "el cliente" sin dar nombre, asume que es este.\n`
+
+REGLA OBLIGATORIA: Mientras esta sesión esté activa, CUALQUIER acción o pregunta del usuario que requiera un cliente y NO mencione explícitamente otro nombre o código se refiere a este cliente.
+
+Ejemplos de cómo aplicar la regla:
+- "tenemos que enviar un correo" → enviar correo a ${sesion.nombre_cliente}
+- "draftame un mensaje" → mensaje para ${sesion.nombre_cliente}
+- "y los próximos vencimientos" → vencimientos de ${sesion.nombre_cliente}
+- "qué te parece llamarlo" → llamar a ${sesion.nombre_cliente}
+- "él" / "ese cliente" / "el mismo" / "el cliente" / "sí" → ${sesion.nombre_cliente}
+
+Solo cambia de cliente si el usuario menciona explícitamente OTRO nombre o código distinto a "${sesion.codigo_cliente}" / "${sesion.nombre_cliente}". Si dudas, NO preguntes a quién — usa este cliente.\n`
     : '';
 
   return {
