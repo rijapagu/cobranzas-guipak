@@ -257,10 +257,11 @@ export async function procesarMensajeBot(input: MensajeUsuario): Promise<string>
         system: dynamicPart,
         messages,
         tools: llmTools,
-        // 384 baja el T2 (end_turn generando respuesta natural) de ~157s a ~40-60s
-        // con qwen-deep. Junto con la regla "respuestas breves" del system prompt
-        // basta para los casos típicos (saldo, top facturas, estado del día).
-        maxTokens: 384,
+        // 384 era ajustado para responses cortas (saldo simple, top facturas).
+        // Subido a 1024 el 2026-05-22 porque responses con perfil de riesgo +
+        // aging + lista de facturas + accion credito superan 384 y Telegram
+        // mostraba "La respuesta se truncó". 1024 da margen sin matar el T2.
+        maxTokens: 1024,
       });
     } catch (e) {
       const errMsg = e instanceof Error ? e.message : String(e);

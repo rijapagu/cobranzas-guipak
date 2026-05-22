@@ -30,7 +30,7 @@ export const TOOLS: Anthropic.Tool[] = [
       properties: {
         termino: {
           type: 'string',
-          description: 'Código de cliente (ej. "0000274") o parte del nombre',
+          description: 'Código exacto del cliente (alfanumérico como "RV0003" o numérico padded como "0000274") o parte del nombre. Si hay sesión activa, usá el código TAL CUAL aparece en la sesión, sin reformatear.',
         },
         mostrar_todas: {
           type: 'boolean',
@@ -113,7 +113,7 @@ export const TOOLS: Anthropic.Tool[] = [
       'Qué hace: busca clientes en Softec por nombre o código parcial y devuelve coincidencias.\n' +
       'Devuelve: { total, clientes: [{codigo, nombre, saldo, segmento}] }. Si total=0, no encontró; si total>1, hay que pedir desambiguación al usuario.\n' +
       'Pre-condiciones: ninguna.\n' +
-      'NO usar si: el usuario ya dio un código de cliente válido (formato "0000274") — en ese caso ir directo a consultar_saldo_cliente u otra tool específica.',
+      'NO usar si: (a) el usuario ya dio un código de cliente exacto (formato alfanumérico tipo "RV0003" o numérico padded tipo "0000274") — ir directo a consultar_saldo_cliente. (b) Hay una sesión activa con un cliente y la pregunta es sobre ESE cliente — usar el código de la sesión directamente, NO volver a buscar.',
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -214,7 +214,7 @@ export const TOOLS: Anthropic.Tool[] = [
       properties: {
         termino: {
           type: 'string',
-          description: 'Código de cliente (ej. "0000274") o nombre parcial',
+          description: 'Código exacto del cliente (alfanumérico como "RV0003" o numérico padded como "0000274") o nombre parcial. Si hay sesión activa, usá el código TAL CUAL aparece en la sesión, sin reformatear.',
         },
         email_destino: {
           type: 'string',
@@ -292,7 +292,7 @@ export const TOOLS: Anthropic.Tool[] = [
       properties: {
         codigo_cliente: {
           type: 'string',
-          description: 'Código del cliente en Softec (7 dígitos, ej. "0000593")',
+          description: 'Código exacto del cliente. Usalo tal cual aparece en el resultado de buscar_cliente / consultar_saldo_cliente o en la sesión activa. NO inventar ni reformatear. El formato puede ser alfanumérico ("RV0003") o numérico padded ("0000274") - depende del cliente.',
         },
         valor: {
           type: 'string',
@@ -315,7 +315,7 @@ export const TOOLS: Anthropic.Tool[] = [
       properties: {
         codigo_cliente: {
           type: 'string',
-          description: 'Código del cliente en Softec (7 dígitos, ej. "0000593")',
+          description: 'Código exacto del cliente. Usalo tal cual aparece en el resultado de buscar_cliente / consultar_saldo_cliente o en la sesión activa. NO inventar ni reformatear. El formato puede ser alfanumérico ("RV0003") o numérico padded ("0000274") - depende del cliente.',
         },
         valor: {
           type: 'string',
@@ -338,7 +338,7 @@ export const TOOLS: Anthropic.Tool[] = [
       properties: {
         codigo_cliente: {
           type: 'string',
-          description: 'Código del cliente en Softec (7 dígitos, ej. "0000593")',
+          description: 'Código exacto del cliente. Usalo tal cual aparece en el resultado de buscar_cliente / consultar_saldo_cliente o en la sesión activa. NO inventar ni reformatear. El formato puede ser alfanumérico ("RV0003") o numérico padded ("0000274") - depende del cliente.',
         },
         valor: {
           type: 'string',
@@ -397,7 +397,7 @@ export const TOOLS: Anthropic.Tool[] = [
       properties: {
         termino: {
           type: 'string',
-          description: 'Código de cliente (ej. "0000274") o nombre parcial',
+          description: 'Código exacto del cliente (alfanumérico como "RV0003" o numérico padded como "0000274") o nombre parcial. Si hay sesión activa, usá el código TAL CUAL aparece en la sesión, sin reformatear.',
         },
       },
       required: ['termino'],
@@ -429,7 +429,7 @@ export const TOOLS: Anthropic.Tool[] = [
       properties: {
         codigo_cliente: {
           type: 'string',
-          description: 'Código del cliente (7 dígitos, ej. "0000274")',
+          description: 'Código exacto del cliente. Usalo tal cual aparece en el resultado de buscar_cliente / consultar_saldo_cliente o en la sesión activa. NO inventar ni reformatear. El formato puede ser alfanumérico ("RV0003") o numérico padded ("0000274") - depende del cliente.',
         },
       },
       required: ['codigo_cliente'],
@@ -518,7 +518,7 @@ export const TOOLS: Anthropic.Tool[] = [
       properties: {
         codigo_cliente: {
           type: 'string',
-          description: 'Código del cliente en Softec (7 dígitos, ej. "0000274")',
+          description: 'Código exacto del cliente. Usalo tal cual aparece en el resultado de buscar_cliente / consultar_saldo_cliente o en la sesión activa. NO inventar ni reformatear. El formato puede ser alfanumérico ("RV0003") o numérico padded ("0000274") - depende del cliente.',
         },
       },
       required: ['codigo_cliente'],
