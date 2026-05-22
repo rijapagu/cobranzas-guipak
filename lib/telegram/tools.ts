@@ -16,6 +16,30 @@ import { listarPlantillasActivas } from '@/lib/templates/seleccionar';
  * Patrón inspirado en Agente Inventario (bot.py + tools.py).
  */
 
+/**
+ * Normaliza un código de cliente al formato canónico de Softec (campo IC_CODE).
+ * - Códigos numéricos puros se padean a 7 dígitos con ceros: "274" → "0000274".
+ * - Códigos alfanuméricos (con letras) se devuelven en MAYÚSCULAS sin padding: "rv0003" → "RV0003".
+ *
+ * Crítico: NO hacer padStart sobre códigos con letras — corrompe el código y la BD
+ * nunca lo encuentra (ej. "RV0003".padStart(7,'0') → "0RV0003" que no existe en Softec).
+ */
+function normalizarCodigoCliente(codigo: string): string {
+  const trimmed = codigo.trim();
+  if (/^\d+$/.test(trimmed)) return trimmed.padStart(7, '0');
+  return trimmed.toUpperCase();
+}
+
+/**
+ * Determina si un término parece ser un código de cliente exacto (vs. un nombre).
+ * Códigos: alfanuméricos sin espacios, longitud ≤15 chars.
+ */
+function pareceCodigoCliente(termino: string): boolean {
+  const trimmed = termino.trim();
+  if (!trimmed || trimmed.length > 15) return false;
+  return /^[A-Z0-9]+$/i.test(trimmed);
+}
+
 export const TOOLS: Anthropic.Tool[] = [
   {
     name: 'consultar_saldo_cliente',
@@ -753,12 +777,12 @@ async function consultarSaldoCliente(
   const softecOk = await testSoftecConnection();
   if (!softecOk) return { ok: false, error: 'No hay conexión a Softec' };
 
-  const esCodigo = /^\d+$/.test(termino.trim());
+  const esCodigo = pareceCodigoCliente(termino);
   const filtro = esCodigo
     ? 'c.IC_CODE = ?'
     : '(c.IC_NAME LIKE ? OR c.IC_CODE = ?)';
   const params = esCodigo
-    ? [termino.trim().padStart(7, '0')]
+    ? [normalizarCodigoCliente(termino)]
     : [`%${termino}%`, termino.trim()];
 
   const facturas = await softecQuery<{
@@ -1040,7 +1064,7 @@ async function historialConversacionesCliente(
      WHERE codigo_cliente = ?
      ORDER BY created_at DESC
      LIMIT ?`,
-    [codigoCliente.padStart(7, '0'), limite]
+    [normalizarCodigoCliente(codigoCliente), limite]
   );
 
   return {
@@ -1062,7 +1086,7 @@ async function buscarCliente(termino: string): Promise<ResultadoTool> {
   const softecOk = await testSoftecConnection();
   if (!softecOk) return { ok: false, error: 'Sin conexión a Softec' };
 
-  const esCodigo = /^\d+$/.test(termino.trim());
+  const esCodigo = pareceCodigoCliente(termino);
   const rows = await softecQuery<{
     codigo: string;
     nombre: string;
@@ -1081,7 +1105,7 @@ async function buscarCliente(termino: string): Promise<ResultadoTool> {
      GROUP BY c.IC_CODE, c.IC_NAME
      ORDER BY saldo DESC
      LIMIT 15`,
-    [`%${termino}%`, esCodigo ? termino.padStart(7, '0') : termino.trim()]
+    [`%${termino}%`, esCodigo ? normalizarCodigoCliente(termino) : termino.trim()]
   );
 
   // CP-15: enriquecer con saldo a favor y reordenar por saldo neto. Solo
@@ -1147,7 +1171,7 @@ async function crearTarea(
   const hora = args.hora ? String(args.hora) : null;
   const horaFinal = hora && /^\d{1,2}:\d{2}$/.test(hora) ? hora.padStart(5, '0') + ':00' : null;
 
-  const codigoCliente = args.codigo_cliente ? String(args.codigo_cliente).padStart(7, '0') : null;
+  const codigoCliente = args.codigo_cliente ? normalizarCodigoCliente(String(args.codigo_cliente)) : null;
   const descripcion = args.descripcion ? String(args.descripcion) : null;
   const creadoPor = ctx?.userEmail || `telegram:${ctx?.userId || 'unknown'}`;
 
@@ -1192,7 +1216,7 @@ async function crearTarea(
 
 async function listarTareas(args: Record<string, unknown>): Promise<ResultadoTool> {
   const rango = String(args.rango || 'hoy');
-  const codigoCliente = args.codigo_cliente ? String(args.codigo_cliente).padStart(7, '0') : null;
+  const codigoCliente = args.codigo_cliente ? normalizarCodigoCliente(String(args.codigo_cliente)) : null;
 
   let where = "estado IN ('PENDIENTE','EN_PROGRESO')";
   const params: (string | number)[] = [];
@@ -1270,9 +1294,9 @@ async function obtenerContactosCliente(termino: string): Promise<{
   const softecOk = await testSoftecConnection();
   if (!softecOk) return { ok: false, error: 'Sin conexión a Softec', emails: [], telefonos: [] };
 
-  const esCodigo = /^\d+$/.test(termino.trim());
+  const esCodigo = pareceCodigoCliente(termino);
   const filtro = esCodigo ? 'IC_CODE = ?' : 'IC_NAME LIKE ?';
-  const param = esCodigo ? termino.trim().padStart(7, '0') : `%${termino.trim()}%`;
+  const param = esCodigo ? normalizarCodigoCliente(termino) : `%${termino.trim()}%`;
 
   const clientes = await softecQuery<{
     codigo: string;
@@ -1342,7 +1366,7 @@ async function guardarDatoCliente(
   valor: string,
   ctx?: { userId?: string; userEmail?: string }
 ): Promise<ResultadoTool> {
-  const codigo = codigoCliente.trim().padStart(7, '0');
+  const codigo = normalizarCodigoCliente(codigoCliente);
   const valorTrimmed = valor.trim();
   if (!valorTrimmed) return { ok: false, error: 'Valor vacío' };
 
@@ -1573,7 +1597,7 @@ async function estadoCadencias(): Promise<ResultadoTool> {
 // =====================================================================
 
 async function consultarMemoriaCliente(codigoCliente: string): Promise<ResultadoTool> {
-  const codigo = codigoCliente.trim().padStart(7, '0');
+  const codigo = normalizarCodigoCliente(codigoCliente);
   const rows = await cobranzasQuery<{
     patron_pago: string | null;
     canal_efectivo: string | null;
@@ -1604,7 +1628,7 @@ async function guardarMemoriaCliente(
   args: Record<string, unknown>,
   ctx?: { userId?: string; userEmail?: string }
 ): Promise<ResultadoTool> {
-  const codigo = String(args.codigo_cliente || '').trim().padStart(7, '0');
+  const codigo = normalizarCodigoCliente(String(args.codigo_cliente || ''));
   if (codigo.replace(/[^0-9]/g, '').length === 0) {
     return { ok: false, error: 'codigo_cliente inválido' };
   }
@@ -1705,7 +1729,7 @@ async function marcarTareaHecha(
 // =====================================================================
 
 async function obtenerPerfilRiesgoCliente(codigoCliente: string): Promise<ResultadoTool> {
-  const codigo = codigoCliente.trim().padStart(7, '0');
+  const codigo = normalizarCodigoCliente(codigoCliente);
 
   const rows = await cobranzasQuery<{
     risk_score: number;

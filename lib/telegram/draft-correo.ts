@@ -54,6 +54,7 @@ export interface DraftCorreoResult {
     | 'YA_HAY_GESTION_PENDIENTE'
     | 'ERROR_GENERAR'
     | 'SIN_PLANTILLA'
+    | 'SIN_EMAIL_REGISTRADO'
     | 'CLIENTE_PAUSADO'
     | 'CLIENTE_CUBIERTO_POR_ANTICIPO';
   saldo_pendiente?: number;
@@ -167,10 +168,45 @@ export async function proponerCorreoCliente(
   }
 
   // 5. Buscar email — prioridad: override explícito > nuestra BD > Softec IC_ARCONTC
-  let emailDestino = (emailDestinoParam || '').trim();
+  const emailEnBD = await resolverEmailPropio(codigoCliente);
+  const emailEnSoftec = (masUrgente.email || '').trim();
+  const emailParamLimpio = (emailDestinoParam || '').trim();
+
+  let emailDestino = emailParamLimpio || emailEnBD || emailEnSoftec;
+
+  // 5b. Si no hay email de NINGUNA fuente, devolver SIN_EMAIL_REGISTRADO.
+  // Eso le indica al modelo que tiene que pedirle uno al usuario y llamarnos
+  // de nuevo con email_destino. El draft NO se genera sin email.
   if (!emailDestino) {
-    const emailPropio = await resolverEmailPropio(codigoCliente);
-    emailDestino = emailPropio || (masUrgente.email || '').trim();
+    return {
+      ok: false,
+      motivo: 'SIN_EMAIL_REGISTRADO',
+      error: `El cliente ${nombreCliente} (${codigoCliente}) no tiene email registrado. Pedile uno al usuario y volvé a llamar a proponer_correo_cobranza_cliente con email_destino.`,
+      codigo: codigoCliente,
+      cliente: nombreCliente,
+    };
+  }
+
+  // 5c. Si el usuario dio un email_destino NUEVO (no está en BD ni en Softec),
+  // lo guardamos automáticamente en nuestra BD propia. Efecto colateral del
+  // FLUJO A — evita el paso extra de "¿deseas guardar este email?".
+  const emailParamLower = emailParamLimpio.toLowerCase();
+  const yaEstabaGuardado =
+    emailParamLower &&
+    (emailParamLower === (emailEnBD || '').toLowerCase() ||
+      emailParamLower === (emailEnSoftec || '').toLowerCase());
+  if (emailParamLimpio && !yaEstabaGuardado) {
+    try {
+      await cobranzasExecute(
+        `INSERT INTO cobranza_clientes_enriquecidos (codigo_cliente, email, canal_preferido, actualizado_por)
+         VALUES (?, ?, 'EMAIL', 'bot-auto-correo')
+         ON DUPLICATE KEY UPDATE email = VALUES(email), actualizado_por = VALUES(actualizado_por)`,
+        [codigoCliente, emailParamLimpio]
+      );
+    } catch (err) {
+      // No bloqueamos la generación del draft por un fallo del guardado.
+      console.error('[proponerCorreoCliente] guardado auto de email falló:', err);
+    }
   }
 
   // 6. Contacto para saludo (memoria si existe, luego Softec IC_CONTACT, luego nombre empresa)
