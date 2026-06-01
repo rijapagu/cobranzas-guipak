@@ -59,6 +59,20 @@ export async function POST(
       ['DESCARTADO', parsed.data.motivo, session.email, gestionId]
     );
 
+    // Cancelar tarea espejo de cadencia si existe (Camino A junio 2026).
+    // Best-effort: ver comentario en aprobar/route.ts.
+    await cobranzasExecute(
+      `UPDATE cobranza_tareas
+       SET estado='CANCELADA', completada_at=NOW(), completada_por=?,
+           notas_completado=?
+       WHERE origen='CADENCIA' AND origen_ref=? AND estado='PENDIENTE'`,
+      [
+        session.email,
+        `Descartada en Cola de Aprobación: ${parsed.data.motivo}`,
+        `gestion:${gestionId}`,
+      ]
+    );
+
     return NextResponse.json({ message: `Gestión ${gestionId} descartada` });
   } catch (error) {
     console.error('[DESCARTAR] Error:', error);

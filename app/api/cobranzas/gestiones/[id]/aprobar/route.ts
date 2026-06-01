@@ -77,6 +77,24 @@ export async function POST(
       [nuevoEstado, session.email, mensajeFinalWa, mensajeFinalEmail, gestionId]
     );
 
+    // Cerrar tarea espejo de cadencia si existe (Camino A junio 2026).
+    // Best-effort: si no hay tarea espejo (gestion no fue creada por cadencia
+    // o fue de una version anterior al patch), el UPDATE simplemente afecta 0
+    // filas. No falla la aprobacion principal.
+    await cobranzasExecute(
+      `UPDATE cobranza_tareas
+       SET estado='HECHA', completada_at=NOW(), completada_por=?,
+           notas_completado=?
+       WHERE origen='CADENCIA' AND origen_ref=? AND estado='PENDIENTE'`,
+      [
+        session.email,
+        fueEditado
+          ? 'Aprobada con ediciones desde Cola de Aprobación'
+          : 'Aprobada desde Cola de Aprobación',
+        `gestion:${gestionId}`,
+      ]
+    );
+
     return NextResponse.json({
       message: `Gestión ${gestionId} ${fueEditado ? 'editada y aprobada' : 'aprobada'}`,
       estado: nuevoEstado,
