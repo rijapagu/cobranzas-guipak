@@ -371,7 +371,7 @@ async function aplicarPaso(
 
   const aprobadoPor = estado === 'APROBADO' ? 'cadencias-auto' : null;
 
-  await cobranzasExecute(
+  const insertGestion = await cobranzasExecute(
     `INSERT INTO cobranza_gestiones (
       ij_local, ij_typedoc, ij_inum, codigo_cliente,
       total_factura, saldo_pendiente, moneda,
@@ -400,4 +400,56 @@ async function aplicarPaso(
       pdf?.url_pdf || null,
     ]
   );
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Tarea espejo del Asistente Cobros (Camino A — junio 2026)
+  //
+  // Por cada gestion EMAIL/WHATSAPP que requiere aprobacion humana (estado
+  // PENDIENTE), creamos una tarea en cobranza_tareas para que tambien sea
+  // visible en /tareas con fecha + prioridad. Origen 'CADENCIA' + origen_ref
+  // 'gestion:{id}' permite a la UI saber que tiene un draft asociado y a los
+  // endpoints aprobar/descartar de gestiones cerrar la tarea espejo en sync.
+  //
+  // No se crea para LLAMADA_TICKET (ya se crea como tarea LLAMAR mas arriba)
+  // ni para gestiones aprobadas automaticamente (requiere_aprobacion=0).
+  // ──────────────────────────────────────────────────────────────────────────
+  if (estado === 'PENDIENTE' && insertGestion.insertId) {
+    const tipoMsg = canal === 'WHATSAPP' ? 'WhatsApp' : 'correo';
+    const titulo = `Aprobar ${tipoMsg} cobranza — ${String(factura.nombre_cliente).trim()}`;
+    const previewLen = 140;
+    const rawPreview = canal === 'WHATSAPP'
+      ? mensajeWa
+      : (asunto ? `${asunto} | ${mensajeEmail}` : mensajeEmail);
+    const preview = (rawPreview || '')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, previewLen);
+    const previewSuffix = (rawPreview || '').length > previewLen ? '…' : '';
+    const saldoFmt = Number(factura.saldo_pendiente).toLocaleString('en-US', {
+      minimumFractionDigits: 2,
+    });
+    const descripcion =
+      `Cliente ${String(factura.nombre_cliente).trim()} · Factura #${factura.ij_inum} · ` +
+      `Mora ${diasVencida}d (${segmento}) · RD$${saldoFmt}\n\n` +
+      `Preview ${tipoMsg}: ${preview}${previewSuffix}\n\n` +
+      `Aprobar/editar/rechazar en Cola de Aprobación (gestion #${insertGestion.insertId}).`;
+    const prioridad = segmento === 'ROJO' || diasVencida >= 30 ? 'ALTA' : 'MEDIA';
+
+    await cobranzasExecute(
+      `INSERT INTO cobranza_tareas
+         (titulo, descripcion, tipo, fecha_vencimiento, codigo_cliente, ij_inum,
+          prioridad, asignada_a, creado_por, origen, origen_ref)
+       VALUES (?, ?, 'SEGUIMIENTO', CURDATE(), ?, ?, ?, 'sistema', 'cadencias',
+               'CADENCIA', ?)`,
+      [
+        titulo,
+        descripcion,
+        codigoCliente,
+        factura.ij_inum,
+        prioridad,
+        `gestion:${insertGestion.insertId}`,
+      ]
+    );
+  }
 }
