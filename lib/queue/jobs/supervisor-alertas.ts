@@ -54,6 +54,7 @@ export interface SupervisorAlertasStats {
   evaluados: number;        // clientes top-N revisados
   candidatos: number;       // los que cruzaron umbral
   alertas_enviadas: number;
+  alertas_fallback: number; // enviadas con texto determinista (gateway IA caído/ocupado)
   omitidos_cooldown: number;
   errores: number;
   costo_usd_total: number;  // 0 con modelo local; reservado para futura mezcla Anthropic
@@ -97,6 +98,18 @@ function fmtDOP(n: number): string {
   return `RD$${Math.round(n).toLocaleString('es-DO')}`;
 }
 
+/** Texto determinista cuando el modelo no está disponible (no perder la alerta). */
+function fallbackTop10(i: SupervisorClienteInput): string {
+  const salto =
+    i.scoreAnterior != null ? `de ${i.scoreAnterior} a ${i.scoreNuevo}` : `a ${i.scoreNuevo}`;
+  return (
+    `(Análisis automático no disponible — gateway IA ocupado.) ` +
+    `${i.nombre} es el #${i.rankExposicion} por exposición y su riesgo subió ${salto} (${i.riskLevel}). ` +
+    `Mora promedio ${Math.round(i.diasMoraPromedio)}d, cumplimiento de promesas ${Math.round(i.tasaCumplimientoPromesas)}%, ` +
+    `tendencia ${i.tendencia.toLowerCase()}. Conviene revisarlo hoy y decidir si contactar, esperar o frenar nueva venta.`
+  );
+}
+
 /**
  * ¿Este cliente cruzó el umbral en esta corrida?
  * Cruce = ahora está en ROJO/CRÍTICO Y o bien subió de nivel respecto al score
@@ -122,10 +135,15 @@ export async function ejecutarSupervisorAlertas(): Promise<SupervisorAlertasStat
     evaluados: 0,
     candidatos: 0,
     alertas_enviadas: 0,
+    alertas_fallback: 0,
     omitidos_cooldown: 0,
     errores: 0,
     costo_usd_total: 0,
   };
+
+  // Circuit breaker: si una llamada al modelo falla (timeout por saturación del
+  // gateway), las siguientes usan fallback directo en vez de esperar 240s c/u.
+  let gatewayDown = false;
 
   const topN = Math.max(1, Math.min(100, Number(process.env.SUPERVISOR_TOP_N) || 10));
   const deltaScore = Number(process.env.SUPERVISOR_DELTA_SCORE) || 15;
@@ -207,10 +225,35 @@ export async function ejecutarSupervisorAlertas(): Promise<SupervisorAlertasStat
       };
 
       const userInput = buildSupervisorUserInput(input);
-      const llm = await generarSupervisorLocal({
-        system: SUPERVISOR_TOP10_SYSTEM,
-        user: userInput,
-      });
+
+      // Generar la prosa con el modelo; si falla (gateway saturado), fallback.
+      let cuerpo: string;
+      let modelUsed: string;
+      let latency = 0;
+      let rawJson: string | null = null;
+      let esFallback = false;
+      if (gatewayDown) {
+        cuerpo = fallbackTop10(input);
+        modelUsed = 'fallback';
+        esFallback = true;
+      } else {
+        try {
+          const llm = await generarSupervisorLocal({
+            system: SUPERVISOR_TOP10_SYSTEM,
+            user: userInput,
+          });
+          cuerpo = llm.text;
+          modelUsed = llm.model;
+          latency = llm.latencyMs;
+          rawJson = JSON.stringify(llm.raw);
+        } catch (e) {
+          console.error('[supervisor-alertas] modelo falló, usando fallback:', e);
+          gatewayDown = true; // circuit breaker para el resto del lote
+          cuerpo = fallbackTop10(input);
+          modelUsed = 'fallback';
+          esFallback = true;
+        }
+      }
 
       // Mensaje a Telegram (HTML). Encabezado breve + prosa del Supervisor.
       const saltoStr =
@@ -221,7 +264,7 @@ export async function ejecutarSupervisorAlertas(): Promise<SupervisorAlertasStat
         `🚨 <b>Supervisor Cobros · Alerta top-10</b>\n` +
         `<i>${escapeHtml(input.nombre)} — ${row.risk_level} · score ${saltoStr} · ` +
         `saldo neto ${fmtDOP(input.saldoNeto)}</i>`;
-      const mensaje = `${header}\n\n${escapeHtml(llm.text)}`;
+      const mensaje = `${header}\n\n${escapeHtml(cuerpo)}`;
 
       const messageId = await enviarAlertaSupervisor(chatId, mensaje);
 
@@ -249,17 +292,18 @@ export async function ejecutarSupervisorAlertas(): Promise<SupervisorAlertasStat
           input.scoreNuevo,
           input.saldoNeto,
           userInput,
-          llm.text,
-          JSON.stringify(llm.raw),
-          llm.model,
-          llm.latencyMs,
+          cuerpo,
+          rawJson,
+          modelUsed,
+          latency,
           messageId,
         ]
       );
 
       stats.alertas_enviadas++;
+      if (esFallback) stats.alertas_fallback++;
       console.log(
-        `[supervisor-alertas] Alerta enviada: ${input.nombre} (${row.risk_level}, score ${saltoStr}, ${llm.latencyMs}ms)`
+        `[supervisor-alertas] Alerta enviada${esFallback ? ' (fallback)' : ''}: ${input.nombre} (${row.risk_level}, score ${saltoStr}, ${latency}ms)`
       );
     } catch (err) {
       stats.errores++;

@@ -59,6 +59,7 @@ interface PromesaRow {
 export interface SupervisorPromesasStats {
   evaluadas: number;        // promesas grandes vencidas encontradas
   alertas_enviadas: number;
+  alertas_fallback: number; // enviadas con texto determinista (gateway IA caído/ocupado)
   omitidas_cooldown: number;
   errores: number;
   costo_usd_total: number;
@@ -75,16 +76,33 @@ function fmtMoneda(n: number, moneda: string): string {
   return `${pref}${Math.round(n).toLocaleString('es-DO')}`;
 }
 
+/** Texto determinista cuando el modelo no está disponible (no perder la alerta). */
+function fallbackPromesa(i: SupervisorPromesaInput): string {
+  const cumpl =
+    i.tasaCumplimientoPromesas != null ? `${Math.round(i.tasaCumplimientoPromesas)}%` : 'n/d';
+  return (
+    `(Análisis automático no disponible — gateway IA ocupado.) ` +
+    `${i.nombre} rompió una promesa de ${fmtMoneda(i.montoPrometido, i.moneda)} vencida hace ${i.diasAtraso}d` +
+    `${i.facturaInum ? ` (fac #${i.facturaInum})` : ''}. ` +
+    `${i.riskLevel ? `Riesgo ${i.riskLevel}. ` : ''}Cumplimiento de promesas ${cumpl}. ` +
+    `Evaluar si renegociar o escalar a cobro legal.`
+  );
+}
+
 // ── Job principal ──────────────────────────────────────────────────────────────
 
 export async function ejecutarSupervisorPromesas(): Promise<SupervisorPromesasStats> {
   const stats: SupervisorPromesasStats = {
     evaluadas: 0,
     alertas_enviadas: 0,
+    alertas_fallback: 0,
     omitidas_cooldown: 0,
     errores: 0,
     costo_usd_total: 0,
   };
+
+  // Circuit breaker: tras un fallo del modelo, el resto usa fallback directo.
+  let gatewayDown = false;
 
   const montoMin = Number(process.env.SUPERVISOR_PROMESA_MIN) || 200_000;
   const diasGracia = Math.max(0, Number(process.env.SUPERVISOR_PROMESA_DIAS) || 2);
@@ -175,16 +193,40 @@ export async function ejecutarSupervisorPromesas(): Promise<SupervisorPromesasSt
       };
 
       const userInput = buildPromesaUserInput(input);
-      const llm = await generarSupervisorLocal({
-        system: SUPERVISOR_PROMESA_SYSTEM,
-        user: userInput,
-      });
+
+      let cuerpo: string;
+      let modelUsed: string;
+      let latency = 0;
+      let rawJson: string | null = null;
+      let esFallback = false;
+      if (gatewayDown) {
+        cuerpo = fallbackPromesa(input);
+        modelUsed = 'fallback';
+        esFallback = true;
+      } else {
+        try {
+          const llm = await generarSupervisorLocal({
+            system: SUPERVISOR_PROMESA_SYSTEM,
+            user: userInput,
+          });
+          cuerpo = llm.text;
+          modelUsed = llm.model;
+          latency = llm.latencyMs;
+          rawJson = JSON.stringify(llm.raw);
+        } catch (e) {
+          console.error('[supervisor-promesas] modelo falló, usando fallback:', e);
+          gatewayDown = true;
+          cuerpo = fallbackPromesa(input);
+          modelUsed = 'fallback';
+          esFallback = true;
+        }
+      }
 
       const header =
         `🟠 <b>Supervisor Cobros · Promesa grande incumplida</b>\n` +
         `<i>${escapeHtml(nombre)} — ${fmtMoneda(input.montoPrometido, input.moneda)} · ` +
         `vencida hace ${input.diasAtraso}d${input.facturaInum ? ` · fac #${input.facturaInum}` : ''}</i>`;
-      const mensaje = `${header}\n\n${escapeHtml(llm.text)}`;
+      const mensaje = `${header}\n\n${escapeHtml(cuerpo)}`;
 
       const messageId = await enviarAlertaSupervisor(chatId, mensaje);
 
@@ -210,17 +252,18 @@ export async function ejecutarSupervisorPromesas(): Promise<SupervisorPromesasSt
           input.riskScore ?? 0,
           input.saldoNeto ?? 0,
           userInput,
-          llm.text,
-          JSON.stringify(llm.raw),
-          llm.model,
-          llm.latencyMs,
+          cuerpo,
+          rawJson,
+          modelUsed,
+          latency,
           messageId,
         ]
       );
 
       stats.alertas_enviadas++;
+      if (esFallback) stats.alertas_fallback++;
       console.log(
-        `[supervisor-promesas] Alerta enviada: ${nombre} (${fmtMoneda(input.montoPrometido, input.moneda)}, ${input.diasAtraso}d, ${llm.latencyMs}ms)`
+        `[supervisor-promesas] Alerta enviada${esFallback ? ' (fallback)' : ''}: ${nombre} (${fmtMoneda(input.montoPrometido, input.moneda)}, ${input.diasAtraso}d, ${latency}ms)`
       );
     } catch (err) {
       stats.errores++;
