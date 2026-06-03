@@ -26,7 +26,7 @@
  */
 
 import { cobranzasQuery, cobranzasExecute, logAccion } from '@/lib/db/cobranzas';
-import { enviarMensajeChat } from '@/lib/telegram/client';
+import { enviarAlertaSupervisor } from '@/lib/supervisor/telegram';
 import { generarSupervisorLocal } from '@/lib/supervisor/local-llm';
 import {
   SUPERVISOR_PROMESA_SYSTEM,
@@ -186,7 +186,7 @@ export async function ejecutarSupervisorPromesas(): Promise<SupervisorPromesasSt
         `vencida hace ${input.diasAtraso}d${input.facturaInum ? ` · fac #${input.facturaInum}` : ''}</i>`;
       const mensaje = `${header}\n\n${escapeHtml(llm.text)}`;
 
-      const messageId = await enviarMensajeChat(chatId, mensaje);
+      const messageId = await enviarAlertaSupervisor(chatId, mensaje);
 
       await cobranzasExecute(
         `INSERT INTO cobranza_supervisor_alertas (

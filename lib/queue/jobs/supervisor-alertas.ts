@@ -25,7 +25,7 @@
  */
 
 import { cobranzasQuery, cobranzasExecute, logAccion } from '@/lib/db/cobranzas';
-import { enviarMensajeChat } from '@/lib/telegram/client';
+import { enviarAlertaSupervisor } from '@/lib/supervisor/telegram';
 import { generarSupervisorLocal } from '@/lib/supervisor/local-llm';
 import {
   SUPERVISOR_TOP10_SYSTEM,
@@ -223,7 +223,7 @@ export async function ejecutarSupervisorAlertas(): Promise<SupervisorAlertasStat
         `saldo neto ${fmtDOP(input.saldoNeto)}</i>`;
       const mensaje = `${header}\n\n${escapeHtml(llm.text)}`;
 
-      const messageId = await enviarMensajeChat(chatId, mensaje);
+      const messageId = await enviarAlertaSupervisor(chatId, mensaje);
 
       // Auditoría
       await cobranzasExecute(

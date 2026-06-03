@@ -33,23 +33,6 @@ export async function enviarMensajeGrupo(
   return mensaje.message_id;
 }
 
-/**
- * Envía un mensaje a un chat_id específico (no al grupo de cobros).
- * Usado por el Supervisor para alertar al chat privado del CEO.
- */
-export async function enviarMensajeChat(
-  chatId: string | number,
-  texto: string,
-  opciones?: { teclado?: InlineKeyboardMarkup }
-): Promise<number> {
-  const telegram = getBot().telegram;
-  const mensaje = await telegram.sendMessage(chatId, texto, {
-    parse_mode: 'HTML',
-    ...(opciones?.teclado && { reply_markup: opciones.teclado }),
-  });
-  return mensaje.message_id;
-}
-
 export async function editarMensaje(
   messageId: number,
   texto: string
