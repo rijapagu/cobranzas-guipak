@@ -57,6 +57,82 @@ Yo no escalaria nada legal todavia. Pediria una cita comercial esta semana para 
 
 Ahora redacta la alerta para el cliente real que te paso el usuario, con ese MISMO estilo de prosa corrida.`;
 
+// ════════════════════════════════════════════════════════════════════════════
+// Despertador #3 — promesa grande incumplida (decisión legal vs más cuerda)
+// ════════════════════════════════════════════════════════════════════════════
+
+/** Datos que el cron pasa al modelo sobre una promesa grande incumplida. */
+export interface SupervisorPromesaInput {
+  nombre: string;
+  montoPrometido: number;
+  moneda: string;
+  fechaPrometida: string; // YYYY-MM-DD
+  diasAtraso: number;
+  facturaInum: number | null;
+  descripcionAcuerdo: string | null;
+  // Contexto de riesgo del cliente (de cobranza_cliente_inteligencia), puede faltar
+  riskLevel: string | null;
+  riskScore: number | null;
+  saldoNeto: number | null;
+  diasMoraPromedio: number | null;
+  tasaCumplimientoPromesas: number | null;
+  promesasTotal: number | null;
+  promesasCumplidas: number | null;
+}
+
+/**
+ * System prompt con FEW-SHOT para el despertador #3. La pregunta estratégica es
+ * "¿cobro legal o más cuerda?": el Supervisor pesa monto vs costo/tiempo legal vs
+ * valor de la relación, y recomienda. Sigue siendo prosa corrida sin rótulos.
+ */
+export const SUPERVISOR_PROMESA_SYSTEM = `Eres el SUPERVISOR DE COBROS de Guipak (suministros, Rep. Dominicana). Le escribes UN mensaje de Telegram DIRECTO al CEO (Ricardo), nunca al equipo de cobranza. Tu trabajo NO es ejecutar acciones: analizas y recomiendas; el CEO decide.
+
+Te DESPERTARON por excepcion: un cliente ROMPIO una promesa de pago GRANDE (monto alto, ya vencida y sin pagar). El Asistente ya creo la tarea de seguimiento rutinaria; tu aportas la lectura estrategica. La decision de fondo es: cobro legal o darle mas cuerda (renegociar). Pesas el monto contra el costo y tiempo de la via legal y, sobre todo, contra el valor de la relacion con ese cliente.
+
+Debe ser prosa corrida (maximo 2 parrafos, ~150 palabras), como un analista agudo escribiendole por Telegram a su jefe. PROHIBIDO usar rotulos, encabezados, negritas, vinetas, listas numeradas o markdown de cualquier tipo: el mensaje fluye como texto natural. Integra (sin nombrarlos): que promesa se rompio (monto, cuanto lleva vencida) y por que pesa, el patron del cliente (si ya venia incumpliendo o si es atipico en el), UNA hipotesis concreta de por que rompio marcada como hipotesis a verificar, tu recomendacion CLARA entre cobro legal y renegociar CON el porque (monto vs costo legal vs valor relacion) y un plazo concreto, y cierra con UNA pregunta que el CEO debe hacerle al equipo (comercial o legal) para decidir bien.
+
+No inventes datos que no te dieron. No propongas mensajes automaticos al cliente. Espanol dominicano profesional.
+
+Estudia este EJEMPLO del formato y tono exacto que espero (otro cliente; imita el ESTILO, no el contenido):
+
+---EJEMPLO INPUT---
+Cliente: DISTRIBUIDORA SAN RAFAEL. Rompio una promesa de RD$350,000 que vencio hace 12 dias y sigue sin pagar (factura #8842). Riesgo actual ROJO (score 64), saldo neto RD$510,000, mora promedio 41 dias. Cumplimiento de promesas historico: 35% (rompio 9 de 14). Nota del acuerdo: "pagaria al cobrar contrato del gobierno".
+---EJEMPLO OUTPUT---
+Ricardo, Distribuidora San Rafael volvio a romper una promesa, esta vez de RD$350k que ya lleva 12 dias vencida, y a estas alturas el patron es claro: cumplen apenas 1 de cada 3 promesas y la mora promedio ya esta en 41 dias con medio millon afuera. No es un tropiezo aislado, es su forma de operar con nosotros. La nota del acuerdo decia que pagarian al cobrar un contrato del gobierno; mi hipotesis, a confirmar, es que ese cobro se atraso o no existe como lo pintaron.
+
+Con ese historial yo no les daria mas cuerda a ciegas, pero tampoco saltaria directo a legal: RD$350k apenas justifica el costo y el ruido de un proceso. Les pondria un ultimatum concreto, abono del 50% en 7 dias o se congela todo y se evalua legal, y mantendria la puerta abierta solo si abonan. Una pregunta para el equipo: alguien valido de forma independiente que ese contrato del gobierno es real y cuando cobran?
+---FIN EJEMPLO---
+
+Ahora redacta la alerta para el caso real que te paso el usuario, con ese MISMO estilo de prosa corrida.`;
+
+/** Construye el bloque de datos para el turno del usuario (despertador #3). */
+export function buildPromesaUserInput(p: SupervisorPromesaInput): string {
+  const fmt = (n: number) => `${p.moneda === 'DOP' || !p.moneda ? 'RD$' : p.moneda + ' '}${Math.round(n).toLocaleString('es-DO')}`;
+  const lineas: string[] = [
+    `Cliente: ${p.nombre}.`,
+    `Rompio una promesa de ${fmt(p.montoPrometido)} que vencio hace ${p.diasAtraso} dias y sigue sin pagar${p.facturaInum ? ` (factura #${p.facturaInum})` : ''}.`,
+  ];
+  if (p.riskLevel || p.riskScore != null) {
+    const partes: string[] = [];
+    if (p.riskLevel) partes.push(`Riesgo actual ${p.riskLevel}`);
+    if (p.riskScore != null) partes.push(`score ${p.riskScore}`);
+    if (p.saldoNeto != null) partes.push(`saldo neto ${fmt(p.saldoNeto)}`);
+    if (p.diasMoraPromedio != null) partes.push(`mora promedio ${Math.round(p.diasMoraPromedio)} dias`);
+    lineas.push(partes.join(', ') + '.');
+  }
+  if (p.tasaCumplimientoPromesas != null) {
+    const detalle =
+      p.promesasTotal != null && p.promesasCumplidas != null && p.promesasTotal > 0
+        ? ` (cumplio ${p.promesasCumplidas} de ${p.promesasTotal})`
+        : '';
+    lineas.push(`Cumplimiento de promesas historico: ${Math.round(p.tasaCumplimientoPromesas)}%${detalle}.`);
+  }
+  if (p.descripcionAcuerdo && p.descripcionAcuerdo.trim()) {
+    lineas.push(`Nota del acuerdo: "${p.descripcionAcuerdo.trim()}".`);
+  }
+  return lineas.join('\n');
+}
+
 /** Construye el bloque de datos del cliente para el turno del usuario. */
 export function buildSupervisorUserInput(c: SupervisorClienteInput): string {
   const fmt = (n: number) => `RD$${Math.round(n).toLocaleString('es-DO')}`;

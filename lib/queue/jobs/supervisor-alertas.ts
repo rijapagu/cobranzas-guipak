@@ -228,19 +228,20 @@ export async function ejecutarSupervisorAlertas(): Promise<SupervisorAlertasStat
       // Auditoría
       await cobranzasExecute(
         `INSERT INTO cobranza_supervisor_alertas (
-           tipo, codigo_cliente, nombre_cliente,
+           tipo, origen_ref, codigo_cliente, nombre_cliente,
            risk_level, score_anterior, score_nuevo, saldo_neto,
            descripcion, recomendacion, modelo_response,
            model_used, latency_ms, cost_usd,
            telegram_message_id, notified_at
          ) VALUES (
-           'TOP10_CRUZA_UMBRAL', ?, ?,
+           'TOP10_CRUZA_UMBRAL', ?, ?, ?,
            ?, ?, ?, ?,
            ?, ?, ?,
            ?, ?, 0,
            ?, NOW()
          )`,
         [
+          `cliente:${codigo}`,
           codigo,
           input.nombre,
           row.risk_level,
