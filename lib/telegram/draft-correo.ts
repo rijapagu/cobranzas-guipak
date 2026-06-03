@@ -71,7 +71,8 @@ function calcularSegmento(diasVencido: number): SegmentoRiesgo {
 export async function proponerCorreoCliente(
   termino: string,
   emailDestinoParam?: string,
-  plantillaId?: number
+  plantillaId?: number,
+  creadoPor: string = 'bot-telegram'
 ): Promise<DraftCorreoResult> {
   const softecOk = await testSoftecConnection();
   if (!softecOk) return { ok: false, error: 'Sin conexión a Softec' };
@@ -269,7 +270,7 @@ export async function proponerCorreoCliente(
       segmento,
       rendered.cuerpo,
       rendered.asunto,
-      'bot-telegram',
+      creadoPor,
     ]
   );
 

@@ -133,6 +133,48 @@ export function buildPromesaUserInput(p: SupervisorPromesaInput): string {
   return lineas.join('\n');
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// Lote de cobranza dirigida — delegación Supervisor→Asistente (notificación CEO)
+// ════════════════════════════════════════════════════════════════════════════
+
+export interface LoteClienteEncolado {
+  nombre: string;
+  saldoNeto: number;
+  riskLevel: string;
+  diasMora: number;
+}
+
+export interface SupervisorLoteInput {
+  encolados: LoteClienteEncolado[];
+  omitidosResumen: string[]; // ej. ["3 ya tenían gestión pendiente", "1 sin email"]
+}
+
+/**
+ * Prompt para la NOTA al CEO tras encolar un lote de cobranza dirigida. NO decide
+ * a quién contactar (eso es determinista en el job); solo redacta el reporte
+ * ejecutivo de lo que se encoló, recordando que espera aprobación del equipo.
+ * Few-shot para mantener prosa corrida sin rótulos.
+ */
+export const SUPERVISOR_LOTE_SYSTEM = `Eres el SUPERVISOR DE COBROS de Guipak (suministros, Rep. Dominicana). Le escribes UN mensaje de Telegram DIRECTO al CEO (Ricardo). Acabas de encolar borradores de cobranza dirigida para un grupo de clientes top que vienen empeorando — borradores que el equipo de cobros aprobara antes de enviar (tu no envias nada). Tu trabajo aqui es REPORTARLE el lote, no pedirle permiso: el trabajo no se detiene.
+
+Escribe 2 o 3 frases en prosa corrida, como un analista escribiendole por Telegram a su jefe. PROHIBIDO rotulos, encabezados, negritas, vinetas o markdown. Di cuantos borradores encolaste y el criterio (clientes de alta exposicion que vienen empeorando), menciona 1-2 nombres concretos si destacan por monto, y cierra recordando que quedan en la Cola de Aprobacion para que el equipo los revise y apruebe hoy. Tono ejecutivo, calmado, sin alarmismo. No inventes datos.
+
+EJEMPLO OUTPUT (imita el estilo, no el contenido):
+Ricardo, encole 6 borradores de cobranza dirigida para clientes top que vienen deteriorandose, entre ellos Universidad Catolica (RD$680k) y Ferreteria Central (RD$410k). Son cuentas de alta exposicion donde la cadencia normal se queda corta, asi que les prepare un correo mas firme. Ya estan en la Cola de Aprobacion; el equipo los revisa y aprueba hoy, no necesitas hacer nada salvo que quieras echarles un ojo.`;
+
+/** Resumen estructurado del lote para que el modelo redacte la nota. */
+export function buildLoteUserInput(l: SupervisorLoteInput): string {
+  const fmt = (n: number) => `RD$${Math.round(n).toLocaleString('es-DO')}`;
+  const lineas: string[] = [`Borradores encolados: ${l.encolados.length}.`];
+  for (const c of l.encolados) {
+    lineas.push(`- ${c.nombre}: ${fmt(c.saldoNeto)} neto, ${c.riskLevel}, ${Math.round(c.diasMora)}d mora.`);
+  }
+  if (l.omitidosResumen.length > 0) {
+    lineas.push(`Omitidos: ${l.omitidosResumen.join('; ')}.`);
+  }
+  return lineas.join('\n');
+}
+
 /** Construye el bloque de datos del cliente para el turno del usuario. */
 export function buildSupervisorUserInput(c: SupervisorClienteInput): string {
   const fmt = (n: number) => `RD$${Math.round(n).toLocaleString('es-DO')}`;
