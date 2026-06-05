@@ -20,15 +20,15 @@
  * es el MISMO para cualquier bot, una vez que le diste /start.
  */
 
-export async function enviarAlertaSupervisor(
+/**
+ * Emisor genérico: envía un mensaje HTML por CUALQUIER bot, dado su token.
+ * Reutilizable por el Supervisor, el CEO orquestador, o futuros bots de área.
+ */
+export async function enviarPorBot(
+  token: string,
   chatId: string | number,
   texto: string
 ): Promise<number> {
-  const token = process.env.SUPERVISOR_BOT_TOKEN;
-  if (!token) {
-    throw new Error('SUPERVISOR_BOT_TOKEN no configurado');
-  }
-
   const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -47,8 +47,19 @@ export async function enviarAlertaSupervisor(
   };
 
   if (!res.ok || !data.ok) {
-    throw new Error(`Telegram Supervisor ${res.status}: ${data.description ?? 'error desconocido'}`);
+    throw new Error(`Telegram ${res.status}: ${data.description ?? 'error desconocido'}`);
   }
 
   return data.result?.message_id ?? 0;
+}
+
+export async function enviarAlertaSupervisor(
+  chatId: string | number,
+  texto: string
+): Promise<number> {
+  const token = process.env.SUPERVISOR_BOT_TOKEN;
+  if (!token) {
+    throw new Error('SUPERVISOR_BOT_TOKEN no configurado');
+  }
+  return enviarPorBot(token, chatId, texto);
 }
