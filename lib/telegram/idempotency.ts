@@ -14,22 +14,29 @@ import { getRedis } from '@/lib/redis/client';
 
 const IDEMPOTENCY_TTL_SECONDS = 24 * 3600;
 
-function idempotencyKey(updateId: number): string {
-  return `cobranzas:idempotency:telegram:update:${updateId}`;
+function idempotencyKey(updateId: number, bot?: string): string {
+  // Cada bot tiene su propia secuencia de update_id, así que dos bots pueden
+  // emitir el mismo número. El namespace evita que un update del Supervisor
+  // descarte (o sea descartado por) uno del Asistente con igual update_id.
+  const ns = bot ? `${bot}:` : '';
+  return `cobranzas:idempotency:telegram:${ns}update:${updateId}`;
 }
 
 /**
  * Marca un update_id como visto. Devuelve true si es la primera vez (procesar),
  * false si ya estaba marcado (descartar como retry).
  *
+ * `bot` namespacea la clave por bot (ej. 'supervisor'). Sin él, conserva la clave
+ * histórica del Asistente.
+ *
  * En caso de error de Redis, devuelve true — preferimos riesgo de duplicado
  * a perder un mensaje real del usuario.
  */
-export async function marcarUpdateVisto(updateId: number): Promise<boolean> {
+export async function marcarUpdateVisto(updateId: number, bot?: string): Promise<boolean> {
   try {
     const redis = getRedis();
     const result = await redis.set(
-      idempotencyKey(updateId),
+      idempotencyKey(updateId, bot),
       '1',
       'EX',
       IDEMPOTENCY_TTL_SECONDS,

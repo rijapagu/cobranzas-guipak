@@ -5,6 +5,7 @@ import { getTelegraf } from '@/lib/telegram/client';
 import { cobranzasQuery, cobranzasExecute, logAccion } from '@/lib/db/cobranzas';
 import { enviarGestion } from '@/lib/telegram/enviar-gestion';
 import { marcarUpdateVisto } from '@/lib/telegram/idempotency';
+import { enHorarioLaboral, descripcionHorarioLaboral } from '@/lib/horario';
 import type { InlineKeyboardMarkup } from 'telegraf/types';
 
 interface TelegramMessage {
@@ -120,6 +121,19 @@ async function procesarUpdate(update: TelegramUpdate): Promise<void> {
       await responderMensaje(
         message.chat.id,
         '⛔ No estás autorizado. Pídele a Ricardo que te dé acceso.',
+        message.message_id
+      );
+      return;
+    }
+
+    // Compuerta de horario: el Asistente (Qwen) atiende solo en horario laboral.
+    // Fuera de ese horario la GPU se reserva al Supervisor (deepseek). Así Qwen y
+    // deepseek no pelean por la VRAM de la tarjeta única.
+    if (!enHorarioLaboral()) {
+      await responderMensaje(
+        message.chat.id,
+        `🌙 Estoy fuera de mi horario de atención (${descripcionHorarioLaboral()}). ` +
+          `De noche y fines de semana, para temas estratégicos te atiende el Supervisor (@CobrosSupervisorBot).`,
         message.message_id
       );
       return;
@@ -374,6 +388,14 @@ async function manejarComando(
         : null;
       if (!auth) {
         await responderMensaje(message.chat.id, '⛔ No autorizado.', message.message_id);
+        return NextResponse.json({ ok: true });
+      }
+      if (!enHorarioLaboral()) {
+        await responderMensaje(
+          message.chat.id,
+          `🌙 Fuera de horario (${descripcionHorarioLaboral()}). De noche te atiende el Supervisor (@CobrosSupervisorBot).`,
+          message.message_id
+        );
         return NextResponse.json({ ok: true });
       }
       const respuesta = await procesarMensajeBot({
