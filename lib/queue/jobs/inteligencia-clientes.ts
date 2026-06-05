@@ -272,7 +272,7 @@ export async function ejecutarInteligenciaClientes(): Promise<{
     SELECT
       codigo_cliente,
       COUNT(*)                                                           AS total,
-      SUM(CASE WHEN estado = 'CUMPLIDA' THEN 1 ELSE 0 END)              AS cumplidas
+      SUM(CASE WHEN estado = 'CUMPLIDO' THEN 1 ELSE 0 END)              AS cumplidas
     FROM cobranza_acuerdos
     WHERE fecha_prometida >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)
     GROUP BY codigo_cliente
