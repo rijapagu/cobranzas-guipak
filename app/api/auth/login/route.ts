@@ -18,6 +18,7 @@ interface UserRow {
   password_hash: string;
   rol: 'ADMIN' | 'SUPERVISOR' | 'COBRADOR';
   activo: number;
+  empresa_id: number;
 }
 
 export async function POST(request: NextRequest) {
@@ -44,10 +45,20 @@ export async function POST(request: NextRequest) {
 
     const { email, password } = parsed.data;
 
-    const users = await cobranzasQuery<UserRow>(
-      'SELECT id, email, nombre, password_hash, rol, activo FROM usuarios WHERE email = ? LIMIT 1',
-      [email]
-    );
+    let users: UserRow[];
+    try {
+      users = await cobranzasQuery<UserRow>(
+        'SELECT id, email, nombre, password_hash, rol, activo, empresa_id FROM usuarios WHERE email = ? LIMIT 1',
+        [email]
+      );
+    } catch {
+      // Transición Fase 3: si la migración 030 aún no corrió, la columna
+      // empresa_id no existe — todos los usuarios son de Guipak (empresa 1).
+      users = await cobranzasQuery<UserRow>(
+        'SELECT id, email, nombre, password_hash, rol, activo, 1 AS empresa_id FROM usuarios WHERE email = ? LIMIT 1',
+        [email]
+      );
+    }
 
     if (users.length === 0) {
       return NextResponse.json(
@@ -78,6 +89,7 @@ export async function POST(request: NextRequest) {
       email: user.email,
       nombre: user.nombre,
       rol: user.rol,
+      empresa_id: Number(user.empresa_id) || 1,
     });
 
     await cobranzasExecute(

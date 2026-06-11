@@ -19,6 +19,9 @@ export interface JwtPayload {
   email: string;
   nombre: string;
   rol: 'ADMIN' | 'SUPERVISOR' | 'COBRADOR';
+  /** Tenant (Fase 3). Opcional: tokens emitidos antes de la Fase 3 no lo
+   *  traen y se interpretan como empresa 1 (Guipak) vía lib/tenant.ts. */
+  empresa_id?: number;
 }
 
 export function signToken(payload: JwtPayload): string {
