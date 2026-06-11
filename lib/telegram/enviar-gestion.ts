@@ -13,6 +13,7 @@ import { enviarEmail } from '@/lib/email/sender';
 import { enviarWhatsApp } from '@/lib/evolution/client';
 import { downloadPdfBuffer } from '@/lib/drive/client';
 import { resolverEmailPropio, resolverWhatsAppPropio } from '@/lib/cobranzas/contactos';
+import { pagosPorAplicar } from '@/lib/cobranzas/validacion-envio';
 import { differenceInHours } from 'date-fns';
 
 interface GestionRow {
@@ -72,6 +73,19 @@ export async function enviarGestion(gestionId: number): Promise<ResultadoEnvio> 
       );
       return { ok: false, error: 'La factura ya fue pagada (CP-06)' };
     }
+  }
+
+  // Validación doble (SPEC §2.3): si el cliente tiene depósitos POR_APLICAR
+  // en conciliación, ya nos pagó — aplicar el pago antes de cobrarle.
+  const porAplicar = await pagosPorAplicar(String(gestion.codigo_cliente).trim());
+  if (porAplicar.cantidad > 0) {
+    return {
+      ok: false,
+      error:
+        `El cliente tiene ${porAplicar.cantidad} depósito(s) POR APLICAR en conciliación ` +
+        `por RD$${porAplicar.total.toLocaleString('en-US', { minimumFractionDigits: 2 })}. ` +
+        'Aplica el pago antes de enviar cobranza.',
+    };
   }
 
   // Reclamo atómico (anti doble envío): solo un caller logra pasar la gestión

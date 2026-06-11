@@ -44,7 +44,15 @@ function formatMonto(monto: number, moneda = 'DOP'): string {
 }
 
 function formatFecha(fecha: string | Date): string {
-  const d = typeof fecha === 'string' ? new Date(fecha) : fecha;
+  // 'YYYY-MM-DD' como fecha LOCAL (new Date('YYYY-MM-DD') es UTC → off-by-one
+  // en TZ negativas al leer con getDate()).
+  let d: Date;
+  if (typeof fecha === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(fecha.trim())) {
+    const [y, m, dd] = fecha.trim().split('-').map(Number);
+    d = new Date(y, m - 1, dd);
+  } else {
+    d = typeof fecha === 'string' ? new Date(fecha) : fecha;
+  }
   if (isNaN(d.getTime())) return '';
   const dd = String(d.getDate()).padStart(2, '0');
   const mm = String(d.getMonth() + 1).padStart(2, '0');

@@ -53,10 +53,10 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ respuesta: texto, gestion_id });
   } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    console.error('[ASISTENTE-CHAT]', msg, error);
+    const { logError } = await import('@/lib/db/cobranzas');
+    await logError('asistente-chat', error);
     return NextResponse.json(
-      { error: `Error procesando mensaje: ${msg}` },
+      { error: 'Error procesando el mensaje. Intenta de nuevo.' },
       { status: 500 }
     );
   }

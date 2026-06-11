@@ -4,6 +4,7 @@
  */
 
 import type { SegmentoRiesgo } from '@/lib/types/cartera';
+import { parseYmd } from './fechas';
 
 /**
  * Formatea un monto con símbolo de moneda.
@@ -22,7 +23,14 @@ export function formatMonto(monto: number, moneda: string = 'DOP'): string {
  * Formatea una fecha corta: "10/abr/2026"
  */
 export function formatFecha(fecha: string | Date): string {
-  const d = typeof fecha === 'string' ? new Date(fecha) : fecha;
+  // 'YYYY-MM-DD' se parsea como fecha LOCAL: new Date('YYYY-MM-DD') es UTC y
+  // con getDate() local mostraría un día antes en TZ negativas (off-by-one).
+  const d =
+    typeof fecha === 'string'
+      ? /^\d{4}-\d{2}-\d{2}$/.test(fecha.trim())
+        ? parseYmd(fecha.trim())
+        : new Date(fecha)
+      : fecha;
   const meses = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
   return `${d.getDate()}/${meses[d.getMonth()]}/${d.getFullYear()}`;
 }

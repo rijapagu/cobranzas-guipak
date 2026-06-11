@@ -222,6 +222,13 @@ export async function GET(request: NextRequest) {
     const sinWhatsapp = clientesBase.filter(c => !c.tiene_whatsapp).length;
     const sinContacto = clientesBase.filter(c => !c.tiene_email && !c.tiene_whatsapp).length;
 
+    // Paginación con default generoso (`total` refleja el conteo completo)
+    const limit = Math.min(Number(request.nextUrl.searchParams.get('limit')) || 3000, 3000);
+    const offset = Math.max(Number(request.nextUrl.searchParams.get('offset')) || 0, 0);
+    if (offset > 0 || clientesBase.length > limit) {
+      clientesBase = clientesBase.slice(offset, offset + limit);
+    }
+
     return NextResponse.json({
       clientes: clientesBase,
       total: totalClientes,

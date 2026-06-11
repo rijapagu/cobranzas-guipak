@@ -177,16 +177,16 @@ async function procesarUpdate(update: TelegramUpdate): Promise<void> {
       }
     );
   } catch (error) {
-    console.error('[telegram-webhook] procesarUpdate error:', error);
+    const { logError } = await import('@/lib/db/cobranzas');
+    await logError('telegram-webhook', error, { update_id: update.update_id });
     const chatId =
       update.message?.chat.id ??
       update.edited_message?.chat.id ??
       update.callback_query?.message?.chat.id;
     if (chatId) {
-      const msg = error instanceof Error ? error.message : String(error);
       await responderMensaje(
         chatId,
-        `⚠️ Error procesando tu mensaje: ${msg.slice(0, 200)}`
+        '⚠️ Ocurrió un error procesando tu mensaje. El detalle quedó registrado en los logs del sistema.'
       ).catch(() => {});
     }
   }

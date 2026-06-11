@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth/session';
-import { cobranzasQuery, cobranzasExecute, logAccion } from '@/lib/db/cobranzas';
+import { cobranzasQuery, cobranzasExecute, logAccion, logError } from '@/lib/db/cobranzas';
 import { parsearExtracto } from '@/lib/utils/parser-extracto';
 import { procesarLinea } from '@/lib/conciliacion/matcher';
 import { crearTareasConciliacion, notificarConciliacionDesdeBD } from '@/lib/conciliacion/seguimiento';
@@ -55,7 +55,12 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const fechaExtracto = new Date().toISOString().split('T')[0];
+    // Fecha del extracto = la transacción más reciente del archivo
+    // (antes se guardaba la fecha de CARGA, que desordenaba el agrupado).
+    const fechaExtracto = lineas.reduce(
+      (max, l) => (l.fecha_transaccion > max ? l.fecha_transaccion : max),
+      lineas[0].fecha_transaccion
+    );
     let conciliadas = 0;
     let porAplicar = 0;
     let desconocidas = 0;
@@ -203,7 +208,7 @@ export async function POST(request: NextRequest) {
       tareas_creadas: tareasCreadas,
     });
   } catch (error) {
-    console.error('[CONCILIACION-CARGAR] Error:', error);
+    await logError('conciliacion-cargar', error);
     return NextResponse.json({ error: 'Error procesando extracto' }, { status: 500 });
   }
 }

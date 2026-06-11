@@ -44,7 +44,10 @@ export async function GET(request: NextRequest) {
       params.push(`%${busqueda}%`, `%${busqueda}%`);
     }
 
-    sql += ' ORDER BY g.dias_vencido DESC, g.created_at ASC';
+    // Paginación con default generoso (no rompe la UI actual, acota el peor caso)
+    const limit = Math.min(Number(searchParams.get('limit')) || 2000, 2000);
+    const offset = Math.max(Number(searchParams.get('offset')) || 0, 0);
+    sql += ` ORDER BY g.dias_vencido DESC, g.created_at ASC LIMIT ${limit} OFFSET ${offset}`;
 
     const rows = await cobranzasQuery<CobranzaGestion & {
       total_pendientes: number;

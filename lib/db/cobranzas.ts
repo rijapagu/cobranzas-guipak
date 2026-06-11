@@ -67,6 +67,31 @@ export async function logAccion(
 }
 
 /**
+ * Registra un ERROR en cobranza_logs (convención CLAUDE.md: todos los errores
+ * van a cobranza_logs) además de la consola. Nunca lanza — loguear no puede
+ * tumbar el flujo que falló.
+ */
+export async function logError(
+  origen: string,
+  error: unknown,
+  contexto?: Record<string, unknown>
+): Promise<void> {
+  console.error(`[${origen}]`, error);
+  try {
+    const mensaje =
+      error instanceof Error
+        ? `${error.message}${error.stack ? `\n${error.stack.substring(0, 500)}` : ''}`
+        : String(error);
+    await logAccion(null, 'ERROR', origen, '0', {
+      mensaje: mensaje.substring(0, 1500),
+      ...contexto,
+    });
+  } catch {
+    // la tabla de logs no está disponible — ya quedó en consola
+  }
+}
+
+/**
  * Verifica la conexión a la DB propia.
  */
 export async function testCobranzasConnection(): Promise<boolean> {

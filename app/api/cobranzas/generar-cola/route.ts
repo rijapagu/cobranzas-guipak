@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth/session';
-import { cobranzasQuery, cobranzasExecute, logAccion } from '@/lib/db/cobranzas';
+import { cobranzasQuery, cobranzasExecute, logAccion, logError } from '@/lib/db/cobranzas';
 import { generarMensajeCobranza } from '@/lib/claude/client';
 import { getMockCartera } from '@/lib/mock/cartera-mock';
 import { softecQuery, testSoftecConnection } from '@/lib/db/softec';
@@ -228,7 +228,7 @@ export async function POST() {
       modo: softecOk ? 'live' : 'mock',
     });
   } catch (error) {
-    console.error('[GENERAR-COLA] Error:', error);
+    await logError('generar-cola', error);
     return NextResponse.json({ error: 'Error generando cola' }, { status: 500 });
   }
 }

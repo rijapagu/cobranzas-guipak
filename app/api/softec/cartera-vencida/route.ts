@@ -28,6 +28,10 @@ export async function GET(request: NextRequest) {
     const diasMax = searchParams.get('dias_max') ? Number(searchParams.get('dias_max')) : undefined;
     const montoMin = searchParams.get('monto_min') ? Number(searchParams.get('monto_min')) : undefined;
     const montoMax = searchParams.get('monto_max') ? Number(searchParams.get('monto_max')) : undefined;
+    // Paginación (defaults generosos para no romper la UI actual; `total`
+    // siempre refleja el conteo completo tras filtros)
+    const limit = Math.min(Number(searchParams.get('limit')) || 5000, 5000);
+    const offset = Math.max(Number(searchParams.get('offset')) || 0, 0);
 
     const softecOk = await testSoftecConnection();
     let facturas: FacturaVencida[];
@@ -112,9 +116,14 @@ export async function GET(request: NextRequest) {
       });
     }
 
+    const totalFiltradas = facturas.length;
+    if (offset > 0 || totalFiltradas > limit) {
+      facturas = facturas.slice(offset, offset + limit);
+    }
+
     const response: CarteraResponse = {
       facturas,
-      total: facturas.length,
+      total: totalFiltradas,
       modo: softecOk ? 'live' : 'mock',
       ultima_consulta: new Date().toISOString(),
       saldos_clientes: saldosClientes,

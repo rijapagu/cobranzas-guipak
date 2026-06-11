@@ -86,7 +86,7 @@ export async function proponerCorreoCliente(
     ? [termino.trim().padStart(7, '0')]
     : [`%${termino}%`, termino.trim()];
 
-  const facturas = await softecQuery<FacturaCliente>(
+  let facturas = await softecQuery<FacturaCliente>(
     `SELECT
        'GUI'                AS ij_local,
        f.IJ_TYPEDOC          AS ij_typedoc,
@@ -118,6 +118,26 @@ export async function proponerCorreoCliente(
       motivo: 'SIN_FACTURAS_VENCIDAS',
       error: 'El cliente no tiene facturas pendientes',
     };
+  }
+
+  // 1.5 CP-03: excluir facturas con disputa activa del correo consolidado.
+  const inums = facturas.map((f) => Number(f.ij_inum));
+  const disputasRows = await cobranzasQuery<{ ij_inum: number }>(
+    `SELECT DISTINCT ij_inum FROM cobranza_disputas
+     WHERE estado IN ('ABIERTA','EN_REVISION')
+       AND ij_inum IN (${inums.map(() => '?').join(',')})`,
+    inums
+  );
+  const enDisputa = new Set(disputasRows.map((d) => Number(d.ij_inum)));
+  if (enDisputa.size > 0) {
+    facturas = facturas.filter((f) => !enDisputa.has(Number(f.ij_inum)));
+    if (facturas.length === 0) {
+      return {
+        ok: false,
+        motivo: 'FACTURA_EN_DISPUTA',
+        error: 'Todas las facturas pendientes del cliente están en disputa activa (CP-03)',
+      };
+    }
   }
 
   const masUrgente = facturas[0];

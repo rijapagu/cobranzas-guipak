@@ -18,6 +18,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { esRequestInternoValido } from '@/lib/auth/internal';
 import { conversarSupervisor } from '@/lib/supervisor/conversacion';
+import { logError } from '@/lib/db/cobranzas';
 
 export async function POST(req: NextRequest) {
   if (!esRequestInternoValido(req)) {
@@ -40,7 +41,10 @@ export async function POST(req: NextRequest) {
     const { text, model, latencyMs } = await conversarSupervisor(pregunta);
     return NextResponse.json({ ok: true, area: 'cobros', text, model, latencyMs });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return NextResponse.json({ ok: false, error: msg }, { status: 502 });
+    await logError('supervisor-conversar', err, { pregunta: pregunta.substring(0, 200) });
+    return NextResponse.json(
+      { ok: false, error: 'Error procesando la consulta del supervisor' },
+      { status: 502 }
+    );
   }
 }

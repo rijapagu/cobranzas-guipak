@@ -15,7 +15,9 @@ export function getTokenCookieOptions(token: string) {
     name: COOKIE_NAME,
     value: token,
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
+    // Secure salvo desarrollo explícito: un deploy sin NODE_ENV no debe
+    // emitir la cookie de sesión sin flag Secure.
+    secure: process.env.NODE_ENV !== 'development',
     sameSite: 'lax' as const,
     path: '/',
     maxAge: 60 * 60 * 24, // 24 hours
@@ -27,7 +29,7 @@ export function getLogoutCookieOptions() {
     name: COOKIE_NAME,
     value: '',
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
+    secure: process.env.NODE_ENV !== 'development',
     sameSite: 'lax' as const,
     path: '/',
     maxAge: 0,

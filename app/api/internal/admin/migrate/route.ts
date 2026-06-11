@@ -1,13 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { esRequestAdminValido } from '@/lib/auth/internal';
-import { cobranzasQueryRaw } from '@/lib/db/cobranzas';
+import { cobranzasQueryRaw, cobranzasQuery, cobranzasExecute } from '@/lib/db/cobranzas';
 import { readFile, readdir } from 'fs/promises';
 import { join } from 'path';
 
 /**
  * POST /api/internal/admin/migrate
- * Ejecuta todas las migrations en db/migrations/ en orden.
- * Las migrations deben ser idempotentes (CREATE TABLE IF NOT EXISTS, INSERT IGNORE, etc.).
+ * Ejecuta las migrations de db/migrations/ que NO estén registradas en
+ * cobranza_migraciones (las aplicadas se omiten — ya no hace falta que cada
+ * migración vieja sea idempotente). Se detiene en el primer error para
+ * respetar el orden.
+ *
+ * Body opcional: { "baseline": true } — registra TODOS los archivos actuales
+ * como aplicados SIN ejecutarlos (adopción inicial sobre una DB ya migrada).
  *
  * Auth: header `x-internal-secret` con INTERNAL_ADMIN_SECRET (secreto DEDICADO,
  * distinto del de cron — este endpoint ejecuta SQL). Si la env var no está
@@ -18,15 +23,59 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
+  let baseline = false;
+  try {
+    const body = await req.json();
+    baseline = body?.baseline === true;
+  } catch {
+    // sin body — modo normal
+  }
+
   const migrationsDir = join(process.cwd(), 'db', 'migrations');
-  const ejecutadas: string[] = [];
-  const errores: { archivo: string; error: string }[] = [];
 
   try {
+    await cobranzasQueryRaw(
+      `CREATE TABLE IF NOT EXISTS cobranza_migraciones (
+        archivo     VARCHAR(255) PRIMARY KEY,
+        aplicada_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )`
+    );
+
     const archivos = await readdir(migrationsDir);
     const sqls = archivos.filter((a) => a.endsWith('.sql')).sort();
 
+    const aplicadasRows = await cobranzasQuery<{ archivo: string }>(
+      'SELECT archivo FROM cobranza_migraciones'
+    );
+    const yaAplicadas = new Set(aplicadasRows.map((r) => r.archivo));
+
+    if (baseline) {
+      const registradas: string[] = [];
+      for (const archivo of sqls) {
+        if (yaAplicadas.has(archivo)) continue;
+        await cobranzasExecute(
+          'INSERT IGNORE INTO cobranza_migraciones (archivo) VALUES (?)',
+          [archivo]
+        );
+        registradas.push(archivo);
+      }
+      return NextResponse.json({
+        ok: true,
+        modo: 'baseline',
+        registradas,
+        ya_aplicadas: yaAplicadas.size,
+      });
+    }
+
+    const ejecutadas: string[] = [];
+    const omitidas: string[] = [];
+
     for (const archivo of sqls) {
+      if (yaAplicadas.has(archivo)) {
+        omitidas.push(archivo);
+        continue;
+      }
+
       try {
         const contenido = await readFile(join(migrationsDir, archivo), 'utf-8');
         // 1. Strip line comments (--) primero
@@ -44,34 +93,38 @@ export async function POST(req: NextRequest) {
           .map((s) => s.trim())
           .filter((s) => s.length > 0);
 
-        const ejecutadosArchivo: string[] = [];
         for (const stmt of statements) {
           await cobranzasQueryRaw(stmt);
-          // Nombre del statement para reporte (CREATE TABLE foo, INSERT INTO foo, etc.)
-          const resumen = stmt.split('\n')[0].substring(0, 60);
-          ejecutadosArchivo.push(resumen);
         }
-        ejecutadas.push(`${archivo} (${ejecutadosArchivo.length} statements)`);
+
+        await cobranzasExecute(
+          'INSERT IGNORE INTO cobranza_migraciones (archivo) VALUES (?)',
+          [archivo]
+        );
+        ejecutadas.push(`${archivo} (${statements.length} statements)`);
       } catch (err) {
-        errores.push({
-          archivo,
-          error: err instanceof Error ? err.message : String(err),
-        });
+        // Detener en el primer error: las migraciones son ordenadas.
+        // (Endpoint solo-admin: el detalle del error es para el operador.)
+        return NextResponse.json(
+          {
+            ok: false,
+            ejecutadas,
+            omitidas: omitidas.length,
+            error_en: archivo,
+            error: err instanceof Error ? err.message : String(err),
+          },
+          { status: 500 }
+        );
       }
     }
 
     return NextResponse.json({
-      ok: errores.length === 0,
+      ok: true,
       ejecutadas,
-      errores,
+      omitidas: omitidas.length,
     });
   } catch (error) {
-    return NextResponse.json(
-      {
-        error: 'Error leyendo migrations',
-        detalle: error instanceof Error ? error.message : String(error),
-      },
-      { status: 500 }
-    );
+    console.error('[migrate] Error:', error);
+    return NextResponse.json({ error: 'Error ejecutando migraciones' }, { status: 500 });
   }
 }

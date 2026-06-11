@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth/session';
-import { cobranzasQuery, cobranzasExecute, logAccion } from '@/lib/db/cobranzas';
+import { cobranzasQuery, cobranzasExecute, logAccion, logError } from '@/lib/db/cobranzas';
 import { softecQuery, testSoftecConnection } from '@/lib/db/softec';
 import { enviarWhatsApp } from '@/lib/evolution/client';
 import { enviarEmail } from '@/lib/email/sender';
 import { resolverEmailPropio, resolverWhatsAppPropio } from '@/lib/cobranzas/contactos';
+import { pagosPorAplicar } from '@/lib/cobranzas/validacion-envio';
 import { differenceInHours } from 'date-fns';
 
 interface GestionRow {
@@ -122,6 +123,28 @@ export async function POST(
     }
 
     // ═══════════════════════════════════════════
+    // Validación doble (SPEC §2.3): si el cliente tiene depósitos POR_APLICAR
+    // en conciliación, ya nos pagó — aplicar el pago antes de cobrarle.
+    // ═══════════════════════════════════════════
+    const porAplicar = await pagosPorAplicar(g.codigo_cliente);
+    if (porAplicar.cantidad > 0) {
+      await logAccion(session.userId.toString(), 'ENVIO_BLOQUEADO_POR_APLICAR', 'gestion', id, {
+        cliente: g.codigo_cliente,
+        depositos: porAplicar.cantidad,
+        total: porAplicar.total,
+      });
+      return NextResponse.json(
+        {
+          error:
+            `El cliente tiene ${porAplicar.cantidad} depósito(s) POR APLICAR en conciliación ` +
+            `por RD$${porAplicar.total.toLocaleString('en-US', { minimumFractionDigits: 2 })}. ` +
+            'Aplica el pago en Conciliación antes de enviar cobranza.',
+        },
+        { status: 409 }
+      );
+    }
+
+    // ═══════════════════════════════════════════
     // Reclamo atómico: solo UN request puede pasar de APROBADO/EDITADO a
     // ENVIANDO. Un doble clic o una aprobación simultánea desde Telegram
     // pierde la carrera aquí y no produce doble envío.
@@ -236,7 +259,7 @@ export async function POST(
       throw errEnvio;
     }
   } catch (error) {
-    console.error('[ENVIAR] Error:', error);
+    await logError('gestiones-enviar', error);
     return NextResponse.json({ error: 'Error enviando mensaje' }, { status: 500 });
   }
 }

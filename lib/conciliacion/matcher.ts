@@ -258,10 +258,12 @@ async function aprenderCuenta(
         [existente[0].id]
       );
     } else {
+      // CP-05: las cuentas recién aprendidas empiezan en MANUAL; el UPDATE de
+      // arriba las promueve a AUTO tras 2+ usos consistentes.
       await cobranzasExecute(
         `INSERT INTO cobranza_cuentas_aprendizaje
            (cuenta_origen, nombre_origen, codigo_cliente, nombre_cliente, confianza, confirmado_por)
-         VALUES (?, ?, ?, ?, 'AUTO', 'sistema-conciliacion')`,
+         VALUES (?, ?, ?, ?, 'MANUAL', 'sistema-conciliacion')`,
         [cuentaOrigen, descripcion.substring(0, 200), codigoCliente, nombreCliente || '']
       );
     }
