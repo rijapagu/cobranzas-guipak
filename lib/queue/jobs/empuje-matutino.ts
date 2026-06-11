@@ -142,7 +142,7 @@ async function obtenerAlertas(): Promise<ResumenAlertas> {
     resumen.promesas_vencidas = Number(promesas[0]?.total) || 0;
 
     const pendientes = await cobranzasQuery<{ total: number }>(
-      "SELECT COUNT(*) AS total FROM cobranza_gestiones WHERE estado = 'PENDIENTE'"
+      "SELECT COUNT(*) AS total FROM cobranza_gestiones WHERE empresa_id = 1 AND estado = 'PENDIENTE'"
     );
     resumen.pendientes_aprobacion = Number(pendientes[0]?.total) || 0;
 
@@ -152,7 +152,7 @@ async function obtenerAlertas(): Promise<ResumenAlertas> {
     resumen.pagos_sin_registrar = Number(pagos[0]?.total) || 0;
 
     const enviadas = await cobranzasQuery<{ total: number }>(
-      "SELECT COUNT(*) AS total FROM cobranza_gestiones WHERE estado = 'ENVIADO' AND DATE(fecha_envio) = CURDATE() - INTERVAL 1 DAY"
+      "SELECT COUNT(*) AS total FROM cobranza_gestiones WHERE empresa_id = 1 AND estado = 'ENVIADO' AND DATE(fecha_envio) = CURDATE() - INTERVAL 1 DAY"
     );
     resumen.enviadas_hoy = Number(enviadas[0]?.total) || 0;
 

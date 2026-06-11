@@ -22,6 +22,7 @@ import { obtenerSaldoAFavorPorCliente } from '@/lib/cobranzas/saldo-favor';
 import { seleccionarPlantilla } from '@/lib/templates/seleccionar';
 import { renderPlantilla } from '@/lib/templates/render';
 import { generarMensajeCobranza } from '@/lib/claude/client';
+import { EMPRESA_GUIPAK } from '@/lib/tenant';
 
 const MAX_PASOS_POR_RUN = 30;
 const DIAS_FLOOD_PROTECTION = 30;
@@ -331,8 +332,8 @@ async function aplicarPaso(
   // Verificar que no haya gestión ACTIVA para esta factura (PENDIENTE,
   // APROBADO/EDITADO sin enviar, o ENVIANDO) — evita doble cobro.
   const yaExiste = await cobranzasQuery<{ id: number }>(
-    "SELECT id FROM cobranza_gestiones WHERE ij_inum = ? AND estado IN ('PENDIENTE','APROBADO','EDITADO','ENVIANDO') LIMIT 1",
-    [factura.ij_inum]
+    "SELECT id FROM cobranza_gestiones WHERE empresa_id = ? AND ij_inum = ? AND estado IN ('PENDIENTE','APROBADO','EDITADO','ENVIANDO') LIMIT 1",
+    [EMPRESA_GUIPAK, factura.ij_inum]
   );
   if (yaExiste.length > 0) return;
 
@@ -399,14 +400,15 @@ async function aplicarPaso(
 
   const insertGestion = await cobranzasExecute(
     `INSERT INTO cobranza_gestiones (
-      ij_local, ij_typedoc, ij_inum, codigo_cliente,
+      empresa_id, ij_local, ij_typedoc, ij_inum, codigo_cliente,
       total_factura, saldo_pendiente, moneda,
       fecha_vencimiento, dias_vencido, segmento_riesgo,
       canal, mensaje_propuesto_wa, mensaje_propuesto_email, asunto_email,
       estado, aprobado_por, ultima_consulta_softec, creado_por,
       tiene_pdf, url_pdf
-    ) VALUES (?, ?, ?, ?, ?, ?, 'DOP', ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), 'cadencias', ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'DOP', ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), 'cadencias', ?, ?)`,
     [
+      EMPRESA_GUIPAK,
       factura.ij_local || 'GUI',
       factura.ij_typedoc,
       factura.ij_inum,

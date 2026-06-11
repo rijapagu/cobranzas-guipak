@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth/session';
 import { cobranzasQuery, cobranzasExecute, logAccion } from '@/lib/db/cobranzas';
+import { empresaIdDeSesion } from '@/lib/tenant';
 
 /**
  * POST /api/cobranzas/gestiones/[id]/escalar
@@ -21,9 +22,10 @@ export async function POST(
     const body = await request.json().catch(() => ({}));
     const notas = (body as { notas?: string }).notas || '';
 
+    const empresaId = empresaIdDeSesion(session);
     const gestiones = await cobranzasQuery<{ id: number; estado: string; codigo_cliente: string }>(
-      'SELECT id, estado, codigo_cliente FROM cobranza_gestiones WHERE id = ?',
-      [gestionId]
+      'SELECT id, estado, codigo_cliente FROM cobranza_gestiones WHERE id = ? AND empresa_id = ?',
+      [gestionId, empresaId]
     );
 
     if (gestiones.length === 0) {
@@ -42,8 +44,8 @@ export async function POST(
     );
 
     await cobranzasExecute(
-      'UPDATE cobranza_gestiones SET estado = ?, motivo_descarte = ?, aprobado_por = ? WHERE id = ?',
-      ['ESCALADO', notas ? `ESCALADO: ${notas}` : 'Escalado a gestión manual', session.email, gestionId]
+      'UPDATE cobranza_gestiones SET estado = ?, motivo_descarte = ?, aprobado_por = ? WHERE id = ? AND empresa_id = ?',
+      ['ESCALADO', notas ? `ESCALADO: ${notas}` : 'Escalado a gestión manual', session.email, gestionId, empresaId]
     );
 
     return NextResponse.json({ message: `Gestión ${gestionId} escalada` });

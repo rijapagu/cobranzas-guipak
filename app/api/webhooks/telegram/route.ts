@@ -249,7 +249,8 @@ async function manejarCallback(
     asunto_email: string | null;
     mensaje_propuesto_email: string | null;
   }>(
-    'SELECT id, estado, codigo_cliente, saldo_pendiente, asunto_email, mensaje_propuesto_email FROM cobranza_gestiones WHERE id = ?',
+    // Guard de entrada (bot solo-Guipak): hace tenant-safe los UPDATE por id posteriores
+    'SELECT id, estado, codigo_cliente, saldo_pendiente, asunto_email, mensaje_propuesto_email FROM cobranza_gestiones WHERE id = ? AND empresa_id = 1',
     [gestionId]
   );
   if (gestiones.length === 0) {

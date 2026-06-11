@@ -8,6 +8,7 @@ import type { FacturaVencida } from '@/lib/types/cartera';
 import { seleccionarPlantilla } from '@/lib/templates/seleccionar';
 import { renderPlantilla } from '@/lib/templates/render';
 import { obtenerSaldoAFavorPorCliente } from '@/lib/cobranzas/saldo-favor';
+import { empresaIdDeSesion } from '@/lib/tenant';
 
 /**
  * POST /api/cobranzas/generar-cola
@@ -46,8 +47,10 @@ export async function POST() {
     // Excluir facturas que ya tienen una gestión activa (no solo PENDIENTE:
     // una gestión APROBADA aún no enviada también cuenta — si no, el cliente
     // recibiría dos cobros por la misma factura el mismo día).
+    const empresaId = empresaIdDeSesion(session);
     const pendientes = await cobranzasQuery<{ ij_inum: number }>(
-      "SELECT DISTINCT ij_inum FROM cobranza_gestiones WHERE estado IN ('PENDIENTE','APROBADO','EDITADO','ENVIANDO')"
+      "SELECT DISTINCT ij_inum FROM cobranza_gestiones WHERE empresa_id = ? AND estado IN ('PENDIENTE','APROBADO','EDITADO','ENVIANDO')",
+      [empresaId]
     );
     const pendienteIds = new Set(pendientes.map((p) => p.ij_inum));
     facturas = facturas.filter((f) => !pendienteIds.has(f.numero_interno));
@@ -184,14 +187,14 @@ export async function POST() {
       // Insertar gestión en DB
       await cobranzasExecute(
         `INSERT INTO cobranza_gestiones (
-          ij_local, ij_typedoc, ij_inum, codigo_cliente,
+          empresa_id, ij_local, ij_typedoc, ij_inum, codigo_cliente,
           total_factura, saldo_pendiente, moneda, fecha_vencimiento,
           dias_vencido, segmento_riesgo, canal,
           mensaje_propuesto_wa, mensaje_propuesto_email, asunto_email,
           estado, tiene_pdf, url_pdf, creado_por, ultima_consulta_softec
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDIENTE', ?, ?, ?, NOW())`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDIENTE', ?, ?, ?, NOW())`,
         [
-          f.localidad, f.tipo_doc, f.numero_interno, f.codigo_cliente,
+          empresaId, f.localidad, f.tipo_doc, f.numero_interno, f.codigo_cliente,
           f.total_factura, f.saldo_pendiente, f.moneda, f.fecha_vencimiento,
           f.dias_vencido, f.segmento_riesgo, canal,
           mensajes.mensaje_wa, mensajes.mensaje_email, mensajes.asunto_email,

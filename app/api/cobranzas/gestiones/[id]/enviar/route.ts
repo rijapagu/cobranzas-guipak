@@ -6,6 +6,7 @@ import { enviarWhatsApp } from '@/lib/evolution/client';
 import { enviarEmail } from '@/lib/email/sender';
 import { resolverEmailPropio, resolverWhatsAppPropio } from '@/lib/cobranzas/contactos';
 import { pagosPorAplicar } from '@/lib/cobranzas/validacion-envio';
+import { empresaIdDeSesion } from '@/lib/tenant';
 import { differenceInHours } from 'date-fns';
 
 interface GestionRow {
@@ -51,11 +52,12 @@ export async function POST(
 
     const { id } = await params;
     const gestionId = Number(id);
+    const empresaId = empresaIdDeSesion(session);
 
-    // Obtener gestión
+    // Obtener gestión (scoped a la empresa de la sesión)
     const gestiones = await cobranzasQuery<GestionRow>(
-      'SELECT * FROM cobranza_gestiones WHERE id = ?',
-      [gestionId]
+      'SELECT * FROM cobranza_gestiones WHERE id = ? AND empresa_id = ?',
+      [gestionId, empresaId]
     );
 
     if (gestiones.length === 0) {
@@ -101,8 +103,8 @@ export async function POST(
         if (saldoRows.length > 0 && saldoRows[0].saldo <= 0) {
           // Factura ya pagada — cancelar gestión
           await cobranzasExecute(
-            "UPDATE cobranza_gestiones SET estado = 'DESCARTADO', motivo_descarte = 'FACTURA_PAGADA' WHERE id = ?",
-            [gestionId]
+            "UPDATE cobranza_gestiones SET estado = 'DESCARTADO', motivo_descarte = 'FACTURA_PAGADA' WHERE id = ? AND empresa_id = ?",
+            [gestionId, empresaId]
           );
           await logAccion(session.userId.toString(), 'ENVIO_CANCELADO_PAGADA', 'gestion', id, {
             cliente: g.codigo_cliente,
@@ -116,8 +118,8 @@ export async function POST(
 
         // Actualizar timestamp de consulta
         await cobranzasExecute(
-          'UPDATE cobranza_gestiones SET ultima_consulta_softec = NOW() WHERE id = ?',
-          [gestionId]
+          'UPDATE cobranza_gestiones SET ultima_consulta_softec = NOW() WHERE id = ? AND empresa_id = ?',
+          [gestionId, empresaId]
         );
       }
     }
@@ -152,8 +154,8 @@ export async function POST(
     const claim = await cobranzasExecute(
       `UPDATE cobranza_gestiones
        SET estado = 'ENVIANDO'
-       WHERE id = ? AND estado IN ('APROBADO','EDITADO') AND aprobado_por IS NOT NULL`,
-      [gestionId]
+       WHERE id = ? AND empresa_id = ? AND estado IN ('APROBADO','EDITADO') AND aprobado_por IS NOT NULL`,
+      [gestionId, empresaId]
     );
     if (claim.affectedRows === 0) {
       return NextResponse.json(
@@ -198,9 +200,9 @@ export async function POST(
       // Registrar en conversaciones
       await cobranzasExecute(
         `INSERT INTO cobranza_conversaciones
-         (gestion_id, codigo_cliente, ij_inum, canal, direccion, contenido, whatsapp_message_id, estado, generado_por_ia, aprobado_por)
-         VALUES (?, ?, ?, 'WHATSAPP', 'ENVIADO', ?, ?, ?, 1, ?)`,
-        [gestionId, g.codigo_cliente, g.ij_inum, mensajeWa, waMessageId,
+         (empresa_id, gestion_id, codigo_cliente, ij_inum, canal, direccion, contenido, whatsapp_message_id, estado, generado_por_ia, aprobado_por)
+         VALUES (?, ?, ?, ?, 'WHATSAPP', 'ENVIADO', ?, ?, ?, 1, ?)`,
+        [empresaId, gestionId, g.codigo_cliente, g.ij_inum, mensajeWa, waMessageId,
          waResult.status === 'sent' ? 'ENVIADO' : 'FALLIDO', g.aprobado_por]
       );
 
@@ -216,9 +218,9 @@ export async function POST(
 
       await cobranzasExecute(
         `INSERT INTO cobranza_conversaciones
-         (gestion_id, codigo_cliente, ij_inum, canal, direccion, contenido, asunto, email_to, email_message_id, estado, generado_por_ia, aprobado_por)
-         VALUES (?, ?, ?, 'EMAIL', 'ENVIADO', ?, ?, ?, ?, ?, 1, ?)`,
-        [gestionId, g.codigo_cliente, g.ij_inum, mensajeEmail, asuntoEmail,
+         (empresa_id, gestion_id, codigo_cliente, ij_inum, canal, direccion, contenido, asunto, email_to, email_message_id, estado, generado_por_ia, aprobado_por)
+         VALUES (?, ?, ?, ?, 'EMAIL', 'ENVIADO', ?, ?, ?, ?, ?, 1, ?)`,
+        [empresaId, gestionId, g.codigo_cliente, g.ij_inum, mensajeEmail, asuntoEmail,
          contacto.email, emailMessageId,
          emailResult.status === 'sent' ? 'ENVIADO' : 'FALLIDO', g.aprobado_por]
       );
@@ -233,8 +235,8 @@ export async function POST(
     await cobranzasExecute(
       `UPDATE cobranza_gestiones
        SET estado = ?, fecha_envio = NOW(), whatsapp_message_id = ?, email_message_id = ?
-       WHERE id = ?`,
-      [nuevoEstado, waMessageId, emailMessageId, gestionId]
+       WHERE id = ? AND empresa_id = ?`,
+      [nuevoEstado, waMessageId, emailMessageId, gestionId, empresaId]
     );
 
     await logAccion(session.userId.toString(), 'MENSAJE_ENVIADO', 'gestion', id, {
@@ -253,8 +255,8 @@ export async function POST(
 
     } catch (errEnvio) {
       await cobranzasExecute(
-        "UPDATE cobranza_gestiones SET estado = 'FALLIDO' WHERE id = ? AND estado = 'ENVIANDO'",
-        [gestionId]
+        "UPDATE cobranza_gestiones SET estado = 'FALLIDO' WHERE id = ? AND empresa_id = ? AND estado = 'ENVIANDO'",
+        [gestionId, empresaId]
       ).catch(() => {});
       throw errEnvio;
     }

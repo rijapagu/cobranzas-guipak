@@ -85,7 +85,7 @@ export async function ejecutarSinRespuesta(): Promise<StatsSinRespuesta> {
        DATE_FORMAT(g.fecha_aprobacion, '%Y-%m-%d') AS fecha_aprobacion,
        DATEDIFF(CURDATE(), g.fecha_aprobacion) AS dias_sin_respuesta
      FROM cobranza_gestiones g
-     WHERE g.estado IN ('APROBADO','EDITADO')
+     WHERE g.empresa_id = 1 AND g.estado IN ('APROBADO','EDITADO')
        AND g.canal IN ('EMAIL','WHATSAPP')
        AND DATEDIFF(CURDATE(), g.fecha_aprobacion) BETWEEN ? AND 30
      ORDER BY g.fecha_aprobacion ASC
@@ -129,7 +129,7 @@ export async function ejecutarSinRespuesta(): Promise<StatsSinRespuesta> {
   }>(
     `SELECT codigo_cliente, MAX(fecha_aprobacion) AS ultima_gestion
      FROM cobranza_gestiones
-     WHERE codigo_cliente IN (${codigosPlaceholders})
+     WHERE empresa_id = 1 AND codigo_cliente IN (${codigosPlaceholders})
        AND estado IN ('APROBADO','EDITADO')
        AND fecha_aprobacion >= (CURDATE() - INTERVAL 30 DAY)
      GROUP BY codigo_cliente`,

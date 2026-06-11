@@ -953,7 +953,7 @@ async function estadoCobrosHoy(): Promise<ResultadoTool> {
   }
 
   const pendientes = await cobranzasQuery<{ total: number }>(
-    "SELECT COUNT(*) AS total FROM cobranza_gestiones WHERE estado='PENDIENTE'"
+    "SELECT COUNT(*) AS total FROM cobranza_gestiones WHERE empresa_id = 1 AND estado='PENDIENTE'"
   );
   const promesasHoy = await cobranzasQuery<{ total: number }>(
     "SELECT COUNT(*) AS total FROM cobranza_acuerdos WHERE estado='PENDIENTE' AND fecha_prometida = CURDATE()"
@@ -992,7 +992,7 @@ async function listarPendientesAprobacion(limite: number): Promise<ResultadoTool
   }>(
     `SELECT id, codigo_cliente, ij_inum, canal, saldo_pendiente, dias_vencida, segmento, created_at
      FROM cobranza_gestiones
-     WHERE estado='PENDIENTE'
+     WHERE empresa_id = 1 AND estado='PENDIENTE'
      ORDER BY created_at ASC
      LIMIT ?`,
     [limite]
@@ -1566,7 +1566,7 @@ async function estadoCadencias(): Promise<ResultadoTool> {
 
   // Gestiones generadas por cadencias en las últimas 24h
   const generadasHoy = await cobranzasQuery<{ total: number }>(
-    "SELECT COUNT(*) AS total FROM cobranza_gestiones WHERE creado_por='cadencias' AND created_at >= NOW() - INTERVAL 24 HOUR"
+    "SELECT COUNT(*) AS total FROM cobranza_gestiones WHERE empresa_id = 1 AND creado_por='cadencias' AND created_at >= NOW() - INTERVAL 24 HOUR"
   );
 
   return {

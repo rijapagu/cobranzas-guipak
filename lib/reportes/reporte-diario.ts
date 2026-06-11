@@ -144,9 +144,9 @@ async function obtenerAlertas(): Promise<ResumenAlertas> {
   try {
     const [[prom], [pend], [pagos], [ayer], [hoy], [disp]] = await Promise.all([
       cobranzasQuery<{ t: number }>("SELECT COUNT(*) AS t FROM cobranza_acuerdos WHERE estado='PENDIENTE' AND fecha_prometida < CURDATE()"),
-      cobranzasQuery<{ t: number }>("SELECT COUNT(*) AS t FROM cobranza_gestiones WHERE estado='PENDIENTE'"),
+      cobranzasQuery<{ t: number }>("SELECT COUNT(*) AS t FROM cobranza_gestiones WHERE empresa_id = 1 AND estado='PENDIENTE'"),
       cobranzasQuery<{ t: number }>("SELECT COUNT(*) AS t FROM cobranza_conciliacion WHERE estado='POR_APLICAR'"),
-      cobranzasQuery<{ t: number }>("SELECT COUNT(*) AS t FROM cobranza_gestiones WHERE estado='ENVIADO' AND DATE(fecha_envio)=CURDATE()-INTERVAL 1 DAY"),
+      cobranzasQuery<{ t: number }>("SELECT COUNT(*) AS t FROM cobranza_gestiones WHERE empresa_id = 1 AND estado='ENVIADO' AND DATE(fecha_envio)=CURDATE()-INTERVAL 1 DAY"),
       cobranzasQuery<{ t: number }>("SELECT COUNT(*) AS t FROM cobranza_acuerdos WHERE estado='PENDIENTE' AND fecha_prometida=CURDATE()"),
       cobranzasQuery<{ t: number }>("SELECT COUNT(*) AS t FROM cobranza_disputas WHERE estado IN ('ABIERTA','EN_REVISION')"),
     ]);
@@ -202,10 +202,10 @@ async function obtenerGestiones(): Promise<ResumenGestiones> {
   const r: ResumenGestiones = { enviadas_ayer: 0, aprobadas_hoy: 0, descartadas_hoy: 0, pendientes: 0 };
   try {
     const [[ayer], [apro], [desc], [pend]] = await Promise.all([
-      cobranzasQuery<{ t: number }>("SELECT COUNT(*) AS t FROM cobranza_gestiones WHERE estado='ENVIADO' AND DATE(fecha_envio)=CURDATE()-INTERVAL 1 DAY"),
-      cobranzasQuery<{ t: number }>("SELECT COUNT(*) AS t FROM cobranza_gestiones WHERE estado='APROBADO' AND DATE(fecha_aprobacion)=CURDATE()"),
-      cobranzasQuery<{ t: number }>("SELECT COUNT(*) AS t FROM cobranza_gestiones WHERE estado='DESCARTADO' AND DATE(updated_at)=CURDATE()"),
-      cobranzasQuery<{ t: number }>("SELECT COUNT(*) AS t FROM cobranza_gestiones WHERE estado='PENDIENTE'"),
+      cobranzasQuery<{ t: number }>("SELECT COUNT(*) AS t FROM cobranza_gestiones WHERE empresa_id = 1 AND estado='ENVIADO' AND DATE(fecha_envio)=CURDATE()-INTERVAL 1 DAY"),
+      cobranzasQuery<{ t: number }>("SELECT COUNT(*) AS t FROM cobranza_gestiones WHERE empresa_id = 1 AND estado='APROBADO' AND DATE(fecha_aprobacion)=CURDATE()"),
+      cobranzasQuery<{ t: number }>("SELECT COUNT(*) AS t FROM cobranza_gestiones WHERE empresa_id = 1 AND estado='DESCARTADO' AND DATE(updated_at)=CURDATE()"),
+      cobranzasQuery<{ t: number }>("SELECT COUNT(*) AS t FROM cobranza_gestiones WHERE empresa_id = 1 AND estado='PENDIENTE'"),
     ]);
     r.enviadas_ayer   = Number(ayer.t) || 0;
     r.aprobadas_hoy   = Number(apro.t) || 0;

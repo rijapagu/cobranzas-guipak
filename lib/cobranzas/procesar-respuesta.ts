@@ -1,5 +1,6 @@
 import { cobranzasQuery, cobranzasExecute, logAccion } from '@/lib/db/cobranzas';
 import { generarRespuestaCliente } from '@/lib/claude/client';
+import { EMPRESA_GUIPAK } from '@/lib/tenant';
 import type { ContextoRespuesta } from '@/lib/claude/prompts';
 import { crearTareaSeguimientoAcuerdo } from '@/lib/cobranzas/auto-tareas';
 
@@ -45,9 +46,9 @@ export async function procesarRespuestaCliente(
   const facturas = await cobranzasQuery<{ ij_inum: number; saldo_pendiente: number; moneda: string; dias_vencido: number; segmento_riesgo: string }>(
     `SELECT ij_inum, saldo_pendiente, moneda, dias_vencido, segmento_riesgo
      FROM cobranza_gestiones
-     WHERE codigo_cliente = ? AND estado IN ('ENVIADO','APROBADO','EDITADO')
+     WHERE empresa_id = ? AND codigo_cliente = ? AND estado IN ('ENVIADO','APROBADO','EDITADO')
      ORDER BY dias_vencido DESC LIMIT 1`,
-    [cliente.codigo]
+    [EMPRESA_GUIPAK, cliente.codigo]
   );
 
   // Buscar historial de conversación
@@ -136,13 +137,13 @@ export async function procesarRespuestaCliente(
   if (respuesta.respuesta_wa) {
     await cobranzasExecute(
       `INSERT INTO cobranza_gestiones
-       (ij_local, ij_typedoc, ij_inum, codigo_cliente,
+       (empresa_id, ij_local, ij_typedoc, ij_inum, codigo_cliente,
         total_factura, saldo_pendiente, moneda, fecha_vencimiento,
         dias_vencido, segmento_riesgo, canal,
         mensaje_propuesto_wa, estado, creado_por, ultima_consulta_softec)
-       VALUES ('001', 'IN', ?, ?, ?, ?, ?, CURDATE(), ?, ?, 'WHATSAPP', ?, 'PENDIENTE', 'ia_respuesta', NOW())`,
+       VALUES (?, '001', 'IN', ?, ?, ?, ?, ?, CURDATE(), ?, ?, 'WHATSAPP', ?, 'PENDIENTE', 'ia_respuesta', NOW())`,
       [
-        factura.ij_inum, cliente.codigo,
+        EMPRESA_GUIPAK, factura.ij_inum, cliente.codigo,
         factura.saldo_pendiente, factura.saldo_pendiente, factura.moneda,
         factura.dias_vencido, factura.segmento_riesgo,
         respuesta.respuesta_wa,

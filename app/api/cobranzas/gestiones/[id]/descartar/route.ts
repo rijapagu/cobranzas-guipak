@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { getSession } from '@/lib/auth/session';
 import { cobranzasQuery, cobranzasExecute, logAccion } from '@/lib/db/cobranzas';
+import { empresaIdDeSesion } from '@/lib/tenant';
 
 const descartarSchema = z.object({
   motivo: z.string().min(1, 'Motivo requerido'),
@@ -33,9 +34,10 @@ export async function POST(
       return NextResponse.json({ error: 'Motivo requerido' }, { status: 400 });
     }
 
+    const empresaId = empresaIdDeSesion(session);
     const gestiones = await cobranzasQuery<{ id: number; estado: string; codigo_cliente: string }>(
-      'SELECT id, estado, codigo_cliente FROM cobranza_gestiones WHERE id = ?',
-      [gestionId]
+      'SELECT id, estado, codigo_cliente FROM cobranza_gestiones WHERE id = ? AND empresa_id = ?',
+      [gestionId, empresaId]
     );
 
     if (gestiones.length === 0) {
@@ -55,8 +57,8 @@ export async function POST(
     );
 
     await cobranzasExecute(
-      'UPDATE cobranza_gestiones SET estado = ?, motivo_descarte = ?, aprobado_por = ? WHERE id = ?',
-      ['DESCARTADO', parsed.data.motivo, session.email, gestionId]
+      'UPDATE cobranza_gestiones SET estado = ?, motivo_descarte = ?, aprobado_por = ? WHERE id = ? AND empresa_id = ?',
+      ['DESCARTADO', parsed.data.motivo, session.email, gestionId, empresaId]
     );
 
     // Cancelar tarea espejo de cadencia si existe (Camino A junio 2026).

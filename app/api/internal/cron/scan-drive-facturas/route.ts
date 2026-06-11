@@ -78,7 +78,7 @@ async function scanDriveFacturas() {
 
     await cobranzasExecute(
       `UPDATE cobranza_gestiones SET tiene_pdf = 1, url_pdf = ?
-       WHERE ij_inum = ? AND estado IN ('PENDIENTE', 'APROBADO')`,
+       WHERE empresa_id = 1 AND ij_inum = ? AND estado IN ('PENDIENTE', 'APROBADO')`,
       [urlPdf, ij_inum]
     );
 

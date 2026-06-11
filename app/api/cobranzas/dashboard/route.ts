@@ -5,11 +5,13 @@ import { softecQuery, testSoftecConnection } from '@/lib/db/softec';
 import { obtenerSaldoAFavorPorCliente } from '@/lib/cobranzas/saldo-favor';
 import { getMockCartera } from '@/lib/mock/cartera-mock';
 import { getRedis } from '@/lib/redis/client';
+import { empresaIdDeSesion } from '@/lib/tenant';
 
 // Cache del dashboard en Redis: ~10 queries (varias agregando toda la
 // cartera del ERP) por cada carga de página no escalan sin esto.
-const DASHBOARD_CACHE_KEY = 'cache:dashboard:v1';
+// La clave incluye la empresa: cada tenant tiene su propio cache.
 const DASHBOARD_CACHE_TTL_SEG = 120;
+const cacheKeyDashboard = (empresaId: number) => `cache:dashboard:v2:empresa:${empresaId}`;
 
 interface DashboardKPIs {
   // Cartera
@@ -62,10 +64,12 @@ export async function GET(request: NextRequest) {
   }
 
   // Cache (TTL 2 min). El botón "Actualizar" puede forzar con ?refresh=1.
+  const empresaId = empresaIdDeSesion(session);
+  const cacheKey = cacheKeyDashboard(empresaId);
   const forzar = request.nextUrl.searchParams.get('refresh') === '1';
   if (!forzar) {
     try {
-      const cacheado = await getRedis().get(DASHBOARD_CACHE_KEY);
+      const cacheado = await getRedis().get(cacheKey);
       if (cacheado) {
         return NextResponse.json(JSON.parse(cacheado));
       }
@@ -278,31 +282,32 @@ export async function GET(request: NextRequest) {
 
     // Gestiones hoy
     const gestionesHoy = await cobranzasQuery<{ total: number }>(
-      "SELECT COUNT(*) as total FROM cobranza_gestiones WHERE DATE(created_at) = ?",
-      [hoy]
+      "SELECT COUNT(*) as total FROM cobranza_gestiones WHERE empresa_id = ? AND DATE(created_at) = ?",
+      [empresaId, hoy]
     );
     kpis.gestiones_hoy = gestionesHoy[0]?.total || 0;
 
     // Pendientes aprobación
     const pendientes = await cobranzasQuery<{ total: number }>(
-      "SELECT COUNT(*) as total FROM cobranza_gestiones WHERE estado = 'PENDIENTE'"
+      "SELECT COUNT(*) as total FROM cobranza_gestiones WHERE empresa_id = ? AND estado = 'PENDIENTE'",
+      [empresaId]
     );
     kpis.pendientes_aprobacion = pendientes[0]?.total || 0;
 
     // Enviadas hoy
     const enviadasHoy = await cobranzasQuery<{ total: number }>(
-      "SELECT COUNT(*) as total FROM cobranza_gestiones WHERE estado = 'ENVIADO' AND DATE(fecha_envio) = ?",
-      [hoy]
+      "SELECT COUNT(*) as total FROM cobranza_gestiones WHERE empresa_id = ? AND estado = 'ENVIADO' AND DATE(fecha_envio) = ?",
+      [empresaId, hoy]
     );
     kpis.enviadas_hoy = enviadasHoy[0]?.total || 0;
 
     // Acuerdos
     const acuerdos = await cobranzasQuery<{ estado: string; total: number }>(
       `SELECT estado, COUNT(*) as total FROM cobranza_acuerdos
-       WHERE estado IN ('PENDIENTE', 'CUMPLIDO', 'INCUMPLIDO')
+       WHERE empresa_id = ? AND estado IN ('PENDIENTE', 'CUMPLIDO', 'INCUMPLIDO')
        AND (estado = 'PENDIENTE' OR updated_at >= ?)
        GROUP BY estado`,
-      [inicioMes]
+      [empresaId, inicioMes]
     );
     acuerdos.forEach(a => {
       if (a.estado === 'PENDIENTE') kpis.acuerdos_pendientes = a.total;
@@ -313,9 +318,9 @@ export async function GET(request: NextRequest) {
     // Canales — mensajes del mes
     const canales = await cobranzasQuery<{ canal: string; direccion: string; total: number }>(
       `SELECT canal, direccion, COUNT(*) as total FROM cobranza_conversaciones
-       WHERE created_at >= ?
+       WHERE empresa_id = ? AND created_at >= ?
        GROUP BY canal, direccion`,
-      [inicioMes]
+      [empresaId, inicioMes]
     );
     canales.forEach(c => {
       if (c.canal === 'WHATSAPP' && c.direccion === 'ENVIADO') kpis.wa_enviados_mes = c.total;
@@ -326,12 +331,13 @@ export async function GET(request: NextRequest) {
 
     // Promesas vencidas
     const promesasVencidas = await cobranzasQuery<{ total: number }>(
-      "SELECT COUNT(*) as total FROM cobranza_acuerdos WHERE estado = 'PENDIENTE' AND fecha_prometida < CURDATE()"
+      "SELECT COUNT(*) as total FROM cobranza_acuerdos WHERE empresa_id = ? AND estado = 'PENDIENTE' AND fecha_prometida < CURDATE()",
+      [empresaId]
     );
     kpis.promesas_vencidas = promesasVencidas[0]?.total || 0;
 
     try {
-      await getRedis().set(DASHBOARD_CACHE_KEY, JSON.stringify(kpis), 'EX', DASHBOARD_CACHE_TTL_SEG);
+      await getRedis().set(cacheKey, JSON.stringify(kpis), 'EX', DASHBOARD_CACHE_TTL_SEG);
     } catch {
       // sin cache, no es fatal
     }

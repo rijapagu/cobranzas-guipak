@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { getSession } from '@/lib/auth/session';
 import { cobranzasQuery, cobranzasExecute, logAccion } from '@/lib/db/cobranzas';
+import { empresaIdDeSesion } from '@/lib/tenant';
 
 const aprobarSchema = z.object({
   mensaje_editado_wa: z.string().optional(),
@@ -29,11 +30,12 @@ export async function POST(
 
     const { id } = await params;
     const gestionId = Number(id);
+    const empresaId = empresaIdDeSesion(session);
 
-    // Verificar que existe y está PENDIENTE
+    // Verificar que existe y está PENDIENTE (scoped a la empresa de la sesión)
     const gestiones = await cobranzasQuery<{ id: number; estado: string; mensaje_propuesto_wa: string; mensaje_propuesto_email: string; asunto_email: string; codigo_cliente: string; saldo_pendiente: number }>(
-      'SELECT id, estado, mensaje_propuesto_wa, mensaje_propuesto_email, asunto_email, codigo_cliente, saldo_pendiente FROM cobranza_gestiones WHERE id = ?',
-      [gestionId]
+      'SELECT id, estado, mensaje_propuesto_wa, mensaje_propuesto_email, asunto_email, codigo_cliente, saldo_pendiente FROM cobranza_gestiones WHERE id = ? AND empresa_id = ?',
+      [gestionId, empresaId]
     );
 
     if (gestiones.length === 0) {
@@ -73,8 +75,8 @@ export async function POST(
       `UPDATE cobranza_gestiones
        SET estado = ?, aprobado_por = ?, fecha_aprobacion = NOW(),
            mensaje_final_wa = ?, mensaje_final_email = ?
-       WHERE id = ?`,
-      [nuevoEstado, session.email, mensajeFinalWa, mensajeFinalEmail, gestionId]
+       WHERE id = ? AND empresa_id = ?`,
+      [nuevoEstado, session.email, mensajeFinalWa, mensajeFinalEmail, gestionId, empresaId]
     );
 
     // Cerrar tarea espejo de cadencia si existe (Camino A junio 2026).

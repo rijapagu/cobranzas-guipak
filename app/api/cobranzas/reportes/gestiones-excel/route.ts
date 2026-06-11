@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth/session';
+import { empresaIdDeSesion } from '@/lib/tenant';
 import { cobranzasQuery, logAccion } from '@/lib/db/cobranzas';
 import * as XLSX from 'xlsx';
 
@@ -35,9 +36,9 @@ export async function GET(request: NextRequest) {
         g.creado_por AS 'Creado Por',
         g.created_at AS 'Fecha Creación'
       FROM cobranza_gestiones g
-      WHERE DATE(g.created_at) BETWEEN ? AND ?
+      WHERE g.empresa_id = ? AND DATE(g.created_at) BETWEEN ? AND ?
       ORDER BY g.created_at DESC`,
-      [desde, hasta]
+      [empresaIdDeSesion(session), desde, hasta]
     );
 
     const wb = XLSX.utils.book_new();

@@ -176,7 +176,7 @@ export async function proponerCorreoCliente(
 
   // 4. Verificar gestión PENDIENTE existente para este cliente
   const yaPendiente = await cobranzasQuery<{ id: number }>(
-    "SELECT id FROM cobranza_gestiones WHERE codigo_cliente = ? AND canal = 'EMAIL' AND estado='PENDIENTE' LIMIT 1",
+    "SELECT id FROM cobranza_gestiones WHERE empresa_id = 1 AND codigo_cliente = ? AND canal = 'EMAIL' AND estado='PENDIENTE' LIMIT 1",
     [codigoCliente]
   );
   if (yaPendiente.length > 0) {
@@ -271,12 +271,12 @@ export async function proponerCorreoCliente(
   // 8. Insertar gestión (referencia la factura más urgente pero saldo = total)
   const insertResult = await cobranzasExecute(
     `INSERT INTO cobranza_gestiones (
-      ij_local, ij_typedoc, ij_inum, codigo_cliente,
+      empresa_id, ij_local, ij_typedoc, ij_inum, codigo_cliente,
       total_factura, saldo_pendiente, moneda,
       fecha_vencimiento, dias_vencido, segmento_riesgo,
       canal, mensaje_propuesto_wa, mensaje_propuesto_email, asunto_email,
       estado, ultima_consulta_softec, creado_por
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'EMAIL', NULL, ?, ?, 'PENDIENTE', NOW(), ?)`,
+    ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'EMAIL', NULL, ?, ?, 'PENDIENTE', NOW(), ?)`,
     [
       masUrgente.ij_local,
       masUrgente.ij_typedoc,

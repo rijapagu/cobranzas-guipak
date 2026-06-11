@@ -147,7 +147,7 @@ export async function proponerWhatsAppCliente(
 
   // Ya hay gestión WHATSAPP pendiente para esta factura
   const yaPendiente = await cobranzasQuery<{ id: number }>(
-    "SELECT id FROM cobranza_gestiones WHERE ij_inum = ? AND canal='WHATSAPP' AND estado='PENDIENTE'",
+    "SELECT id FROM cobranza_gestiones WHERE empresa_id = 1 AND ij_inum = ? AND canal='WHATSAPP' AND estado='PENDIENTE'",
     [f.ij_inum]
   );
   if (yaPendiente.length > 0) {
@@ -197,13 +197,13 @@ export async function proponerWhatsAppCliente(
   // Insertar en cobranza_gestiones
   const insertResult = await cobranzasExecute(
     `INSERT INTO cobranza_gestiones (
-      ij_local, ij_typedoc, ij_inum, codigo_cliente,
+      empresa_id, ij_local, ij_typedoc, ij_inum, codigo_cliente,
       total_factura, saldo_pendiente, moneda,
       fecha_vencimiento, dias_vencido, segmento_riesgo,
       canal, mensaje_propuesto_wa, mensaje_propuesto_email, asunto_email,
       tiene_pdf, url_pdf,
       estado, ultima_consulta_softec, creado_por
-    ) VALUES ('001', 'IN', ?, ?, ?, ?, 'DOP', ?, ?, ?, 'WHATSAPP', ?, NULL, NULL, ?, ?, 'PENDIENTE', NOW(), ?)`,
+    ) VALUES (1, '001', 'IN', ?, ?, ?, ?, 'DOP', ?, ?, ?, 'WHATSAPP', ?, NULL, NULL, ?, ?, 'PENDIENTE', NOW(), ?)`,
     [
       f.ij_inum,
       codigoCliente,

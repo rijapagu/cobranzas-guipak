@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth/session';
 import { cobranzasQuery } from '@/lib/db/cobranzas';
+import { empresaIdDeSesion } from '@/lib/tenant';
 import type { CobranzaGestion, ColaAprobacionResponse } from '@/lib/types/cobranzas';
 
 /**
@@ -20,16 +21,17 @@ export async function GET(request: NextRequest) {
     const busqueda = searchParams.get('busqueda');
     const estado = searchParams.get('estado') || 'PENDIENTE';
 
+    const empresaId = empresaIdDeSesion(session);
     let sql = `
       SELECT g.*,
-        (SELECT COUNT(*) FROM cobranza_gestiones WHERE estado = 'PENDIENTE') as total_pendientes,
-        (SELECT COUNT(*) FROM cobranza_gestiones WHERE estado = 'APROBADO' AND DATE(fecha_aprobacion) = CURDATE()) as aprobadas_hoy,
-        (SELECT COUNT(*) FROM cobranza_gestiones WHERE estado = 'DESCARTADO' AND DATE(updated_at) = CURDATE()) as descartadas_hoy,
-        (SELECT COUNT(*) FROM cobranza_gestiones WHERE estado = 'ESCALADO' AND DATE(updated_at) = CURDATE()) as escaladas_hoy
+        (SELECT COUNT(*) FROM cobranza_gestiones WHERE estado = 'PENDIENTE' AND empresa_id = ?) as total_pendientes,
+        (SELECT COUNT(*) FROM cobranza_gestiones WHERE estado = 'APROBADO' AND DATE(fecha_aprobacion) = CURDATE() AND empresa_id = ?) as aprobadas_hoy,
+        (SELECT COUNT(*) FROM cobranza_gestiones WHERE estado = 'DESCARTADO' AND DATE(updated_at) = CURDATE() AND empresa_id = ?) as descartadas_hoy,
+        (SELECT COUNT(*) FROM cobranza_gestiones WHERE estado = 'ESCALADO' AND DATE(updated_at) = CURDATE() AND empresa_id = ?) as escaladas_hoy
       FROM cobranza_gestiones g
-      WHERE g.estado = ?
+      WHERE g.empresa_id = ? AND g.estado = ?
     `;
-    const params: (string | number)[] = [estado];
+    const params: (string | number)[] = [empresaId, empresaId, empresaId, empresaId, empresaId, estado];
 
     if (segmento) {
       sql += ' AND g.segmento_riesgo = ?';

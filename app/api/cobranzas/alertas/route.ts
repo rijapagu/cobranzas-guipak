@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth/session';
+import { empresaIdDeSesion } from '@/lib/tenant';
 import { cobranzasQuery } from '@/lib/db/cobranzas';
 import { softecQuery, testSoftecConnection } from '@/lib/db/softec';
 import { obtenerSaldoAFavorPorCliente } from '@/lib/cobranzas/saldo-favor';
@@ -59,7 +60,8 @@ export async function GET() {
       saldo_pendiente: number;
       created_at: string;
     }>(
-      "SELECT id, codigo_cliente, ij_inum, saldo_pendiente, created_at FROM cobranza_gestiones WHERE estado = 'ESCALADO' ORDER BY created_at DESC LIMIT 20"
+      "SELECT id, codigo_cliente, ij_inum, saldo_pendiente, created_at FROM cobranza_gestiones WHERE empresa_id = ? AND estado = 'ESCALADO' ORDER BY created_at DESC LIMIT 20",
+      [empresaIdDeSesion(session)]
     );
 
     escaladas.forEach(e => {

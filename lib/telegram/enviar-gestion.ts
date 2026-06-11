@@ -14,6 +14,7 @@ import { enviarWhatsApp } from '@/lib/evolution/client';
 import { downloadPdfBuffer } from '@/lib/drive/client';
 import { resolverEmailPropio, resolverWhatsAppPropio } from '@/lib/cobranzas/contactos';
 import { pagosPorAplicar } from '@/lib/cobranzas/validacion-envio';
+import { EMPRESA_GUIPAK } from '@/lib/tenant';
 import { differenceInHours } from 'date-fns';
 
 interface GestionRow {
@@ -39,9 +40,11 @@ export interface ResultadoEnvio {
 }
 
 export async function enviarGestion(gestionId: number): Promise<ResultadoEnvio> {
+  // El bot de Telegram es de Guipak (Etapa 4 lo parametrizará por empresa).
+  // Este guard de entrada hace tenant-safe el resto de operaciones por id (PK).
   const rows = await cobranzasQuery<GestionRow>(
-    'SELECT id, estado, aprobado_por, canal, codigo_cliente, ij_inum, saldo_pendiente, asunto_email, mensaje_propuesto_email, mensaje_propuesto_wa, mensaje_final_email, ultima_consulta_softec FROM cobranza_gestiones WHERE id = ?',
-    [gestionId]
+    'SELECT id, estado, aprobado_por, canal, codigo_cliente, ij_inum, saldo_pendiente, asunto_email, mensaje_propuesto_email, mensaje_propuesto_wa, mensaje_final_email, ultima_consulta_softec FROM cobranza_gestiones WHERE id = ? AND empresa_id = ?',
+    [gestionId, EMPRESA_GUIPAK]
   );
 
   if (rows.length === 0) return { ok: false, error: 'Gestión no encontrada' };
@@ -173,9 +176,9 @@ export async function enviarGestion(gestionId: number): Promise<ResultadoEnvio> 
         [result.messageId || null, gestionId]
       );
       await cobranzasExecute(
-        `INSERT INTO cobranza_conversaciones (codigo_cliente, ij_inum, canal, direccion, contenido, whatsapp_message_id, gestion_id)
-         VALUES (?, ?, 'WHATSAPP', 'ENVIADO', ?, ?, ?)`,
-        [codigo, gestion.ij_inum, mensajeFinal, result.messageId || null, gestionId]
+        `INSERT INTO cobranza_conversaciones (empresa_id, codigo_cliente, ij_inum, canal, direccion, contenido, whatsapp_message_id, gestion_id)
+         VALUES (?, ?, ?, 'WHATSAPP', 'ENVIADO', ?, ?, ?)`,
+        [EMPRESA_GUIPAK, codigo, gestion.ij_inum, mensajeFinal, result.messageId || null, gestionId]
       );
 
       return {
@@ -242,9 +245,9 @@ export async function enviarGestion(gestionId: number): Promise<ResultadoEnvio> 
       [result.messageId || null, gestionId]
     );
     await cobranzasExecute(
-      `INSERT INTO cobranza_conversaciones (codigo_cliente, ij_inum, canal, direccion, contenido, gestion_id)
-       VALUES (?, ?, 'EMAIL', 'ENVIADO', ?, ?)`,
-      [codigo, gestion.ij_inum, `${asunto}\n\n${cuerpo}`, gestionId]
+      `INSERT INTO cobranza_conversaciones (empresa_id, codigo_cliente, ij_inum, canal, direccion, contenido, gestion_id)
+       VALUES (?, ?, ?, 'EMAIL', 'ENVIADO', ?, ?)`,
+      [EMPRESA_GUIPAK, codigo, gestion.ij_inum, `${asunto}\n\n${cuerpo}`, gestionId]
     );
 
     return {
