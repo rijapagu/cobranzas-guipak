@@ -85,7 +85,7 @@ export async function POST(request: NextRequest) {
 
       // Buscar conversación por whatsapp_message_id
       const convs = await cobranzasQuery<{ id: number; estado: string }>(
-        'SELECT id, estado FROM cobranza_conversaciones WHERE whatsapp_message_id = ? LIMIT 1',
+        'SELECT id, estado FROM cobranza_conversaciones WHERE empresa_id = 1 AND whatsapp_message_id = ? LIMIT 1',
         [messageId]
       );
 

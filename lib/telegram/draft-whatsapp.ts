@@ -103,7 +103,7 @@ export async function proponerWhatsAppCliente(
 
   // Disputa activa
   const disputas = await cobranzasQuery<{ count: number }>(
-    "SELECT COUNT(*) AS count FROM cobranza_disputas WHERE ij_inum = ? AND estado IN ('ABIERTA','EN_REVISION')",
+    "SELECT COUNT(*) AS count FROM cobranza_disputas WHERE empresa_id = 1 AND ij_inum = ? AND estado IN ('ABIERTA','EN_REVISION')",
     [f.ij_inum]
   );
   if (Number(disputas[0]?.count) > 0) {

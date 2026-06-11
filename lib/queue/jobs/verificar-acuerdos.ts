@@ -57,7 +57,7 @@ export async function verificarAcuerdos(): Promise<StatsVerificacionAcuerdos> {
   const acuerdos = await cobranzasQuery<AcuerdoPendiente>(
     `SELECT id, codigo_cliente, ij_inum, monto_prometido, fecha_prometida, created_at
      FROM cobranza_acuerdos
-     WHERE estado = 'PENDIENTE' AND fecha_prometida <= CURDATE()`
+     WHERE empresa_id = 1 AND estado = 'PENDIENTE' AND fecha_prometida <= CURDATE()`
   );
 
   stats.evaluados = acuerdos.length;

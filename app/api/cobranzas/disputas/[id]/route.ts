@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { getSession } from '@/lib/auth/session';
 import { cobranzasQuery, cobranzasExecute, logAccion } from '@/lib/db/cobranzas';
+import { empresaIdDeSesion } from '@/lib/tenant';
 import { softecQuery } from '@/lib/db/softec';
 
 const UpdateSchema = z.object({
@@ -24,7 +25,7 @@ export async function GET(
 
   const { id } = await params;
   const rows = await cobranzasQuery(
-    'SELECT * FROM cobranza_disputas WHERE id = ?',
+    'SELECT * FROM cobranza_disputas WHERE id = ? AND empresa_id = ' + empresaIdDeSesion(session),
     [Number(id)]
   );
   if (rows.length === 0) return NextResponse.json({ error: 'No encontrada' }, { status: 404 });
@@ -101,7 +102,7 @@ export async function PUT(
   const { id } = await params;
   const idNum = Number(id);
 
-  const rows = await cobranzasQuery('SELECT * FROM cobranza_disputas WHERE id = ?', [idNum]);
+  const rows = await cobranzasQuery('SELECT * FROM cobranza_disputas WHERE id = ? AND empresa_id = ' + empresaIdDeSesion(session), [idNum]);
   if (rows.length === 0) return NextResponse.json({ error: 'No encontrada' }, { status: 404 });
   const actual = rows[0] as { estado: string };
 

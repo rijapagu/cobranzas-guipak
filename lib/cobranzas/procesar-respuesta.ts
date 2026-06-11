@@ -54,15 +54,15 @@ export async function procesarRespuestaCliente(
   // Buscar historial de conversación
   const historial = await cobranzasQuery<{ direccion: string; contenido: string; created_at: string }>(
     `SELECT direccion, contenido, created_at FROM cobranza_conversaciones
-     WHERE codigo_cliente = ? ORDER BY created_at DESC LIMIT 10`,
+     WHERE empresa_id = 1 AND codigo_cliente = ? ORDER BY created_at DESC LIMIT 10`,
     [cliente.codigo]
   );
 
   // Buscar acuerdos previos
   const acuerdos = await cobranzasQuery<{ monto_prometido: number; fecha_prometida: string; estado: string }>(
     `SELECT monto_prometido, fecha_prometida, estado FROM cobranza_acuerdos
-     WHERE codigo_cliente = ? ORDER BY created_at DESC LIMIT 5`,
-    [cliente.codigo]
+     WHERE empresa_id = ? AND codigo_cliente = ? ORDER BY created_at DESC LIMIT 5`,
+    [EMPRESA_GUIPAK, cliente.codigo]
   );
 
   const factura = facturas[0] || { ij_inum: 0, saldo_pendiente: 0, moneda: 'DOP', dias_vencido: 0, segmento_riesgo: 'AMARILLO' };
@@ -70,9 +70,9 @@ export async function procesarRespuestaCliente(
   // Registrar mensaje recibido en conversaciones
   const convResult = await cobranzasExecute(
     `INSERT INTO cobranza_conversaciones
-     (codigo_cliente, ij_inum, canal, direccion, contenido, whatsapp_from, estado, generado_por_ia)
-     VALUES (?, ?, ?, 'RECIBIDO', ?, ?, 'RESPONDIDO', 0)`,
-    [cliente.codigo, factura.ij_inum || null, canal, mensaje, telefono]
+     (empresa_id, codigo_cliente, ij_inum, canal, direccion, contenido, whatsapp_from, estado, generado_por_ia)
+     VALUES (?, ?, ?, ?, 'RECIBIDO', ?, ?, 'RESPONDIDO', 0)`,
+    [EMPRESA_GUIPAK, cliente.codigo, factura.ij_inum || null, canal, mensaje, telefono]
   );
 
   // Construir contexto para Claude
@@ -100,10 +100,10 @@ export async function procesarRespuestaCliente(
   if (respuesta.acuerdo?.fecha) {
     const acuerdoResult = await cobranzasExecute(
       `INSERT INTO cobranza_acuerdos
-       (codigo_cliente, ij_inum, conversacion_id, monto_prometido, moneda, fecha_prometida, descripcion, capturado_por_ia, registrado_por)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 1, 'ia_sistema')`,
+       (empresa_id, codigo_cliente, ij_inum, conversacion_id, monto_prometido, moneda, fecha_prometida, descripcion, capturado_por_ia, registrado_por)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 'ia_sistema')`,
       [
-        cliente.codigo, factura.ij_inum, convResult.insertId,
+        EMPRESA_GUIPAK, cliente.codigo, factura.ij_inum, convResult.insertId,
         respuesta.acuerdo.monto || factura.saldo_pendiente,
         factura.moneda, respuesta.acuerdo.fecha,
         respuesta.acuerdo.descripcion || `Acuerdo detectado por IA del mensaje: "${mensaje.substring(0, 100)}"`,
@@ -123,10 +123,10 @@ export async function procesarRespuestaCliente(
   if (respuesta.disputa?.motivo) {
     await cobranzasExecute(
       `INSERT INTO cobranza_disputas
-       (codigo_cliente, ij_inum, motivo, monto_disputado, registrado_por)
-       VALUES (?, ?, ?, ?, 'ia_sistema')`,
+       (empresa_id, codigo_cliente, ij_inum, motivo, monto_disputado, registrado_por)
+       VALUES (?, ?, ?, ?, ?, 'ia_sistema')`,
       [
-        cliente.codigo, factura.ij_inum,
+        EMPRESA_GUIPAK, cliente.codigo, factura.ij_inum,
         respuesta.disputa.motivo,
         respuesta.disputa.monto_disputado || null,
       ]
@@ -187,7 +187,7 @@ async function buscarClientePorTelefono(telefono: string): Promise<{ codigo: str
   // Buscar en conversaciones previas por teléfono
   const conv = await cobranzasQuery<{ codigo_cliente: string }>(
     `SELECT DISTINCT codigo_cliente FROM cobranza_conversaciones
-     WHERE whatsapp_from LIKE ? LIMIT 1`,
+     WHERE empresa_id = 1 AND whatsapp_from LIKE ? LIMIT 1`,
     [`%${numLimpio.slice(-10)}%`]
   );
 

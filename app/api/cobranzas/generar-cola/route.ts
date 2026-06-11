@@ -37,9 +37,12 @@ export async function POST() {
       facturas = getMockCartera();
     }
 
+    const empresaId = empresaIdDeSesion(session);
+
     // CP-03: Excluir facturas con disputa activa
     const disputas = await cobranzasQuery<{ ij_inum: number }>(
-      "SELECT DISTINCT ij_inum FROM cobranza_disputas WHERE estado IN ('ABIERTA', 'EN_REVISION')"
+      "SELECT DISTINCT ij_inum FROM cobranza_disputas WHERE empresa_id = ? AND estado IN ('ABIERTA', 'EN_REVISION')",
+      [empresaId]
     );
     const disputaIds = new Set(disputas.map((d) => d.ij_inum));
     facturas = facturas.filter((f) => !disputaIds.has(f.numero_interno));
@@ -47,7 +50,6 @@ export async function POST() {
     // Excluir facturas que ya tienen una gestión activa (no solo PENDIENTE:
     // una gestión APROBADA aún no enviada también cuenta — si no, el cliente
     // recibiría dos cobros por la misma factura el mismo día).
-    const empresaId = empresaIdDeSesion(session);
     const pendientes = await cobranzasQuery<{ ij_inum: number }>(
       "SELECT DISTINCT ij_inum FROM cobranza_gestiones WHERE empresa_id = ? AND estado IN ('PENDIENTE','APROBADO','EDITADO','ENVIANDO')",
       [empresaId]

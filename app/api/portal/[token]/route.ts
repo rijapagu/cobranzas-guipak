@@ -28,14 +28,15 @@ export async function GET(
       );
     }
 
-    // CP-07: Verificar token
+    // CP-07: Verificar token (la empresa se resuelve DESDE el token)
     const tokens = await cobranzasQuery<{
       id: number;
       codigo_cliente: string;
       fecha_expiracion: string;
       activo: number;
+      empresa_id: number;
     }>(
-      'SELECT id, codigo_cliente, fecha_expiracion, activo FROM cobranza_portal_tokens WHERE token = ? AND activo = 1 AND fecha_expiracion > NOW() LIMIT 1',
+      'SELECT id, codigo_cliente, fecha_expiracion, activo, empresa_id FROM cobranza_portal_tokens WHERE token = ? AND activo = 1 AND fecha_expiracion > NOW() LIMIT 1',
       [token]
     );
 
@@ -147,8 +148,8 @@ export async function GET(
       fecha_prometida: string;
       estado: string;
     }>(
-      "SELECT id, ij_inum, monto_prometido, fecha_prometida, estado FROM cobranza_acuerdos WHERE codigo_cliente = ? AND estado = 'PENDIENTE' ORDER BY fecha_prometida ASC",
-      [codigoCliente]
+      "SELECT id, ij_inum, monto_prometido, fecha_prometida, estado FROM cobranza_acuerdos WHERE empresa_id = ? AND codigo_cliente = ? AND estado = 'PENDIENTE' ORDER BY fecha_prometida ASC",
+      [portalToken.empresa_id, codigoCliente]
     );
 
     const totalSaldo = facturasConDocs.reduce((sum: number, f: Record<string, unknown>) =>

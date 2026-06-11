@@ -124,7 +124,7 @@ export async function proponerCorreoCliente(
   const inums = facturas.map((f) => Number(f.ij_inum));
   const disputasRows = await cobranzasQuery<{ ij_inum: number }>(
     `SELECT DISTINCT ij_inum FROM cobranza_disputas
-     WHERE estado IN ('ABIERTA','EN_REVISION')
+     WHERE empresa_id = 1 AND estado IN ('ABIERTA','EN_REVISION')
        AND ij_inum IN (${inums.map(() => '?').join(',')})`,
     inums
   );

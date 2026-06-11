@@ -91,7 +91,7 @@ export async function ejecutarRecordatoriosPromesas(): Promise<StatsRecordatorio
        DATE_FORMAT(fecha_prometida, '%Y-%m-%d') AS fecha_prometida,
        DATEDIFF(CURDATE(), fecha_prometida) AS dias_diff
      FROM cobranza_acuerdos
-     WHERE estado='PENDIENTE'
+     WHERE empresa_id = 1 AND estado='PENDIENTE'
        AND fecha_prometida <= CURDATE()
      ORDER BY fecha_prometida ASC`
   );

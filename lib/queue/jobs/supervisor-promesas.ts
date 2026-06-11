@@ -134,7 +134,7 @@ export async function ejecutarSupervisorPromesas(): Promise<SupervisorPromesasSt
      FROM cobranza_acuerdos a
      LEFT JOIN cobranza_cliente_inteligencia i
        ON i.codigo_cliente = TRIM(a.codigo_cliente)
-     WHERE a.monto_prometido >= ?
+     WHERE a.empresa_id = 1 AND a.monto_prometido >= ?
        AND (
          (a.estado = 'PENDIENTE' AND a.fecha_prometida < DATE_SUB(CURDATE(), INTERVAL ${diasGracia} DAY))
          OR a.estado = 'INCUMPLIDO'

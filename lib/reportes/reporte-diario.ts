@@ -143,12 +143,12 @@ async function obtenerAlertas(): Promise<ResumenAlertas> {
   };
   try {
     const [[prom], [pend], [pagos], [ayer], [hoy], [disp]] = await Promise.all([
-      cobranzasQuery<{ t: number }>("SELECT COUNT(*) AS t FROM cobranza_acuerdos WHERE estado='PENDIENTE' AND fecha_prometida < CURDATE()"),
+      cobranzasQuery<{ t: number }>("SELECT COUNT(*) AS t FROM cobranza_acuerdos WHERE empresa_id = 1 AND estado='PENDIENTE' AND fecha_prometida < CURDATE()"),
       cobranzasQuery<{ t: number }>("SELECT COUNT(*) AS t FROM cobranza_gestiones WHERE empresa_id = 1 AND estado='PENDIENTE'"),
       cobranzasQuery<{ t: number }>("SELECT COUNT(*) AS t FROM cobranza_conciliacion WHERE estado='POR_APLICAR'"),
       cobranzasQuery<{ t: number }>("SELECT COUNT(*) AS t FROM cobranza_gestiones WHERE empresa_id = 1 AND estado='ENVIADO' AND DATE(fecha_envio)=CURDATE()-INTERVAL 1 DAY"),
-      cobranzasQuery<{ t: number }>("SELECT COUNT(*) AS t FROM cobranza_acuerdos WHERE estado='PENDIENTE' AND fecha_prometida=CURDATE()"),
-      cobranzasQuery<{ t: number }>("SELECT COUNT(*) AS t FROM cobranza_disputas WHERE estado IN ('ABIERTA','EN_REVISION')"),
+      cobranzasQuery<{ t: number }>("SELECT COUNT(*) AS t FROM cobranza_acuerdos WHERE empresa_id = 1 AND estado='PENDIENTE' AND fecha_prometida=CURDATE()"),
+      cobranzasQuery<{ t: number }>("SELECT COUNT(*) AS t FROM cobranza_disputas WHERE empresa_id = 1 AND estado IN ('ABIERTA','EN_REVISION')"),
     ]);
     r.promesas_vencidas    = Number(prom.t) || 0;
     r.pendientes_aprobacion = Number(pend.t) || 0;

@@ -956,10 +956,10 @@ async function estadoCobrosHoy(): Promise<ResultadoTool> {
     "SELECT COUNT(*) AS total FROM cobranza_gestiones WHERE empresa_id = 1 AND estado='PENDIENTE'"
   );
   const promesasHoy = await cobranzasQuery<{ total: number }>(
-    "SELECT COUNT(*) AS total FROM cobranza_acuerdos WHERE estado='PENDIENTE' AND fecha_prometida = CURDATE()"
+    "SELECT COUNT(*) AS total FROM cobranza_acuerdos WHERE empresa_id = 1 AND estado='PENDIENTE' AND fecha_prometida = CURDATE()"
   );
   const promesasVencidas = await cobranzasQuery<{ total: number }>(
-    "SELECT COUNT(*) AS total FROM cobranza_acuerdos WHERE estado='PENDIENTE' AND fecha_prometida < CURDATE()"
+    "SELECT COUNT(*) AS total FROM cobranza_acuerdos WHERE empresa_id = 1 AND estado='PENDIENTE' AND fecha_prometida < CURDATE()"
   );
 
   return {
@@ -1025,7 +1025,7 @@ async function listarPromesasVencidas(limite: number): Promise<ResultadoTool> {
   }>(
     `SELECT id, codigo_cliente, ij_inum, monto_prometido, fecha_prometida
      FROM cobranza_acuerdos
-     WHERE estado='PENDIENTE' AND fecha_prometida < CURDATE()
+     WHERE empresa_id = 1 AND estado='PENDIENTE' AND fecha_prometida < CURDATE()
      ORDER BY fecha_prometida ASC
      LIMIT ?`,
     [limite]
@@ -1061,7 +1061,7 @@ async function historialConversacionesCliente(
   }>(
     `SELECT canal, direccion, contenido, created_at
      FROM cobranza_conversaciones
-     WHERE codigo_cliente = ?
+     WHERE empresa_id = 1 AND codigo_cliente = ?
      ORDER BY created_at DESC
      LIMIT ?`,
     [normalizarCodigoCliente(codigoCliente), limite]

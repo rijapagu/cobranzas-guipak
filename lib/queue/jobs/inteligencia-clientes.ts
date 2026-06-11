@@ -284,7 +284,7 @@ export async function ejecutarInteligenciaClientes(): Promise<{
       COUNT(*)                                                           AS total,
       SUM(CASE WHEN estado = 'CUMPLIDO' THEN 1 ELSE 0 END)              AS cumplidas
     FROM cobranza_acuerdos
-    WHERE fecha_prometida >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)
+    WHERE empresa_id = 1 AND fecha_prometida >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)
     GROUP BY codigo_cliente
   `);
   const promesasMap = new Map<string, PromesaStats>(

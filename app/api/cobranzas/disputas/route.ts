@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { getSession } from '@/lib/auth/session';
 import { cobranzasQuery, cobranzasExecute, logAccion } from '@/lib/db/cobranzas';
 import { softecQuery } from '@/lib/db/softec';
+import { empresaIdDeSesion } from '@/lib/tenant';
 
 const EstadoEnum = z.enum(['ABIERTA', 'EN_REVISION', 'RESUELTA', 'ANULADA']);
 
@@ -28,8 +29,9 @@ export async function GET(req: NextRequest) {
   const desde = searchParams.get('desde');
   const hasta = searchParams.get('hasta');
 
-  const where: string[] = [];
-  const params: (string | number)[] = [];
+  const empresaId = empresaIdDeSesion(session);
+  const where: string[] = ['d.empresa_id = ?'];
+  const params: (string | number)[] = [empresaId];
 
   if (estado) {
     const e = EstadoEnum.safeParse(estado);
@@ -66,7 +68,8 @@ export async function GET(req: NextRequest) {
 
   // Conteos por estado (siempre, sin filtros)
   const conteos = await cobranzasQuery<{ estado: string; total: number }>(
-    `SELECT estado, COUNT(*) AS total FROM cobranza_disputas GROUP BY estado`
+    `SELECT estado, COUNT(*) AS total FROM cobranza_disputas WHERE empresa_id = ? GROUP BY estado`,
+    [empresaId]
   );
   const porEstado = Object.fromEntries(conteos.map((c) => [c.estado, Number(c.total)]));
 
@@ -111,9 +114,9 @@ export async function POST(req: NextRequest) {
   const d = parsed.data;
 
   const result = await cobranzasExecute(
-    `INSERT INTO cobranza_disputas (codigo_cliente, ij_inum, motivo, monto_disputado, registrado_por)
-     VALUES (?, ?, ?, ?, ?)`,
-    [d.codigo_cliente, d.ij_inum, d.motivo, d.monto_disputado ?? null, session.email]
+    `INSERT INTO cobranza_disputas (empresa_id, codigo_cliente, ij_inum, motivo, monto_disputado, registrado_por)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [empresaIdDeSesion(session), d.codigo_cliente, d.ij_inum, d.motivo, d.monto_disputado ?? null, session.email]
   );
   const id = (result as { insertId?: number }).insertId;
 

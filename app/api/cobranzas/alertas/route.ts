@@ -36,7 +36,8 @@ export async function GET() {
       monto_prometido: number;
       fecha_prometida: string;
     }>(
-      "SELECT id, codigo_cliente, ij_inum, monto_prometido, fecha_prometida FROM cobranza_acuerdos WHERE estado = 'PENDIENTE' AND fecha_prometida < CURDATE() ORDER BY fecha_prometida ASC"
+      "SELECT id, codigo_cliente, ij_inum, monto_prometido, fecha_prometida FROM cobranza_acuerdos WHERE empresa_id = ? AND estado = 'PENDIENTE' AND fecha_prometida < CURDATE() ORDER BY fecha_prometida ASC",
+      [empresaIdDeSesion(session)]
     );
 
     promesasVencidas.forEach(p => {

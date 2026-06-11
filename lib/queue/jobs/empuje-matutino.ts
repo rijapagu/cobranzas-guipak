@@ -137,7 +137,7 @@ async function obtenerAlertas(): Promise<ResumenAlertas> {
 
   try {
     const promesas = await cobranzasQuery<{ total: number }>(
-      "SELECT COUNT(*) AS total FROM cobranza_acuerdos WHERE estado = 'PENDIENTE' AND fecha_prometida < CURDATE()"
+      "SELECT COUNT(*) AS total FROM cobranza_acuerdos WHERE empresa_id = 1 AND estado = 'PENDIENTE' AND fecha_prometida < CURDATE()"
     );
     resumen.promesas_vencidas = Number(promesas[0]?.total) || 0;
 
@@ -157,7 +157,7 @@ async function obtenerAlertas(): Promise<ResumenAlertas> {
     resumen.enviadas_hoy = Number(enviadas[0]?.total) || 0;
 
     const venceHoy = await cobranzasQuery<{ total: number }>(
-      "SELECT COUNT(*) AS total FROM cobranza_acuerdos WHERE estado = 'PENDIENTE' AND fecha_prometida = CURDATE()"
+      "SELECT COUNT(*) AS total FROM cobranza_acuerdos WHERE empresa_id = 1 AND estado = 'PENDIENTE' AND fecha_prometida = CURDATE()"
     );
     resumen.acuerdos_vencen_hoy = Number(venceHoy[0]?.total) || 0;
   } catch (error) {

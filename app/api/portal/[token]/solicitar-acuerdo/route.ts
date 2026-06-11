@@ -30,12 +30,13 @@ export async function POST(
       );
     }
 
-    // CP-07: Verificar token
+    // CP-07: Verificar token (la empresa se resuelve DESDE el token)
     const tokens = await cobranzasQuery<{
       id: number;
       codigo_cliente: string;
+      empresa_id: number;
     }>(
-      'SELECT id, codigo_cliente FROM cobranza_portal_tokens WHERE token = ? AND activo = 1 AND fecha_expiracion > NOW() LIMIT 1',
+      'SELECT id, codigo_cliente, empresa_id FROM cobranza_portal_tokens WHERE token = ? AND activo = 1 AND fecha_expiracion > NOW() LIMIT 1',
       [token]
     );
 
@@ -43,7 +44,7 @@ export async function POST(
       return NextResponse.json({ error: 'Token inválido o expirado' }, { status: 401 });
     }
 
-    const { codigo_cliente } = tokens[0];
+    const { codigo_cliente, empresa_id } = tokens[0];
     const body = await request.json();
     const { ij_inum, monto_propuesto, fecha_propuesta, mensaje } = body;
 
@@ -57,9 +58,10 @@ export async function POST(
     // Registrar acuerdo como PENDIENTE — supervisor debe aprobar
     const result = await cobranzasExecute(
       `INSERT INTO cobranza_acuerdos
-       (codigo_cliente, ij_inum, monto_prometido, fecha_prometida, descripcion, estado, capturado_por_ia, registrado_por)
-       VALUES (?, ?, ?, ?, ?, 'PENDIENTE', 0, 'PORTAL_CLIENTE')`,
+       (empresa_id, codigo_cliente, ij_inum, monto_prometido, fecha_prometida, descripcion, estado, capturado_por_ia, registrado_por)
+       VALUES (?, ?, ?, ?, ?, ?, 'PENDIENTE', 0, 'PORTAL_CLIENTE')`,
       [
+        empresa_id,
         codigo_cliente,
         ij_inum,
         monto_propuesto,

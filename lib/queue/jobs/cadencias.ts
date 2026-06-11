@@ -135,7 +135,7 @@ export async function ejecutarCadenciasHorarias(): Promise<{
 
   // Exclusiones: disputas activas
   const disputasRows = await cobranzasQuery<{ ij_inum: number }>(
-    "SELECT DISTINCT ij_inum FROM cobranza_disputas WHERE estado IN ('ABIERTA','EN_REVISION')"
+    "SELECT DISTINCT ij_inum FROM cobranza_disputas WHERE empresa_id = 1 AND estado IN ('ABIERTA','EN_REVISION')"
   );
   const disputas = new Set(disputasRows.map((d) => d.ij_inum));
 

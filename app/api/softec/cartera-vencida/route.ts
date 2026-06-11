@@ -217,7 +217,7 @@ async function queryCarteraReal(): Promise<FacturaVencida[]> {
 
   // Paso 2: IDs de facturas con disputa activa (CP-03)
   const disputas = await cobranzasQuery<{ ij_inum: number }>(
-    "SELECT DISTINCT ij_inum FROM cobranza_disputas WHERE estado IN ('ABIERTA', 'EN_REVISION')"
+    "SELECT DISTINCT ij_inum FROM cobranza_disputas WHERE empresa_id = 1 AND estado IN ('ABIERTA', 'EN_REVISION')"
   );
   const disputaIds = new Set(disputas.map((d) => d.ij_inum));
 
