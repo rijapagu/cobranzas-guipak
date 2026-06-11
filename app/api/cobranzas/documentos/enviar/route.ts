@@ -77,7 +77,13 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: 'No se pudo descargar el PDF desde Google Drive' }, { status: 500 });
       }
 
-      await enviarEmail(destinatario.trim(), asunto, cuerpo, adjuntos);
+      const resultadoEmail = await enviarEmail(destinatario.trim(), asunto, cuerpo, adjuntos);
+      if (resultadoEmail.status !== 'sent') {
+        return NextResponse.json(
+          { error: `No se pudo enviar el email: ${resultadoEmail.error || 'error SMTP'}` },
+          { status: 502 }
+        );
+      }
 
       return NextResponse.json({
         ok: true,
@@ -89,7 +95,13 @@ export async function POST(request: NextRequest) {
     const urlPdf = `https://drive.google.com/file/d/${doc.google_drive_id}/view`;
     const textoWa = `Buen día, le compartimos la factura #${doc.ij_inum} de Suministros Guipak:\n\n📄 ${urlPdf}\n\nCualquier duda estamos a la orden.`;
 
-    await enviarWhatsApp(destinatario.trim(), textoWa);
+    const resultadoWa = await enviarWhatsApp(destinatario.trim(), textoWa);
+    if (resultadoWa.status !== 'sent') {
+      return NextResponse.json(
+        { error: `No se pudo enviar el WhatsApp: ${resultadoWa.error || 'error Evolution API'}` },
+        { status: 502 }
+      );
+    }
 
     return NextResponse.json({
       ok: true,

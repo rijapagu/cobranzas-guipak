@@ -69,7 +69,7 @@ export async function ejecutarRespuestaCliente(): Promise<StatsRespuestaCliente>
     `SELECT id, codigo_cliente, canal, contenido,
             DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s') AS created_at
      FROM cobranza_conversaciones
-     WHERE direccion='ENTRANTE'
+     WHERE direccion='RECIBIDO'
        AND created_at >= (NOW() - INTERVAL ? HOUR)
        AND codigo_cliente IS NOT NULL
        AND codigo_cliente != ''
@@ -94,7 +94,7 @@ export async function ejecutarRespuestaCliente(): Promise<StatsRespuestaCliente>
     `SELECT codigo_cliente, MAX(created_at) AS ultima_saliente
      FROM cobranza_conversaciones
      WHERE codigo_cliente IN (${placeholdersCodigos})
-       AND direccion='SALIENTE'
+       AND direccion='ENVIADO'
        AND created_at >= (NOW() - INTERVAL ? HOUR)
      GROUP BY codigo_cliente`,
     [...codigosUnicos, VENTANA_HORAS + 4]

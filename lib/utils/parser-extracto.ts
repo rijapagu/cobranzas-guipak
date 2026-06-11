@@ -6,6 +6,7 @@
 import * as XLSX from 'xlsx';
 import type { LineaExtracto } from '@/lib/types/conciliacion';
 import { esBancoPopular, parsearBancoPopular } from './parser-banco-popular';
+import { parsearMonto } from './montos';
 
 const COLUMN_PATTERNS = {
   fecha: /fecha|date|fch/i,
@@ -43,8 +44,8 @@ export function parsearExtracto(buffer: Buffer, fileName: string): LineaExtracto
   const lineas: LineaExtracto[] = [];
 
   for (const row of rawData) {
-    const monto = parseFloat(String(row[mapping.monto] || '0'));
-    if (!monto || monto <= 0) continue; // Solo depósitos/créditos
+    const monto = parsearMonto(row[mapping.monto]);
+    if (!monto || isNaN(monto) || monto <= 0) continue; // Solo depósitos/créditos
 
     const fechaRaw = row[mapping.fecha];
     let fecha = '';

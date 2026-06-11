@@ -109,7 +109,7 @@ export async function ejecutarSinRespuesta(): Promise<StatsSinRespuesta> {
     `SELECT codigo_cliente, MAX(created_at) AS ultima_respuesta
      FROM cobranza_conversaciones
      WHERE codigo_cliente IN (${codigosPlaceholders})
-       AND direccion='ENTRANTE'
+       AND direccion='RECIBIDO'
        AND created_at >= (CURDATE() - INTERVAL 30 DAY)
      GROUP BY codigo_cliente`,
     codigosUnicos

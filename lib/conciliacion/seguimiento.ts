@@ -2,6 +2,7 @@ import { cobranzasQuery, cobranzasExecute, logAccion } from '@/lib/db/cobranzas'
 import { testSoftecConnection } from '@/lib/db/softec';
 import { enviarMensajeGrupo } from '@/lib/telegram/client';
 import { procesarLinea } from './matcher';
+import { toYmd } from '@/lib/utils/fechas';
 import type { LineaExtracto } from '@/lib/types/conciliacion';
 
 interface ConciliacionPendiente {
@@ -56,7 +57,7 @@ export async function crearTareasConciliacion(stats: {
          VALUES (?, ?, 'SEGUIMIENTO', ?, 'MEDIA', 'sistema-conciliacion', 'CONCILIACION', ?)`,
         [
           `Depósito ${fmt} sin recibo en Softec`,
-          `Banco: ${stats.banco}\nDescripción: ${d.descripcion}\nRef: ${d.referencia || '-'}\nCuenta: ${d.cuenta_origen || '-'}\nFecha banco: ${d.fecha_transaccion}\n\nVerificar si ya se registró el recibo (RC) en Softec. El sistema re-verificará automáticamente.`,
+          `Banco: ${stats.banco}\nDescripción: ${d.descripcion}\nRef: ${d.referencia || '-'}\nCuenta: ${d.cuenta_origen || '-'}\nFecha banco: ${toYmd(d.fecha_transaccion)}\n\nVerificar si ya se registró el recibo (RC) en Softec. El sistema re-verificará automáticamente.`,
           hoy,
           ref,
         ]
@@ -89,7 +90,7 @@ export async function crearTareasConciliacion(stats: {
          VALUES (?, ?, 'CHEQUE_DEVUELTO', ?, 'ALTA', 'sistema-conciliacion', 'CONCILIACION', ?)`,
         [
           `Cheque devuelto ${fmt}`,
-          `Ref: ${ch.referencia || '-'}\nDescripción: ${ch.descripcion}\nFecha: ${ch.fecha_transaccion}\n\nPasos:\n1. Desaplicar pago en Softec\n2. Contactar al cliente para reposición del cheque\n3. Marcar como hecha cuando se resuelva`,
+          `Ref: ${ch.referencia || '-'}\nDescripción: ${ch.descripcion}\nFecha: ${toYmd(ch.fecha_transaccion)}\n\nPasos:\n1. Desaplicar pago en Softec\n2. Contactar al cliente para reposición del cheque\n3. Marcar como hecha cuando se resuelva`,
           hoy,
           ref,
         ]
@@ -171,7 +172,9 @@ export async function verificarDesconocidos(): Promise<{
 
   for (const p of pendientes) {
     const linea: LineaExtracto = {
-      fecha_transaccion: String(p.fecha_transaccion).substring(0, 10),
+      // toYmd: mysql2 devuelve DATE como objeto Date; String(...) producía
+      // "Wed Jun 10" y el DATEDIFF del matcher nunca encontraba nada.
+      fecha_transaccion: toYmd(p.fecha_transaccion),
       descripcion: p.descripcion || '',
       referencia: p.referencia || '',
       cuenta_origen: p.cuenta_origen || '',

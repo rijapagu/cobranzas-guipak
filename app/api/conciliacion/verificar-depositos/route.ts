@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth/session';
 import { softecQuery, testSoftecConnection } from '@/lib/db/softec';
 import { cobranzasQuery } from '@/lib/db/cobranzas';
+import { toYmd, addDiasYmd } from '@/lib/utils/fechas';
 
 /**
  * GET /api/conciliacion/verificar-depositos?dias=7
@@ -75,7 +76,7 @@ export async function GET(request: NextRequest) {
     // 3. Agrupar recibos Softec por fecha
     const recibosPorFecha = new Map<string, { efectivo: number; cheques: number; total: number; cantidad: number }>();
     for (const r of recibos) {
-      const fecha = String(r.fecha).substring(0, 10);
+      const fecha = toYmd(r.fecha);
       const entry = recibosPorFecha.get(fecha) || { efectivo: 0, cheques: 0, total: 0, cantidad: 0 };
       const monto = Number(r.total);
       if (r.ij_pay === 'EF') entry.efectivo += monto;
@@ -88,7 +89,7 @@ export async function GET(request: NextRequest) {
     // 4. Depósitos bancarios por fecha
     const depositosPorFecha = new Map<string, number>();
     for (const d of depositos) {
-      const fecha = String(d.fecha).substring(0, 10);
+      const fecha = toYmd(d.fecha);
       depositosPorFecha.set(fecha, (depositosPorFecha.get(fecha) || 0) + Number(d.total));
     }
 
@@ -105,17 +106,14 @@ export async function GET(request: NextRequest) {
     }[] = [];
 
     for (const [fecha, info] of recibosPorFecha) {
-      // Buscar depósitos ±3 días de esta fecha de recibos
+      // Buscar depósitos ±3 días de esta fecha de recibos.
+      // Cada día se suma UNA sola vez (el lazo anterior contaba el día exacto
+      // 3 veces y los futuros 2 veces, inflando `depositado`).
       let depositado = 0;
-      const fechaBase = new Date(fecha);
-      for (let offset = 0; offset <= 3; offset++) {
-        for (const dir of [0, 1, -1]) {
-          const check = new Date(fechaBase);
-          check.setDate(check.getDate() + offset * (dir || 1));
-          const key = check.toISOString().substring(0, 10);
-          if (depositosPorFecha.has(key)) {
-            depositado += depositosPorFecha.get(key)!;
-          }
+      for (let offset = -3; offset <= 3; offset++) {
+        const key = addDiasYmd(fecha, offset);
+        if (depositosPorFecha.has(key)) {
+          depositado += depositosPorFecha.get(key)!;
         }
       }
 

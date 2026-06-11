@@ -310,9 +310,10 @@ async function aplicarPaso(
   const canal = paso.accion === 'WHATSAPP' ? 'WHATSAPP' : 'EMAIL';
   const estado = paso.requiere_aprobacion ? 'PENDIENTE' : 'APROBADO';
 
-  // Verificar que no haya gestión PENDIENTE para esta factura
+  // Verificar que no haya gestión ACTIVA para esta factura (PENDIENTE,
+  // APROBADO/EDITADO sin enviar, o ENVIANDO) — evita doble cobro.
   const yaExiste = await cobranzasQuery<{ id: number }>(
-    "SELECT id FROM cobranza_gestiones WHERE ij_inum = ? AND estado='PENDIENTE' LIMIT 1",
+    "SELECT id FROM cobranza_gestiones WHERE ij_inum = ? AND estado IN ('PENDIENTE','APROBADO','EDITADO','ENVIANDO') LIMIT 1",
     [factura.ij_inum]
   );
   if (yaExiste.length > 0) return;

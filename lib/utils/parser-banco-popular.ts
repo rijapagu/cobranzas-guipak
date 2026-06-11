@@ -12,8 +12,44 @@
  */
 
 import type { LineaExtracto } from '@/lib/types/conciliacion';
+import { parsearMonto } from './montos';
 
 type FormatoBP = 'csv' | 'txt' | false;
+
+/**
+ * Split de línea CSV que respeta campos entrecomillados ("a,b" = un campo).
+ * El split(',') ingenuo desalineaba todas las columnas si el banco exporta
+ * montos o descripciones con comas entre comillas.
+ */
+function splitCsvLine(line: string): string[] {
+  const out: string[] = [];
+  let cur = '';
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (inQuotes) {
+      if (c === '"') {
+        if (line[i + 1] === '"') {
+          cur += '"';
+          i++;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        cur += c;
+      }
+    } else if (c === '"') {
+      inQuotes = true;
+    } else if (c === ',') {
+      out.push(cur);
+      cur = '';
+    } else {
+      cur += c;
+    }
+  }
+  out.push(cur);
+  return out;
+}
 
 export function esBancoPopular(text: string): FormatoBP {
   if (text.includes('Fecha Posteo,')) return 'csv';
@@ -45,14 +81,14 @@ function parsearCSV(text: string): LineaExtracto[] {
     }
     if (!enDatos) continue;
 
-    const cols = trimmed.split(',');
+    const cols = splitCsvLine(trimmed);
     if (cols.length < 7) continue;
 
     const descCorta = cols[1];
     const descripcion = cols.slice(6).join(',');
 
-    const monto = parseFloat(cols[2]);
-    if (!monto || monto <= 0) continue;
+    const monto = parsearMonto(cols[2]);
+    if (!monto || isNaN(monto) || monto <= 0) continue;
 
     const fecha = parsearFechaDMY(cols[0]);
     if (!fecha) continue;
@@ -96,7 +132,7 @@ function parsearTXT(text: string): LineaExtracto[] {
     const trimmed = line.trim();
     if (!trimmed) continue;
 
-    const cols = trimmed.split(',');
+    const cols = splitCsvLine(trimmed);
     if (cols.length < 8) continue;
 
     const tipo = cols[4].trim();
@@ -104,8 +140,8 @@ function parsearTXT(text: string): LineaExtracto[] {
     const descripcion = cols.slice(5, cols.length - 2).join(',');
     const referencia = cols[2].trim();
 
-    const monto = parseFloat(cols[3]);
-    if (!monto || monto <= 0) continue;
+    const monto = parsearMonto(cols[3]);
+    if (!monto || isNaN(monto) || monto <= 0) continue;
 
     const fecha = parsearFechaDMY(cols[1]);
     if (!fecha) continue;

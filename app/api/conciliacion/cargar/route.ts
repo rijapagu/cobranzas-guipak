@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth/session';
-import { cobranzasExecute, logAccion } from '@/lib/db/cobranzas';
+import { cobranzasQuery, cobranzasExecute, logAccion } from '@/lib/db/cobranzas';
 import { parsearExtracto } from '@/lib/utils/parser-extracto';
 import { procesarLinea } from '@/lib/conciliacion/matcher';
 import { crearTareasConciliacion, notificarConciliacionDesdeBD } from '@/lib/conciliacion/seguimiento';
@@ -39,15 +39,44 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'No se encontraron transacciones en el archivo' }, { status: 400 });
     }
 
+    // Anti-duplicado nivel archivo: el mismo archivo cargado dos veces
+    // duplicaría todos los registros (montos dobles en stats y alertas).
+    const yaCargado = await cobranzasQuery<{ n: number }>(
+      'SELECT COUNT(*) AS n FROM cobranza_conciliacion WHERE archivo_origen = ?',
+      [file.name]
+    );
+    if (Number(yaCargado[0]?.n) > 0) {
+      return NextResponse.json(
+        {
+          error: `El archivo "${file.name}" ya fue cargado antes (${yaCargado[0].n} registros). ` +
+            'Si es un extracto distinto, renómbralo antes de subirlo.',
+        },
+        { status: 409 }
+      );
+    }
+
     const fechaExtracto = new Date().toISOString().split('T')[0];
     let conciliadas = 0;
     let porAplicar = 0;
     let desconocidas = 0;
+    let duplicadasOmitidas = 0;
 
     let multiRecibo = 0;
     const chequesDevueltos: { fecha: string; monto: number; referencia: string; descripcion: string }[] = [];
 
     for (const linea of lineas) {
+      // Anti-duplicado nivel línea: la misma transacción puede venir en dos
+      // archivos distintos (exports con rangos de fechas solapados).
+      const lineaExistente = await cobranzasQuery<{ id: number }>(
+        `SELECT id FROM cobranza_conciliacion
+         WHERE fecha_transaccion = ? AND monto = ? AND referencia = ? AND descripcion = ?
+         LIMIT 1`,
+        [linea.fecha_transaccion, linea.monto, linea.referencia || '', linea.descripcion || '']
+      );
+      if (lineaExistente.length > 0) {
+        duplicadasOmitidas++;
+        continue;
+      }
       if (linea.tipo === 'CHEQUE_DEVUELTO') {
         await cobranzasExecute(
           `INSERT INTO cobranza_conciliacion (
@@ -122,6 +151,7 @@ export async function POST(request: NextRequest) {
         conciliadas,
         por_aplicar: porAplicar,
         desconocidas,
+        duplicadas_omitidas: duplicadasOmitidas,
         cheques_devueltos: chequesDevueltos.length,
         monto_devuelto: montoDevuelto,
       }
@@ -159,11 +189,13 @@ export async function POST(request: NextRequest) {
       .catch(e => console.error('[CONCILIACION-CARGAR] Error notificando:', e));
 
     return NextResponse.json({
-      message: `Extracto procesado: ${totalCreditos} créditos, ${chequesDevueltos.length} cheques devueltos`,
+      message: `Extracto procesado: ${totalCreditos} créditos, ${chequesDevueltos.length} cheques devueltos` +
+        (duplicadasOmitidas > 0 ? `, ${duplicadasOmitidas} duplicadas omitidas` : ''),
       total: lineas.length,
       conciliadas,
       por_aplicar: porAplicar,
       desconocidas,
+      duplicadas_omitidas: duplicadasOmitidas,
       multi_recibo: multiRecibo,
       cheques_devueltos: chequesDevueltos.length,
       monto_devuelto: montoDevuelto,

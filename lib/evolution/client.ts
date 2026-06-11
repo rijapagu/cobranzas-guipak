@@ -11,7 +11,9 @@ interface EnvioResult {
 
 /**
  * Envía un mensaje de WhatsApp via Evolution API.
- * Si no hay credenciales, retorna mock exitoso.
+ * Sin credenciales configuradas devuelve 'failed' — NUNCA un éxito simulado:
+ * antes devolvía mock 'sent' y si una env var se perdía en un deploy, todas
+ * las gestiones se marcaban ENVIADO sin que nadie recibiera nada.
  */
 export async function enviarWhatsApp(
   telefono: string,
@@ -22,10 +24,11 @@ export async function enviarWhatsApp(
   const instance = process.env.EVOLUTION_INSTANCE;
 
   if (!apiUrl || !apiKey || !instance) {
-    console.log('[EVOLUTION] Mock: Sin credenciales, simulando envío a', telefono);
+    console.error('[EVOLUTION] Sin credenciales (EVOLUTION_API_URL/KEY/INSTANCE) — envío rechazado a', telefono);
     return {
-      messageId: `mock_wa_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-      status: 'sent',
+      messageId: '',
+      status: 'failed',
+      error: 'Evolution API no configurada (faltan EVOLUTION_API_URL/KEY/INSTANCE)',
     };
   }
 

@@ -39,7 +39,7 @@ CREATE TABLE IF NOT EXISTS cobranza_gestiones (
     mensaje_propuesto_wa    TEXT,
     mensaje_propuesto_email TEXT,
     asunto_email            VARCHAR(200),
-    estado                  ENUM('PENDIENTE','APROBADO','EDITADO','DESCARTADO','ESCALADO','ENVIADO','FALLIDO')
+    estado                  ENUM('PENDIENTE','APROBADO','EDITADO','DESCARTADO','ESCALADO','ENVIANDO','ENVIADO','FALLIDO')
                             NOT NULL DEFAULT 'PENDIENTE',
     aprobado_por            VARCHAR(50),
     fecha_aprobacion        DATETIME,

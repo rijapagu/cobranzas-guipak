@@ -43,16 +43,19 @@ export async function POST() {
     const disputaIds = new Set(disputas.map((d) => d.ij_inum));
     facturas = facturas.filter((f) => !disputaIds.has(f.numero_interno));
 
-    // Excluir facturas que ya tienen gestión PENDIENTE
+    // Excluir facturas que ya tienen una gestión activa (no solo PENDIENTE:
+    // una gestión APROBADA aún no enviada también cuenta — si no, el cliente
+    // recibiría dos cobros por la misma factura el mismo día).
     const pendientes = await cobranzasQuery<{ ij_inum: number }>(
-      "SELECT DISTINCT ij_inum FROM cobranza_gestiones WHERE estado = 'PENDIENTE'"
+      "SELECT DISTINCT ij_inum FROM cobranza_gestiones WHERE estado IN ('PENDIENTE','APROBADO','EDITADO','ENVIANDO')"
     );
     const pendienteIds = new Set(pendientes.map((p) => p.ij_inum));
     facturas = facturas.filter((f) => !pendienteIds.has(f.numero_interno));
 
-    // Excluir clientes pausados
+    // Excluir clientes pausados o marcados no_contactar (un cliente con
+    // no_contactar=1 se excluye aunque no tenga pausa_hasta).
     const pausados = await cobranzasQuery<{ codigo_cliente: string }>(
-      'SELECT codigo_cliente FROM cobranza_clientes_enriquecidos WHERE pausa_hasta >= CURDATE() AND no_contactar = 0'
+      'SELECT codigo_cliente FROM cobranza_clientes_enriquecidos WHERE no_contactar = 1 OR pausa_hasta >= CURDATE()'
     );
     const pausadoIds = new Set(pausados.map((p) => p.codigo_cliente.trim()));
     facturas = facturas.filter((f) => !pausadoIds.has(f.codigo_cliente.trim()));

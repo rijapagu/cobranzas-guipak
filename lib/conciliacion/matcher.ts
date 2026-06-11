@@ -14,6 +14,7 @@
 
 import { softecQuery, testSoftecConnection } from '@/lib/db/softec';
 import { cobranzasQuery, cobranzasExecute } from '@/lib/db/cobranzas';
+import { toYmd } from '@/lib/utils/fechas';
 import type { LineaExtracto, EstadoConciliacion, CuentaAprendida } from '@/lib/types/conciliacion';
 
 export interface DetalleRecibo {
@@ -93,7 +94,7 @@ async function matchContraRecibos(linea: LineaExtracto): Promise<MatchResult | n
        AND IJ_TOT = ?
        AND ABS(DATEDIFF(?, IJ_DATE)) <= 3
      LIMIT 5`,
-    [linea.monto, linea.fecha_transaccion]
+    [linea.monto, toYmd(linea.fecha_transaccion)]
   );
 
   if (recibos.length === 0) return null;
@@ -144,7 +145,7 @@ async function matchMultiRecibo(linea: LineaExtracto): Promise<MatchResult | nul
        AND IJ_TOT > 0
        AND ABS(DATEDIFF(?, IJ_DATE)) <= 3
      ORDER BY IJ_TOT DESC`,
-    [linea.monto, linea.fecha_transaccion]
+    [linea.monto, toYmd(linea.fecha_transaccion)]
   );
 
   if (recibos.length < 2) return null;

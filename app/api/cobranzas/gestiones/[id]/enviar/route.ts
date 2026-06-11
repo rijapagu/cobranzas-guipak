@@ -122,6 +122,29 @@ export async function POST(
     }
 
     // ═══════════════════════════════════════════
+    // Reclamo atómico: solo UN request puede pasar de APROBADO/EDITADO a
+    // ENVIANDO. Un doble clic o una aprobación simultánea desde Telegram
+    // pierde la carrera aquí y no produce doble envío.
+    // ═══════════════════════════════════════════
+    const claim = await cobranzasExecute(
+      `UPDATE cobranza_gestiones
+       SET estado = 'ENVIANDO'
+       WHERE id = ? AND estado IN ('APROBADO','EDITADO') AND aprobado_por IS NOT NULL`,
+      [gestionId]
+    );
+    if (claim.affectedRows === 0) {
+      return NextResponse.json(
+        { error: 'La gestión ya está siendo enviada o cambió de estado. Refresca la página.' },
+        { status: 409 }
+      );
+    }
+
+    // Desde aquí la gestión está en ENVIANDO: si algo lanza excepción a mitad
+    // de envío, marcarla FALLIDO para que no quede atascada (el catch interno
+    // re-lanza y el catch externo responde 500).
+    try {
+
+    // ═══════════════════════════════════════════
     // Obtener datos de contacto del cliente
     // ═══════════════════════════════════════════
     const contacto = await obtenerContactoCliente(g.codigo_cliente);
@@ -204,6 +227,14 @@ export async function POST(
       whatsapp_message_id: waMessageId,
       email_message_id: emailMessageId,
     });
+
+    } catch (errEnvio) {
+      await cobranzasExecute(
+        "UPDATE cobranza_gestiones SET estado = 'FALLIDO' WHERE id = ? AND estado = 'ENVIANDO'",
+        [gestionId]
+      ).catch(() => {});
+      throw errEnvio;
+    }
   } catch (error) {
     console.error('[ENVIAR] Error:', error);
     return NextResponse.json({ error: 'Error enviando mensaje' }, { status: 500 });

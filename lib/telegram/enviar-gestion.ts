@@ -74,6 +74,16 @@ export async function enviarGestion(gestionId: number): Promise<ResultadoEnvio> 
     }
   }
 
+  // Reclamo atómico (anti doble envío): solo un caller logra pasar la gestión
+  // a ENVIANDO. Una aprobación simultánea web + Telegram pierde la carrera aquí.
+  const claim = await cobranzasExecute(
+    "UPDATE cobranza_gestiones SET estado='ENVIANDO' WHERE id = ? AND estado IN ('APROBADO','EDITADO') AND aprobado_por IS NOT NULL",
+    [gestionId]
+  );
+  if (claim.affectedRows === 0) {
+    return { ok: false, error: 'La gestión ya está siendo enviada o cambió de estado' };
+  }
+
   const codigo = String(gestion.codigo_cliente).trim();
   const clienteSoftec = await softecQuery<{ email_softec: string | null; telefono: string | null; nombre: string }>(
     "SELECT IC_ARCONTC AS email_softec, IC_PHONE AS telefono, IC_NAME AS nombre FROM v_cobr_icust WHERE IC_CODE = ? LIMIT 1",
@@ -111,6 +121,10 @@ export async function enviarGestion(gestionId: number): Promise<ResultadoEnvio> 
 
     const textoWa = gestion.mensaje_propuesto_wa || '';
     if (!textoWa) {
+      await cobranzasExecute(
+        "UPDATE cobranza_gestiones SET estado='FALLIDO', motivo_descarte='SIN_MENSAJE_WA' WHERE id = ?",
+        [gestionId]
+      );
       return { ok: false, error: 'No hay mensaje de WhatsApp en esta gestión' };
     }
 
@@ -132,14 +146,22 @@ export async function enviarGestion(gestionId: number): Promise<ResultadoEnvio> 
 
       const result = await enviarWhatsApp(telefonoDestino, mensajeFinal);
 
+      if (result.status !== 'sent') {
+        await cobranzasExecute(
+          "UPDATE cobranza_gestiones SET estado='FALLIDO', motivo_descarte=? WHERE id = ?",
+          [(result.error || 'Error Evolution API').substring(0, 200), gestionId]
+        );
+        return { ok: false, error: result.error || 'Error enviando WhatsApp' };
+      }
+
       await cobranzasExecute(
-        `UPDATE cobranza_gestiones SET estado='ENVIADO', fecha_envio=NOW(), email_message_id=? WHERE id = ?`,
+        `UPDATE cobranza_gestiones SET estado='ENVIADO', fecha_envio=NOW(), whatsapp_message_id=? WHERE id = ?`,
         [result.messageId || null, gestionId]
       );
       await cobranzasExecute(
-        `INSERT INTO cobranza_conversaciones (codigo_cliente, ij_inum, canal, direccion, contenido, gestion_id)
-         VALUES (?, ?, 'WHATSAPP', 'ENVIADO', ?, ?)`,
-        [codigo, gestion.ij_inum, mensajeFinal, gestionId]
+        `INSERT INTO cobranza_conversaciones (codigo_cliente, ij_inum, canal, direccion, contenido, whatsapp_message_id, gestion_id)
+         VALUES (?, ?, 'WHATSAPP', 'ENVIADO', ?, ?, ?)`,
+        [codigo, gestion.ij_inum, mensajeFinal, result.messageId || null, gestionId]
       );
 
       return {
