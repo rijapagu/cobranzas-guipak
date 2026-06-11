@@ -5,6 +5,7 @@ import { conversarSupervisor } from '@/lib/supervisor/conversacion';
 import { marcarUpdateVisto } from '@/lib/telegram/idempotency';
 import { enHorarioLaboral, descripcionHorarioLaboral } from '@/lib/horario';
 import { logAccion } from '@/lib/db/cobranzas';
+import { secretoValido } from '@/lib/auth/secrets';
 
 /**
  * Webhook conversacional del Supervisor Cobros (@CobrosSupervisorBot, deepseek).
@@ -22,8 +23,9 @@ import { logAccion } from '@/lib/db/cobranzas';
  * Idempotencia con namespace 'supervisor' para no colisionar update_id con el
  * otro bot (cada bot tiene su propia secuencia de update_id).
  *
- * Setup (Ricardo, una vez): registrar el webhook del bot Supervisor:
- *   curl "https://api.telegram.org/bot<SUPERVISOR_BOT_TOKEN>/setWebhook?url=https://cobros.sguipak.com/api/webhooks/telegram-supervisor"
+ * Setup (Ricardo, una vez): registrar el webhook del bot Supervisor CON secret_token
+ * (debe coincidir con TELEGRAM_WEBHOOK_SECRET del .env — sin él, el webhook rechaza todo):
+ *   curl "https://api.telegram.org/bot<SUPERVISOR_BOT_TOKEN>/setWebhook?url=https://cobros.sguipak.com/api/webhooks/telegram-supervisor&secret_token=<TELEGRAM_WEBHOOK_SECRET>"
  */
 
 interface TgMessage {
@@ -44,6 +46,18 @@ function escapeHtml(s: string): string {
 }
 
 export async function POST(req: NextRequest) {
+  // Solo Telegram conoce este secreto (configurado vía setWebhook secret_token).
+  // Sin él, el from.id del payload sería falsificable por cualquiera.
+  if (
+    !secretoValido(
+      req.headers.get('x-telegram-bot-api-secret-token'),
+      process.env.TELEGRAM_WEBHOOK_SECRET
+    )
+  ) {
+    console.warn('[supervisor-webhook] request rechazado: secret token inválido o ausente');
+    return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
+  }
+
   let update: TgUpdate;
   try {
     update = (await req.json()) as TgUpdate;

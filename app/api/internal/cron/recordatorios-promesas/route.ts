@@ -13,11 +13,11 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { esRequestInternoValido } from '@/lib/auth/internal';
 import { ejecutarRecordatoriosPromesas } from '@/lib/queue/jobs/recordatorios-promesas';
 
 export async function POST(req: NextRequest) {
-  const secret = req.headers.get('x-internal-secret');
-  if (!secret || secret !== process.env.INTERNAL_CRON_SECRET) {
+  if (!esRequestInternoValido(req)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 

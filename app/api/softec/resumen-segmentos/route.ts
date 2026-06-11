@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { softecQuery, testSoftecConnection } from '@/lib/db/softec';
 import { obtenerSaldoAFavorPorCliente } from '@/lib/cobranzas/saldo-favor';
 import { getMockResumen } from '@/lib/mock/cartera-mock';
+import { getSession } from '@/lib/auth/session';
 import type { ResumenSegmento, ResumenResponse } from '@/lib/types/cartera';
 
 /**
@@ -15,6 +16,11 @@ import type { ResumenSegmento, ResumenResponse } from '@/lib/types/cartera';
  */
 export async function GET() {
   try {
+    const session = await getSession();
+    if (!session) {
+      return NextResponse.json({ error: 'No autenticado' }, { status: 401 });
+    }
+
     const softecOk = await testSoftecConnection();
     let segmentos: ResumenSegmento[];
 

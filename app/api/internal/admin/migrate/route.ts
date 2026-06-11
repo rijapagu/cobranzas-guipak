@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { esRequestAdminValido } from '@/lib/auth/internal';
 import { cobranzasQueryRaw } from '@/lib/db/cobranzas';
 import { readFile, readdir } from 'fs/promises';
 import { join } from 'path';
@@ -8,11 +9,12 @@ import { join } from 'path';
  * Ejecuta todas las migrations en db/migrations/ en orden.
  * Las migrations deben ser idempotentes (CREATE TABLE IF NOT EXISTS, INSERT IGNORE, etc.).
  *
- * Auth: header `x-internal-secret` con INTERNAL_CRON_SECRET.
+ * Auth: header `x-internal-secret` con INTERNAL_ADMIN_SECRET (secreto DEDICADO,
+ * distinto del de cron — este endpoint ejecuta SQL). Si la env var no está
+ * configurada, el endpoint rechaza todo (fail-closed).
  */
 export async function POST(req: NextRequest) {
-  const secret = req.headers.get('x-internal-secret');
-  if (!secret || secret !== process.env.INTERNAL_CRON_SECRET) {
+  if (!esRequestAdminValido(req)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 

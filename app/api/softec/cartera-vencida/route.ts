@@ -3,6 +3,7 @@ import { softecQuery, testSoftecConnection } from '@/lib/db/softec';
 import { cobranzasQuery } from '@/lib/db/cobranzas';
 import { ajustarSaldoClientes } from '@/lib/cobranzas/saldo-favor';
 import { getMockCartera } from '@/lib/mock/cartera-mock';
+import { getSession } from '@/lib/auth/session';
 import type { FacturaVencida, CarteraResponse, SegmentoRiesgo } from '@/lib/types/cartera';
 
 /**
@@ -14,6 +15,11 @@ import type { FacturaVencida, CarteraResponse, SegmentoRiesgo } from '@/lib/type
  */
 export async function GET(request: NextRequest) {
   try {
+    const session = await getSession();
+    if (!session) {
+      return NextResponse.json({ error: 'No autenticado' }, { status: 401 });
+    }
+
     const { searchParams } = request.nextUrl;
     const segmentos = searchParams.get('segmentos')?.split(',') as SegmentoRiesgo[] | undefined;
     const busqueda = searchParams.get('busqueda')?.trim();

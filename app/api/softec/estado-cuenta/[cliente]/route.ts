@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { softecQuery, testSoftecConnection } from '@/lib/db/softec';
 import { getMockPagos } from '@/lib/mock/cartera-mock';
+import { getSession } from '@/lib/auth/session';
 import type { PagoAplicado } from '@/lib/types/cartera';
 
 /**
@@ -12,6 +13,11 @@ export async function GET(
   { params }: { params: Promise<{ cliente: string }> }
 ) {
   try {
+    const session = await getSession();
+    if (!session) {
+      return NextResponse.json({ error: 'No autenticado' }, { status: 401 });
+    }
+
     const { cliente } = await params;
     const factura = request.nextUrl.searchParams.get('factura');
 

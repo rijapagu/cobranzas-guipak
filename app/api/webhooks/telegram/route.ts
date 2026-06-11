@@ -6,6 +6,7 @@ import { cobranzasQuery, cobranzasExecute, logAccion } from '@/lib/db/cobranzas'
 import { enviarGestion } from '@/lib/telegram/enviar-gestion';
 import { marcarUpdateVisto } from '@/lib/telegram/idempotency';
 import { enHorarioLaboral, descripcionHorarioLaboral } from '@/lib/horario';
+import { secretoValido } from '@/lib/auth/secrets';
 import type { InlineKeyboardMarkup } from 'telegraf/types';
 
 interface TelegramMessage {
@@ -61,6 +62,18 @@ const BOT_USERNAME_PREFIX = '@CobrosGuipakBot';
  * antes del ACK, las réplicas se descartan.
  */
 export async function POST(req: NextRequest) {
+  // Solo Telegram conoce este secreto (configurado vía setWebhook secret_token).
+  // Sin él, el from.id del payload sería falsificable por cualquiera.
+  if (
+    !secretoValido(
+      req.headers.get('x-telegram-bot-api-secret-token'),
+      process.env.TELEGRAM_WEBHOOK_SECRET
+    )
+  ) {
+    console.warn('[telegram-webhook] request rechazado: secret token inválido o ausente');
+    return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
+  }
+
   let update: TelegramUpdate;
   try {
     update = (await req.json()) as TelegramUpdate;

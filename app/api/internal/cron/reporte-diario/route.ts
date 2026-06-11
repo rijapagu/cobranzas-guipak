@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { esRequestInternoValido } from '@/lib/auth/internal';
 import { enviarReporteDiario } from '@/lib/reportes/reporte-diario';
 import { logAccion } from '@/lib/db/cobranzas';
 
@@ -13,8 +14,7 @@ import { logAccion } from '@/lib/db/cobranzas';
  *   Header: x-cron-secret: <INTERNAL_CRON_SECRET>
  */
 export async function POST(req: NextRequest) {
-  const secret = req.headers.get('x-cron-secret');
-  if (!secret || secret !== process.env.INTERNAL_CRON_SECRET) {
+  if (!esRequestInternoValido(req)) {
     return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
   }
 

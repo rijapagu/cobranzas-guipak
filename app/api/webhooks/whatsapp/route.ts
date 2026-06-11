@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { cobranzasQuery, cobranzasExecute, logAccion } from '@/lib/db/cobranzas';
+import { procesarRespuestaCliente } from '@/lib/cobranzas/procesar-respuesta';
+import { secretoValido } from '@/lib/auth/secrets';
 
 /**
  * Extrae el número de teléfono del cliente desde la `key` del mensaje de Evolution.
@@ -34,9 +36,20 @@ function extraerNumero(key: {
 /**
  * POST /api/webhooks/whatsapp
  * Recibe actualizaciones de estado de Evolution API.
- * No requiere session auth (viene de Evolution API).
+ * No requiere session auth, pero SÍ exige EVOLUTION_WEBHOOK_TOKEN:
+ * configurar la URL del webhook en Evolution como
+ *   https://<app>/api/webhooks/whatsapp?token=<EVOLUTION_WEBHOOK_TOKEN>
+ * (o enviar el header x-webhook-token).
  */
 export async function POST(request: NextRequest) {
+  const tokenRecibido =
+    request.headers.get('x-webhook-token') ||
+    request.nextUrl.searchParams.get('token');
+  if (!secretoValido(tokenRecibido, process.env.EVOLUTION_WEBHOOK_TOKEN)) {
+    console.warn('[WEBHOOK-WA] request rechazado: token inválido o ausente');
+    return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
+  }
+
   try {
     const body = await request.json();
 
@@ -102,18 +115,13 @@ export async function POST(request: NextRequest) {
         if (fromNumber) {
           console.log('[WEBHOOK-WA] Mensaje entrante de:', fromNumber, isLid ? '(via LID)' : '', '| Texto:', messageText.substring(0, 50));
 
-          // Procesar con IA — la respuesta va a cola de aprobación (CP-02)
+          // Procesar con IA — la respuesta va a cola de aprobación (CP-02).
+          // Llamada directa a la lib (antes era un fetch HTTP a una ruta pública).
           try {
-            const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
-            await fetch(`${baseUrl}/api/cobranzas/procesar-respuesta`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                telefono: fromNumber,
-                mensaje: messageText,
-                canal: 'WHATSAPP',
-                push_name: pushName,
-              }),
+            await procesarRespuestaCliente({
+              telefono: fromNumber,
+              mensaje: messageText,
+              canal: 'WHATSAPP',
             });
           } catch (err) {
             console.error('[WEBHOOK-WA] Error procesando respuesta:', err);

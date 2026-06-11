@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { cobranzasQuery, cobranzasExecute, logAccion } from '@/lib/db/cobranzas';
 import { verifyPdf } from '@/lib/drive/client';
+import { secretoValido } from '@/lib/auth/secrets';
 
 /**
  * POST /api/webhooks/factura-escaneada
  * Recibe webhook del CRM cuando se escanea/sube una factura a Google Drive.
- * No requiere session auth (viene del CRM externo).
+ * No requiere session auth, pero SÍ exige el header x-webhook-secret con el
+ * valor de N8N_WEBHOOK_SECRET (configurarlo también en el CRM que llama).
  *
  * Body esperado:
  * {
@@ -18,6 +20,13 @@ import { verifyPdf } from '@/lib/drive/client';
  * }
  */
 export async function POST(request: NextRequest) {
+  if (
+    !secretoValido(request.headers.get('x-webhook-secret'), process.env.N8N_WEBHOOK_SECRET)
+  ) {
+    console.warn('[WEBHOOK-FACTURA] request rechazado: secreto inválido o ausente');
+    return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
+  }
+
   try {
     const body = await request.json();
 

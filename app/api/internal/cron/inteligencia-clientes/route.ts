@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { esRequestInternoValido } from '@/lib/auth/internal';
 import { ejecutarInteligenciaClientes } from '@/lib/queue/jobs/inteligencia-clientes';
 
 /**
@@ -7,8 +8,7 @@ import { ejecutarInteligenciaClientes } from '@/lib/queue/jobs/inteligencia-clie
  * Protegido con INTERNAL_CRON_SECRET.
  */
 export async function POST(request: NextRequest) {
-  const secret = request.headers.get('x-cron-secret');
-  if (!secret || secret !== process.env.INTERNAL_CRON_SECRET) {
+  if (!esRequestInternoValido(request)) {
     return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
   }
 

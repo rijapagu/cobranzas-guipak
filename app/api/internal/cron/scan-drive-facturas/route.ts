@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { esRequestInternoValido } from '@/lib/auth/internal';
 import { listPdfsInFolder } from '@/lib/drive/client';
 import { cobranzasQuery, cobranzasExecute, logAccion } from '@/lib/db/cobranzas';
 import { softecQuery } from '@/lib/db/softec';
 
 export async function POST(req: NextRequest) {
-  const secret = req.headers.get('x-internal-secret');
-  if (!secret || secret !== process.env.INTERNAL_CRON_SECRET) {
+  if (!esRequestInternoValido(req)) {
     return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
   }
 
