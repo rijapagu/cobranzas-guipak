@@ -95,10 +95,14 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [clienteSeleccionado, setClienteSeleccionado] = useState<string | null>(null);
 
-  const fetchKPIs = useCallback(async () => {
+  const fetchKPIs = useCallback(async (forzarRefresh = false) => {
     setLoading(true);
     try {
-      const res = await fetch("/api/cobranzas/dashboard");
+      // refresh=1 salta el cache Redis del servidor (botón "Actualizar")
+      const url = forzarRefresh
+        ? "/api/cobranzas/dashboard?refresh=1"
+        : "/api/cobranzas/dashboard";
+      const res = await fetch(url);
       const data = await res.json();
       setKpis(data);
     } catch {
@@ -209,7 +213,7 @@ export default function DashboardPage() {
         <Title level={4} style={{ margin: 0 }}>Dashboard</Title>
         <Space>
           {kpis.modo === "mock" && <Tag color="orange">Datos Mock</Tag>}
-          <Button icon={<ReloadOutlined />} onClick={fetchKPIs} size="small">
+          <Button icon={<ReloadOutlined />} onClick={() => fetchKPIs(true)} size="small">
             Actualizar
           </Button>
         </Space>

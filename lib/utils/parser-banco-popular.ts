@@ -21,7 +21,7 @@ type FormatoBP = 'csv' | 'txt' | false;
  * El split(',') ingenuo desalineaba todas las columnas si el banco exporta
  * montos o descripciones con comas entre comillas.
  */
-function splitCsvLine(line: string): string[] {
+export function splitCsvLine(line: string): string[] {
   const out: string[] = [];
   let cur = '';
   let inQuotes = false;

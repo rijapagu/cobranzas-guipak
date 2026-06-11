@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { cobranzasQuery, cobranzasExecute, logAccion } from '@/lib/db/cobranzas';
 import { crearTareaSeguimientoAcuerdo } from '@/lib/cobranzas/auto-tareas';
+import { rateLimit, ipDeRequest } from '@/lib/auth/rate-limit';
 
 /**
  * POST /api/portal/[token]/solicitar-acuerdo
@@ -16,6 +17,19 @@ export async function POST(
   const { token } = await params;
 
   try {
+    // Rate limit: 5 solicitudes de acuerdo por token cada hora + 20 por IP/hora
+    const ip = ipDeRequest(request);
+    const [porToken, porIp] = await Promise.all([
+      rateLimit(`acuerdo:token:${token}`, 5, 60 * 60),
+      rateLimit(`acuerdo:ip:${ip}`, 20, 60 * 60),
+    ]);
+    if (!porToken.permitido || !porIp.permitido) {
+      return NextResponse.json(
+        { error: 'Demasiadas solicitudes. Intenta de nuevo más tarde.' },
+        { status: 429 }
+      );
+    }
+
     // CP-07: Verificar token
     const tokens = await cobranzasQuery<{
       id: number;

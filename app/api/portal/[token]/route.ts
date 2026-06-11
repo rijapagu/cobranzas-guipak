@@ -3,6 +3,7 @@ import { cobranzasQuery, cobranzasExecute } from '@/lib/db/cobranzas';
 import { softecQuery, testSoftecConnection } from '@/lib/db/softec';
 import { obtenerSaldoAFavorPorCliente, ajustarSaldoCliente } from '@/lib/cobranzas/saldo-favor';
 import { getMockCartera } from '@/lib/mock/cartera-mock';
+import { rateLimit, ipDeRequest } from '@/lib/auth/rate-limit';
 
 /**
  * GET /api/portal/[token]
@@ -17,6 +18,16 @@ export async function GET(
   const { token } = await params;
 
   try {
+    // Rate limit: endpoint público — 30 consultas por IP cada 5 minutos
+    // (también frena la enumeración de tokens).
+    const limite = await rateLimit(`portal:${ipDeRequest(request)}`, 30, 5 * 60);
+    if (!limite.permitido) {
+      return NextResponse.json(
+        { error: 'Demasiadas consultas. Intenta de nuevo en unos minutos.' },
+        { status: 429 }
+      );
+    }
+
     // CP-07: Verificar token
     const tokens = await cobranzasQuery<{
       id: number;

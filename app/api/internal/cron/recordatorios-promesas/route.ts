@@ -15,6 +15,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { esRequestInternoValido } from '@/lib/auth/internal';
 import { ejecutarRecordatoriosPromesas } from '@/lib/queue/jobs/recordatorios-promesas';
+import { verificarAcuerdos } from '@/lib/queue/jobs/verificar-acuerdos';
 
 export async function POST(req: NextRequest) {
   if (!esRequestInternoValido(req)) {
@@ -22,10 +23,17 @@ export async function POST(req: NextRequest) {
   }
 
   try {
+    // 1. Resolver acuerdos PENDIENTE → CUMPLIDO/INCUMPLIDO contra Softec.
+    //    Va primero para que las tareas de recordatorio solo se creen sobre
+    //    acuerdos que siguen realmente pendientes.
+    const acuerdos = await verificarAcuerdos();
+
+    // 2. Crear tareas de recordatorio para lo que sigue pendiente.
     const stats = await ejecutarRecordatoriosPromesas();
     return NextResponse.json({
       ok: true,
       ejecutado: new Date().toISOString(),
+      acuerdos_verificados: acuerdos,
       stats,
     });
   } catch (error) {

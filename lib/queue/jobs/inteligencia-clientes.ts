@@ -42,6 +42,9 @@ interface IntelRecord {
 
 interface ScoringResult {
   risk_score: number;
+  /** Score sin el bono de tendencia (mora+promesas+volumen, 0-80). Se guarda
+   *  como score_anterior para que el próximo run compare base contra base. */
+  score_base: number;
   risk_level: 'VERDE' | 'AMARILLO' | 'ROJO' | 'CRITICO';
   accion_credito: 'NORMAL' | 'REDUCIR_LIMITE' | 'AUTORIZAR_MANUAL' | 'SUSPENDER';
   accion_ventas: 'NORMAL' | 'SUBIR_MARGEN' | 'REQUIERE_ABONO' | 'NO_VENDER';
@@ -80,24 +83,7 @@ function calcularScore(
     razones.push(`Mora promedio leve: ${mora.toFixed(0)} días`);
   }
 
-  // --- 2. Tendencia vs período anterior (0-20 puntos) ---
-  let tendencia: 'MEJORANDO' | 'ESTABLE' | 'EMPEORANDO' = 'ESTABLE';
-  if (previo) {
-    const deltaScore = score - (previo.score_anterior ?? score);
-    const deltaSaldo = saldo_neto - (previo.saldo_anterior ?? saldo_neto);
-    if (deltaScore >= 10 || deltaSaldo > 50000) {
-      tendencia = 'EMPEORANDO';
-      score += 20;
-      razones.push('Tendencia: empeorando vs período anterior');
-    } else if (deltaScore <= -10 || deltaSaldo < -50000) {
-      tendencia = 'MEJORANDO';
-      razones.push('Tendencia: mejorando vs período anterior');
-    } else if (mora > 30) {
-      score += 5;
-    }
-  }
-
-  // --- 3. Cumplimiento de promesas (0-30 puntos) ---
+  // --- 2. Cumplimiento de promesas (0-30 puntos) ---
   const tasaCumpl = promesas.total > 0
     ? (promesas.cumplidas / promesas.total) * 100
     : 100;
@@ -117,7 +103,7 @@ function calcularScore(
     }
   }
 
-  // --- 4. Volumen de deuda neta (0-15 puntos) ---
+  // --- 3. Volumen de deuda neta (0-15 puntos) ---
   if (saldo_neto > 500000) {
     score += 15;
     razones.push(`Exposición alta: RD$${saldo_neto.toLocaleString('es-DO')} neto`);
@@ -126,6 +112,29 @@ function calcularScore(
     razones.push(`Exposición significativa: RD$${saldo_neto.toLocaleString('es-DO')} neto`);
   } else if (saldo_neto > 50000) {
     score += 5;
+  }
+
+  // Score base completo (0-80), comparable run a run.
+  const score_base = score;
+
+  // --- 4. Tendencia vs período anterior (0-20 puntos) ---
+  // Compara base contra base del run anterior (antes comparaba el componente
+  // de mora a medio calcular [0-35] contra el score completo anterior [0-100],
+  // lo que sesgaba todo a "MEJORANDO" y el +20 casi nunca disparaba).
+  let tendencia: 'MEJORANDO' | 'ESTABLE' | 'EMPEORANDO' = 'ESTABLE';
+  if (previo) {
+    const deltaScore = previo.score_anterior != null ? score_base - previo.score_anterior : 0;
+    const deltaSaldo = previo.saldo_anterior != null ? saldo_neto - previo.saldo_anterior : 0;
+    if (deltaScore >= 10 || deltaSaldo > 50000) {
+      tendencia = 'EMPEORANDO';
+      score += 20;
+      razones.push('Tendencia: empeorando vs período anterior');
+    } else if (deltaScore <= -10 || deltaSaldo < -50000) {
+      tendencia = 'MEJORANDO';
+      razones.push('Tendencia: mejorando vs período anterior');
+    } else if (mora > 30) {
+      score += 5;
+    }
   }
 
   // Clamp a 100
@@ -169,6 +178,7 @@ function calcularScore(
 
   return {
     risk_score,
+    score_base,
     risk_level,
     accion_credito,
     accion_ventas,
@@ -322,9 +332,11 @@ export async function ejecutarInteligenciaClientes(): Promise<{
 
       const scoring = calcularScore(agingClean, ajuste.saldo_neto, promesas, previo);
 
-      // Tendencia requiere guardar score anterior → se almacena como score_anterior en el próximo ciclo
-      const saldo_anterior_prev = previo?.saldo_anterior ?? null;
-      const score_anterior_prev = previo?.risk_score ?? null;
+      // score_anterior/saldo_anterior guardan los valores de ESTE run para que
+      // el próximo run compare contra anoche. (Antes guardaban valores con uno
+      // o dos runs de retraso y la tendencia nunca era correcta.)
+      const score_anterior_nuevo = scoring.score_base;
+      const saldo_anterior_nuevo = ajuste.saldo_neto;
 
       await cobranzasExecute(`
         INSERT INTO cobranza_cliente_inteligencia (
@@ -393,8 +405,8 @@ export async function ejecutarInteligenciaClientes(): Promise<{
         agingClean.bucket_31_60,
         agingClean.bucket_60_plus,
         scoring.tendencia,
-        score_anterior_prev,
-        saldo_anterior_prev,
+        score_anterior_nuevo,
+        saldo_anterior_nuevo,
         promesas.total,
         promesas.cumplidas,
         promesas.total > 0 ? (promesas.cumplidas / promesas.total) * 100 : 100,

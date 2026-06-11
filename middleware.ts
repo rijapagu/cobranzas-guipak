@@ -43,6 +43,26 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
+  // Protección CSRF: en mutaciones autenticadas por cookie, el Origin del
+  // navegador debe coincidir con el host. Una página maliciosa que dispare
+  // un POST con la cookie de la víctima envía su propio Origin y se bloquea.
+  // (Si Origin no viene — clientes no-navegador — se permite: esos clientes
+  // no llevan la cookie de sesión.)
+  const metodo = request.method.toUpperCase();
+  if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(metodo)) {
+    const origin = request.headers.get('origin');
+    if (origin) {
+      try {
+        const originHost = new URL(origin).host;
+        if (originHost !== request.nextUrl.host) {
+          return NextResponse.json({ error: 'Origin no permitido' }, { status: 403 });
+        }
+      } catch {
+        return NextResponse.json({ error: 'Origin inválido' }, { status: 403 });
+      }
+    }
+  }
+
   const token = request.cookies.get('cobranzas_token')?.value;
   const valido = token ? await verifyJwt(token) : false;
 

@@ -4,6 +4,7 @@ import { cobranzasQuery, cobranzasExecute } from '@/lib/db/cobranzas';
 import { verifyPassword } from '@/lib/auth/password';
 import { signToken } from '@/lib/auth/jwt';
 import { getTokenCookieOptions } from '@/lib/auth/session';
+import { rateLimit, ipDeRequest } from '@/lib/auth/rate-limit';
 
 const loginSchema = z.object({
   email: z.string().email(),
@@ -21,6 +22,16 @@ interface UserRow {
 
 export async function POST(request: NextRequest) {
   try {
+    // Anti fuerza bruta: 10 intentos por IP cada 15 minutos
+    const ip = ipDeRequest(request);
+    const limite = await rateLimit(`login:${ip}`, 10, 15 * 60);
+    if (!limite.permitido) {
+      return NextResponse.json(
+        { error: 'Demasiados intentos de inicio de sesión. Intenta de nuevo en 15 minutos.' },
+        { status: 429 }
+      );
+    }
+
     const body = await request.json();
     const parsed = loginSchema.safeParse(body);
 

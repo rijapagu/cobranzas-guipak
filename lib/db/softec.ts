@@ -20,7 +20,8 @@ const pool = mysql.createPool({
   user: process.env.DB_SOFTEC_USER || '',
   password: process.env.DB_SOFTEC_PASS || '',
   waitForConnections: true,
-  connectionLimit: 5,
+  // Configurable: el ERP es un MySQL 5.7 compartido — subir con cuidado.
+  connectionLimit: Number(process.env.DB_SOFTEC_POOL_SIZE) || 10,
   queueLimit: 0,
   connectTimeout: 10000,
   // CP-01: nunca permitir múltiples statements separados por ';'

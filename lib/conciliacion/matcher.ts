@@ -151,33 +151,50 @@ async function matchMultiRecibo(linea: LineaExtracto): Promise<MatchResult | nul
   if (recibos.length < 2) return null;
 
   const targetCents = Math.round(linea.monto * 100);
-  const candidatos = recibos.map(r => ({
-    ...r,
-    montoCents: Math.round(Number(r.IJ_TOT) * 100),
-  }));
 
-  const combo = buscarCombinacion(candidatos, targetCents, 8);
-  if (!combo) return null;
-
-  const detalles: DetalleRecibo[] = [];
-  for (const r of combo) {
-    const nombre = await obtenerNombreCliente(String(r.IJ_CCODE).trim());
-    detalles.push({
-      ir_recnum: r.IJ_RECNUM,
-      codigo_cliente: String(r.IJ_CCODE).trim(),
-      nombre_cliente: nombre,
-      monto: Number(r.IJ_TOT),
-    });
+  // Solo combinaciones de recibos del MISMO cliente. Mezclar clientes
+  // permitía que una coincidencia aritmética casual quedara auto-CONCILIADA
+  // asignando el depósito a clientes equivocados (un depósito bancario viene
+  // de una sola cuenta). Si la suma solo cuadra cruzando clientes, la línea
+  // queda DESCONOCIDO para revisión humana.
+  const porCliente = new Map<string, ReciboSoftec[]>();
+  for (const r of recibos) {
+    const codigo = String(r.IJ_CCODE).trim();
+    const lista = porCliente.get(codigo) || [];
+    lista.push(r);
+    porCliente.set(codigo, lista);
   }
 
-  return {
-    estado: 'CONCILIADO',
-    ir_recnum: null,
-    codigo_cliente: null,
-    nombre_cliente: null,
-    es_multi: true,
-    detalles,
-  };
+  for (const [codigoCliente, recibosCliente] of porCliente) {
+    if (recibosCliente.length < 2) continue;
+
+    const candidatos = recibosCliente.map(r => ({
+      ...r,
+      montoCents: Math.round(Number(r.IJ_TOT) * 100),
+    }));
+
+    const combo = buscarCombinacion(candidatos, targetCents, 8);
+    if (!combo) continue;
+
+    const nombre = await obtenerNombreCliente(codigoCliente);
+    const detalles: DetalleRecibo[] = combo.map(r => ({
+      ir_recnum: r.IJ_RECNUM,
+      codigo_cliente: codigoCliente,
+      nombre_cliente: nombre,
+      monto: Number(r.IJ_TOT),
+    }));
+
+    return {
+      estado: 'CONCILIADO',
+      ir_recnum: null,
+      codigo_cliente: codigoCliente,
+      nombre_cliente: nombre,
+      es_multi: true,
+      detalles,
+    };
+  }
+
+  return null;
 }
 
 function buscarCombinacion(

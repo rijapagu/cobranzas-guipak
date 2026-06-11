@@ -33,7 +33,7 @@ export async function POST(request: NextRequest) {
     }
 
     const buffer = Buffer.from(await file.arrayBuffer());
-    const lineas = parsearExtracto(buffer, file.name);
+    const lineas = await parsearExtracto(buffer, file.name);
 
     if (lineas.length === 0) {
       return NextResponse.json({ error: 'No se encontraron transacciones en el archivo' }, { status: 400 });

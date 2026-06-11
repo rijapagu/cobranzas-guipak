@@ -12,7 +12,7 @@ const pool = mysql.createPool({
   user: process.env.DB_COBRANZAS_USER || 'cobranzas_app',
   password: process.env.DB_COBRANZAS_PASS || '',
   waitForConnections: true,
-  connectionLimit: 10,
+  connectionLimit: Number(process.env.DB_COBRANZAS_POOL_SIZE) || 25,
   queueLimit: 0,
   connectTimeout: 10000,
 });

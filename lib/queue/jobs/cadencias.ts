@@ -25,6 +25,13 @@ import { generarMensajeCobranza } from '@/lib/claude/client';
 
 const MAX_PASOS_POR_RUN = 30;
 const DIAS_FLOOD_PROTECTION = 30;
+// Ventana preventiva VERDE: facturas que vencen dentro de N días entran al
+// pipeline con dias_vencida negativo (paso VERDE con dia_desde_vencimiento < 0).
+const DIAS_PREVENTIVO = 5;
+// Sentinela "sin paso aplicado": debe ser menor que cualquier
+// dia_desde_vencimiento posible, incluidos los negativos del preventivo
+// (el antiguo -1 impedía aplicar pasos con día negativo).
+const SIN_PASO_APLICADO = -9999;
 
 interface Cadencia {
   id: number;
@@ -117,7 +124,7 @@ export async function ejecutarCadenciasHorarias(): Promise<{
       AND f.IJ_INVTORF = 'T'
       AND f.IJ_PAID = 'F'
       AND (f.IJ_TOT - f.IJ_TOTAPPL) > 0
-      AND DATEDIFF(CURDATE(), f.IJ_DUEDATE) > 0
+      AND DATEDIFF(CURDATE(), f.IJ_DUEDATE) >= ${-DIAS_PREVENTIVO}
     ORDER BY DATEDIFF(CURDATE(), f.IJ_DUEDATE) ASC
     LIMIT 500
   `);
@@ -208,12 +215,18 @@ export async function ejecutarCadenciasHorarias(): Promise<{
       continue;
     }
 
-    const ultimoDia = estado?.ultimo_dia_aplicado ?? -1;
+    const ultimoDia = estado?.ultimo_dia_aplicado ?? SIN_PASO_APLICADO;
 
     // Encontrar el siguiente paso aplicable:
-    // todos los pasos con dia <= dias_vencida y dia > ultimo_dia_aplicado
+    // - dia <= dias_vencida y dia > ultimo_dia_aplicado
+    // - y del MISMO segmento que la factura: una cadencia configurada para
+    //   ROJO no debe dispararse sobre una factura AMARILLO, y el paso VERDE
+    //   preventivo no debe aplicarse a facturas ya vencidas.
     const pasosAplicables = cadencias.filter(
-      (c) => c.dia_desde_vencimiento <= diasVencida && c.dia_desde_vencimiento > ultimoDia
+      (c) =>
+        c.dia_desde_vencimiento <= diasVencida &&
+        c.dia_desde_vencimiento > ultimoDia &&
+        c.segmento === factura.segmento
     );
 
     if (pasosAplicables.length === 0) continue;
@@ -308,7 +321,12 @@ async function aplicarPaso(
 
   // EMAIL, WHATSAPP o ESCALAR_LEGAL → crear gestión
   const canal = paso.accion === 'WHATSAPP' ? 'WHATSAPP' : 'EMAIL';
-  const estado = paso.requiere_aprobacion ? 'PENDIENTE' : 'APROBADO';
+  // Regla de oro (CP-02): TODA gestión de cadencia nace PENDIENTE y pasa por
+  // aprobación humana. `requiere_aprobacion=0` creaba gestiones APROBADAS con
+  // aprobado_por='cadencias-auto' que ningún humano había visto — un "enviar
+  // lote" posterior las despachaba sin revisión. La migración 029 normaliza
+  // la config; este código lo garantiza aunque la config diga lo contrario.
+  const estado = 'PENDIENTE';
 
   // Verificar que no haya gestión ACTIVA para esta factura (PENDIENTE,
   // APROBADO/EDITADO sin enviar, o ENVIANDO) — evita doble cobro.
@@ -367,10 +385,17 @@ async function aplicarPaso(
   }
 
   if (canal === 'WHATSAPP') {
-    mensajeWa = `Estimado cliente de ${String(factura.nombre_cliente).trim()}, le recordamos que la factura #${factura.ij_inum} por RD$${Number(factura.saldo_pendiente).toLocaleString('en-US', { minimumFractionDigits: 2 })} lleva ${diasVencida} días vencida. Comuníquese con nosotros para coordinar el pago. Gracias.`;
+    const saldoFmt = Number(factura.saldo_pendiente).toLocaleString('en-US', { minimumFractionDigits: 2 });
+    if (diasVencida < 1) {
+      // Preventivo: la factura aún no vence
+      const fechaVenc = new Date(factura.fecha_vencimiento).toISOString().split('T')[0];
+      mensajeWa = `Estimado cliente de ${String(factura.nombre_cliente).trim()}, le recordamos que la factura #${factura.ij_inum} por RD$${saldoFmt} vence el ${fechaVenc}. Agradecemos programar su pago a tiempo. Gracias.`;
+    } else {
+      mensajeWa = `Estimado cliente de ${String(factura.nombre_cliente).trim()}, le recordamos que la factura #${factura.ij_inum} por RD$${saldoFmt} lleva ${diasVencida} días vencida. Comuníquese con nosotros para coordinar el pago. Gracias.`;
+    }
   }
 
-  const aprobadoPor = estado === 'APROBADO' ? 'cadencias-auto' : null;
+  const aprobadoPor = null;
 
   const insertGestion = await cobranzasExecute(
     `INSERT INTO cobranza_gestiones (

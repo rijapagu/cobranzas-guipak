@@ -1,9 +1,15 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth/session';
 import { cobranzasQuery } from '@/lib/db/cobranzas';
 import { softecQuery, testSoftecConnection } from '@/lib/db/softec';
 import { obtenerSaldoAFavorPorCliente } from '@/lib/cobranzas/saldo-favor';
 import { getMockCartera } from '@/lib/mock/cartera-mock';
+import { getRedis } from '@/lib/redis/client';
+
+// Cache del dashboard en Redis: ~10 queries (varias agregando toda la
+// cartera del ERP) por cada carga de página no escalan sin esto.
+const DASHBOARD_CACHE_KEY = 'cache:dashboard:v1';
+const DASHBOARD_CACHE_TTL_SEG = 120;
 
 interface DashboardKPIs {
   // Cartera
@@ -49,10 +55,23 @@ interface DashboardKPIs {
  * GET /api/cobranzas/dashboard
  * Retorna KPIs para el dashboard principal.
  */
-export async function GET() {
+export async function GET(request: NextRequest) {
   const session = await getSession();
   if (!session) {
     return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
+  }
+
+  // Cache (TTL 2 min). El botón "Actualizar" puede forzar con ?refresh=1.
+  const forzar = request.nextUrl.searchParams.get('refresh') === '1';
+  if (!forzar) {
+    try {
+      const cacheado = await getRedis().get(DASHBOARD_CACHE_KEY);
+      if (cacheado) {
+        return NextResponse.json(JSON.parse(cacheado));
+      }
+    } catch {
+      // Redis caído → calcular en vivo
+    }
   }
 
   try {
@@ -310,6 +329,12 @@ export async function GET() {
       "SELECT COUNT(*) as total FROM cobranza_acuerdos WHERE estado = 'PENDIENTE' AND fecha_prometida < CURDATE()"
     );
     kpis.promesas_vencidas = promesasVencidas[0]?.total || 0;
+
+    try {
+      await getRedis().set(DASHBOARD_CACHE_KEY, JSON.stringify(kpis), 'EX', DASHBOARD_CACHE_TTL_SEG);
+    } catch {
+      // sin cache, no es fatal
+    }
 
     return NextResponse.json(kpis);
   } catch (error) {
