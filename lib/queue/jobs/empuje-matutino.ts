@@ -147,7 +147,7 @@ async function obtenerAlertas(): Promise<ResumenAlertas> {
     resumen.pendientes_aprobacion = Number(pendientes[0]?.total) || 0;
 
     const pagos = await cobranzasQuery<{ total: number }>(
-      "SELECT COUNT(*) AS total FROM cobranza_conciliacion WHERE estado = 'POR_APLICAR'"
+      "SELECT COUNT(*) AS total FROM cobranza_conciliacion WHERE empresa_id = 1 AND estado = 'POR_APLICAR'"
     );
     resumen.pagos_sin_registrar = Number(pagos[0]?.total) || 0;
 

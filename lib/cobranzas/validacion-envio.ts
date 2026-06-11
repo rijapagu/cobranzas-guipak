@@ -9,13 +9,14 @@ import { cobranzasQuery } from '@/lib/db/cobranzas';
  * el supervisor debe aplicar primero ese pago.
  */
 export async function pagosPorAplicar(
-  codigoCliente: string
+  codigoCliente: string,
+  empresaId: number
 ): Promise<{ cantidad: number; total: number }> {
   const rows = await cobranzasQuery<{ n: number; total: number | null }>(
     `SELECT COUNT(*) AS n, SUM(monto) AS total
      FROM cobranza_conciliacion
-     WHERE estado = 'POR_APLICAR' AND TRIM(codigo_cliente) = ?`,
-    [codigoCliente]
+     WHERE empresa_id = ? AND estado = 'POR_APLICAR' AND TRIM(codigo_cliente) = ?`,
+    [empresaId, codigoCliente]
   );
   return {
     cantidad: Number(rows[0]?.n) || 0,

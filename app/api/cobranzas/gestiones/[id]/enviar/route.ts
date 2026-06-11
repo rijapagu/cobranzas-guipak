@@ -128,7 +128,7 @@ export async function POST(
     // Validación doble (SPEC §2.3): si el cliente tiene depósitos POR_APLICAR
     // en conciliación, ya nos pagó — aplicar el pago antes de cobrarle.
     // ═══════════════════════════════════════════
-    const porAplicar = await pagosPorAplicar(g.codigo_cliente);
+    const porAplicar = await pagosPorAplicar(g.codigo_cliente, empresaId);
     if (porAplicar.cantidad > 0) {
       await logAccion(session.userId.toString(), 'ENVIO_BLOQUEADO_POR_APLICAR', 'gestion', id, {
         cliente: g.codigo_cliente,

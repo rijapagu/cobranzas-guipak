@@ -37,7 +37,7 @@ export async function crearTareasConciliacion(stats: {
     const desconocidas = await cobranzasQuery<ConciliacionPendiente>(
       `SELECT id, fecha_transaccion, descripcion, monto, moneda, referencia, cuenta_origen, estado, archivo_origen
        FROM cobranza_conciliacion
-       WHERE estado = 'DESCONOCIDO' AND archivo_origen = ?
+       WHERE empresa_id = 1 AND estado = 'DESCONOCIDO' AND archivo_origen = ?
        ORDER BY monto DESC`,
       [stats.archivo]
     );
@@ -71,7 +71,7 @@ export async function crearTareasConciliacion(stats: {
     const devueltos = await cobranzasQuery<ConciliacionPendiente>(
       `SELECT id, fecha_transaccion, descripcion, monto, moneda, referencia, estado, archivo_origen
        FROM cobranza_conciliacion
-       WHERE estado = 'CHEQUE_DEVUELTO' AND archivo_origen = ?`,
+       WHERE empresa_id = 1 AND estado = 'CHEQUE_DEVUELTO' AND archivo_origen = ?`,
       [stats.archivo]
     );
 
@@ -110,7 +110,7 @@ export async function notificarConciliacionDesdeBD(
 ): Promise<void> {
   const rows = await cobranzasQuery<{ estado: string; total: number; cantidad: number }>(
     `SELECT estado, SUM(monto) as total, COUNT(*) as cantidad
-     FROM cobranza_conciliacion WHERE archivo_origen = ?
+     FROM cobranza_conciliacion WHERE empresa_id = 1 AND archivo_origen = ?
      GROUP BY estado`,
     [archivo]
   );
@@ -162,7 +162,7 @@ export async function verificarDesconocidos(): Promise<{
   const pendientes = await cobranzasQuery<ConciliacionPendiente>(
     `SELECT id, fecha_transaccion, descripcion, monto, moneda, referencia, cuenta_origen, estado, archivo_origen
      FROM cobranza_conciliacion
-     WHERE estado = 'DESCONOCIDO'
+     WHERE empresa_id = 1 AND estado = 'DESCONOCIDO'
      ORDER BY id`
   );
 
@@ -182,13 +182,13 @@ export async function verificarDesconocidos(): Promise<{
       moneda: p.moneda || 'DOP',
     };
 
-    const match = await procesarLinea(linea);
+    const match = await procesarLinea(linea, 1);
 
     if (match.estado === 'CONCILIADO') {
       await cobranzasExecute(
         `UPDATE cobranza_conciliacion
          SET estado = 'CONCILIADO', ir_recnum = ?, codigo_cliente = ?, updated_at = NOW()
-         WHERE id = ?`,
+         WHERE id = ? AND empresa_id = 1`,
         [match.ir_recnum, match.codigo_cliente, p.id]
       );
 
@@ -196,8 +196,8 @@ export async function verificarDesconocidos(): Promise<{
         for (const det of match.detalles) {
           await cobranzasExecute(
             `INSERT INTO cobranza_conciliacion_detalle
-               (conciliacion_id, ir_recnum, codigo_cliente, nombre_cliente, monto)
-             VALUES (?, ?, ?, ?, ?)`,
+               (empresa_id, conciliacion_id, ir_recnum, codigo_cliente, nombre_cliente, monto)
+             VALUES (1, ?, ?, ?, ?, ?)`,
             [p.id, det.ir_recnum, det.codigo_cliente, det.nombre_cliente, det.monto]
           );
         }

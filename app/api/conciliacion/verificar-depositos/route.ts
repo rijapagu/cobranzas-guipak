@@ -3,6 +3,7 @@ import { getSession } from '@/lib/auth/session';
 import { softecQuery, testSoftecConnection } from '@/lib/db/softec';
 import { cobranzasQuery } from '@/lib/db/cobranzas';
 import { toYmd, addDiasYmd } from '@/lib/utils/fechas';
+import { empresaIdDeSesion } from '@/lib/tenant';
 
 /**
  * GET /api/conciliacion/verificar-depositos?dias=7
@@ -63,14 +64,15 @@ export async function GET(request: NextRequest) {
          SUM(monto) AS total,
          COUNT(*) AS cantidad
        FROM cobranza_conciliacion
-       WHERE estado != 'CHEQUE_DEVUELTO'
+       WHERE empresa_id = ?
+         AND estado != 'CHEQUE_DEVUELTO'
          AND (descripcion LIKE '%DEPOSITO CHEQUE%'
               OR descripcion LIKE '%COBRO %'
               OR descripcion LIKE '%CORBO %')
          AND fecha_transaccion >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
        GROUP BY fecha_transaccion
        ORDER BY fecha DESC`,
-      [dias + 3]
+      [empresaIdDeSesion(session), dias + 3]
     );
 
     // 3. Agrupar recibos Softec por fecha

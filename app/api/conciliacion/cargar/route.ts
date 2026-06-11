@@ -4,6 +4,7 @@ import { cobranzasQuery, cobranzasExecute, logAccion, logError } from '@/lib/db/
 import { parsearExtracto } from '@/lib/utils/parser-extracto';
 import { procesarLinea } from '@/lib/conciliacion/matcher';
 import { crearTareasConciliacion, notificarConciliacionDesdeBD } from '@/lib/conciliacion/seguimiento';
+import { empresaIdDeSesion } from '@/lib/tenant';
 
 /**
  * POST /api/conciliacion/cargar
@@ -24,6 +25,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Solo supervisores pueden cargar extractos' }, { status: 403 });
     }
 
+    const empresaId = empresaIdDeSesion(session);
     const formData = await request.formData();
     const file = formData.get('archivo') as File | null;
     const banco = formData.get('banco') as string || 'Sin especificar';
@@ -42,8 +44,8 @@ export async function POST(request: NextRequest) {
     // Anti-duplicado nivel archivo: el mismo archivo cargado dos veces
     // duplicaría todos los registros (montos dobles en stats y alertas).
     const yaCargado = await cobranzasQuery<{ n: number }>(
-      'SELECT COUNT(*) AS n FROM cobranza_conciliacion WHERE archivo_origen = ?',
-      [file.name]
+      'SELECT COUNT(*) AS n FROM cobranza_conciliacion WHERE empresa_id = ? AND archivo_origen = ?',
+      [empresaId, file.name]
     );
     if (Number(yaCargado[0]?.n) > 0) {
       return NextResponse.json(
@@ -74,9 +76,9 @@ export async function POST(request: NextRequest) {
       // archivos distintos (exports con rangos de fechas solapados).
       const lineaExistente = await cobranzasQuery<{ id: number }>(
         `SELECT id FROM cobranza_conciliacion
-         WHERE fecha_transaccion = ? AND monto = ? AND referencia = ? AND descripcion = ?
+         WHERE empresa_id = ? AND fecha_transaccion = ? AND monto = ? AND referencia = ? AND descripcion = ?
          LIMIT 1`,
-        [linea.fecha_transaccion, linea.monto, linea.referencia || '', linea.descripcion || '']
+        [empresaId, linea.fecha_transaccion, linea.monto, linea.referencia || '', linea.descripcion || '']
       );
       if (lineaExistente.length > 0) {
         duplicadasOmitidas++;
@@ -85,12 +87,12 @@ export async function POST(request: NextRequest) {
       if (linea.tipo === 'CHEQUE_DEVUELTO') {
         await cobranzasExecute(
           `INSERT INTO cobranza_conciliacion (
-            fecha_extracto, banco, archivo_origen,
+            empresa_id, fecha_extracto, banco, archivo_origen,
             fecha_transaccion, descripcion, referencia, cuenta_origen,
             monto, moneda, estado, ir_recnum, codigo_cliente, cargado_por
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'CHEQUE_DEVUELTO', NULL, NULL, ?)`,
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'CHEQUE_DEVUELTO', NULL, NULL, ?)`,
           [
-            fechaExtracto, banco, file.name,
+            empresaId, fechaExtracto, banco, file.name,
             linea.fecha_transaccion, linea.descripcion, linea.referencia, linea.cuenta_origen || null,
             linea.monto, linea.moneda,
             session.email,
@@ -106,16 +108,16 @@ export async function POST(request: NextRequest) {
         continue;
       }
 
-      const match = await procesarLinea(linea);
+      const match = await procesarLinea(linea, empresaId);
 
       const insertResult = await cobranzasExecute(
         `INSERT INTO cobranza_conciliacion (
-          fecha_extracto, banco, archivo_origen,
+          empresa_id, fecha_extracto, banco, archivo_origen,
           fecha_transaccion, descripcion, referencia, cuenta_origen,
           monto, moneda, estado, ir_recnum, codigo_cliente, cargado_por
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
-          fechaExtracto, banco, file.name,
+          empresaId, fechaExtracto, banco, file.name,
           linea.fecha_transaccion, linea.descripcion, linea.referencia, linea.cuenta_origen,
           linea.monto, linea.moneda, match.estado, match.ir_recnum, match.codigo_cliente,
           session.email,
@@ -127,9 +129,9 @@ export async function POST(request: NextRequest) {
         for (const det of match.detalles) {
           await cobranzasExecute(
             `INSERT INTO cobranza_conciliacion_detalle
-               (conciliacion_id, ir_recnum, codigo_cliente, nombre_cliente, monto)
-             VALUES (?, ?, ?, ?, ?)`,
-            [conciliacionId, det.ir_recnum, det.codigo_cliente, det.nombre_cliente, det.monto]
+               (empresa_id, conciliacion_id, ir_recnum, codigo_cliente, nombre_cliente, monto)
+             VALUES (?, ?, ?, ?, ?, ?)`,
+            [empresaId, conciliacionId, det.ir_recnum, det.codigo_cliente, det.nombre_cliente, det.monto]
           );
         }
         multiRecibo++;

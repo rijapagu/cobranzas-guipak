@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth/session';
 import { cobranzasQuery, cobranzasExecute, logAccion } from '@/lib/db/cobranzas';
+import { empresaIdDeSesion } from '@/lib/tenant';
 import type { ConciliacionEntry, ResultadoConciliacion } from '@/lib/types/conciliacion';
 
 /**
@@ -18,8 +19,9 @@ export async function GET(request: NextRequest) {
     const estado = searchParams.get('estado');
     const fechaExtracto = searchParams.get('fecha_extracto');
 
-    let sql = 'SELECT * FROM cobranza_conciliacion WHERE 1=1';
-    const params: (string | number)[] = [];
+    const empresaId = empresaIdDeSesion(session);
+    let sql = 'SELECT * FROM cobranza_conciliacion WHERE empresa_id = ?';
+    const params: (string | number)[] = [empresaId];
 
     if (estado) {
       sql += ' AND estado = ?';
@@ -41,7 +43,7 @@ export async function GET(request: NextRequest) {
       codigo_cliente: string;
       nombre_cliente: string | null;
       monto: number;
-    }>('SELECT * FROM cobranza_conciliacion_detalle ORDER BY conciliacion_id, id');
+    }>('SELECT * FROM cobranza_conciliacion_detalle WHERE empresa_id = ? ORDER BY conciliacion_id, id', [empresaId]);
 
     const detallesPorId = new Map<number, typeof detalles>();
     for (const d of detalles) {
@@ -60,9 +62,9 @@ export async function GET(request: NextRequest) {
 
     // Stats
     const allEntries = await cobranzasQuery<{ estado: string; monto: number }>(
-      'SELECT estado, monto FROM cobranza_conciliacion' +
-      (fechaExtracto ? ' WHERE fecha_extracto = ?' : ''),
-      fechaExtracto ? [fechaExtracto] : []
+      'SELECT estado, monto FROM cobranza_conciliacion WHERE empresa_id = ?' +
+      (fechaExtracto ? ' AND fecha_extracto = ?' : ''),
+      fechaExtracto ? [empresaId, fechaExtracto] : [empresaId]
     );
 
     const stats = {
@@ -101,8 +103,10 @@ export async function GET(request: NextRequest) {
     }>(
       `SELECT archivo_origen, fecha_extracto, COUNT(*) as registros, MAX(cargado_por) as cargado_por
        FROM cobranza_conciliacion
+       WHERE empresa_id = ?
        GROUP BY archivo_origen, fecha_extracto
-       ORDER BY fecha_extracto DESC`
+       ORDER BY fecha_extracto DESC`,
+      [empresaId]
     );
 
     const response: ResultadoConciliacion = {

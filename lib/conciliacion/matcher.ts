@@ -40,7 +40,7 @@ interface ReciboSoftec {
   IJ_DATE: string;
 }
 
-export async function procesarLinea(linea: LineaExtracto): Promise<MatchResult> {
+export async function procesarLinea(linea: LineaExtracto, empresaId: number): Promise<MatchResult> {
   const softecOk = await testSoftecConnection();
 
   if (softecOk) {
@@ -48,7 +48,7 @@ export async function procesarLinea(linea: LineaExtracto): Promise<MatchResult> 
     const matchRecibo = await matchContraRecibos(linea);
     if (matchRecibo) {
       if (matchRecibo.codigo_cliente && linea.cuenta_origen) {
-        await aprenderCuenta(linea.cuenta_origen, linea.descripcion, matchRecibo.codigo_cliente, matchRecibo.nombre_cliente);
+        await aprenderCuenta(empresaId, linea.cuenta_origen, linea.descripcion, matchRecibo.codigo_cliente, matchRecibo.nombre_cliente);
       }
       return matchRecibo;
     }
@@ -60,8 +60,8 @@ export async function procesarLinea(linea: LineaExtracto): Promise<MatchResult> 
 
   if (linea.cuenta_origen) {
     const cuentas = await cobranzasQuery<CuentaAprendida>(
-      'SELECT * FROM cobranza_cuentas_aprendizaje WHERE cuenta_origen = ?',
-      [linea.cuenta_origen]
+      'SELECT * FROM cobranza_cuentas_aprendizaje WHERE empresa_id = ? AND cuenta_origen = ?',
+      [empresaId, linea.cuenta_origen]
     );
     if (cuentas.length > 0) {
       const cuenta = cuentas[0];
@@ -114,9 +114,10 @@ async function matchContraRecibos(linea: LineaExtracto): Promise<MatchResult | n
   }
 
   // Múltiples clientes con mismo monto — intentar desambiguar por cuenta aprendida
+  // (Guipak: la desambiguación cruza recibos de Softec, que es de empresa 1)
   if (linea.cuenta_origen) {
     const cuentas = await cobranzasQuery<CuentaAprendida>(
-      'SELECT * FROM cobranza_cuentas_aprendizaje WHERE cuenta_origen = ?',
+      'SELECT * FROM cobranza_cuentas_aprendizaje WHERE empresa_id = 1 AND cuenta_origen = ?',
       [linea.cuenta_origen]
     );
     if (cuentas.length > 0) {
@@ -237,6 +238,7 @@ async function obtenerNombreCliente(codigo: string): Promise<string | null> {
 }
 
 async function aprenderCuenta(
+  empresaId: number,
   cuentaOrigen: string,
   descripcion: string,
   codigoCliente: string,
@@ -244,8 +246,8 @@ async function aprenderCuenta(
 ): Promise<void> {
   try {
     const existente = await cobranzasQuery<{ id: number }>(
-      'SELECT id FROM cobranza_cuentas_aprendizaje WHERE cuenta_origen = ?',
-      [cuentaOrigen]
+      'SELECT id FROM cobranza_cuentas_aprendizaje WHERE empresa_id = ? AND cuenta_origen = ?',
+      [empresaId, cuentaOrigen]
     );
 
     if (existente.length > 0) {
@@ -262,9 +264,9 @@ async function aprenderCuenta(
       // arriba las promueve a AUTO tras 2+ usos consistentes.
       await cobranzasExecute(
         `INSERT INTO cobranza_cuentas_aprendizaje
-           (cuenta_origen, nombre_origen, codigo_cliente, nombre_cliente, confianza, confirmado_por)
-         VALUES (?, ?, ?, ?, 'MANUAL', 'sistema-conciliacion')`,
-        [cuentaOrigen, descripcion.substring(0, 200), codigoCliente, nombreCliente || '']
+           (empresa_id, cuenta_origen, nombre_origen, codigo_cliente, nombre_cliente, confianza, confirmado_por)
+         VALUES (?, ?, ?, ?, ?, 'MANUAL', 'sistema-conciliacion')`,
+        [empresaId, cuentaOrigen, descripcion.substring(0, 200), codigoCliente, nombreCliente || '']
       );
     }
   } catch {

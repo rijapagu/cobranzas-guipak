@@ -1913,7 +1913,7 @@ async function analizarRiesgoCartera(limiteCriticos: number): Promise<ResultadoT
 async function estadoConciliacion(): Promise<ResultadoTool> {
   const stats = await cobranzasQuery<{ estado: string; total: number; cantidad: number }>(
     `SELECT estado, SUM(monto) as total, COUNT(*) as cantidad
-     FROM cobranza_conciliacion GROUP BY estado`
+     FROM cobranza_conciliacion WHERE empresa_id = 1 GROUP BY estado`
   );
 
   const tareas = await cobranzasQuery<{
@@ -1929,6 +1929,7 @@ async function estadoConciliacion(): Promise<ResultadoTool> {
   const ultimaCarga = await cobranzasQuery<{ archivo_origen: string; fecha_extracto: string; total: number }>(
     `SELECT archivo_origen, fecha_extracto, COUNT(*) as total
      FROM cobranza_conciliacion
+     WHERE empresa_id = 1
      GROUP BY archivo_origen, fecha_extracto
      ORDER BY fecha_extracto DESC LIMIT 3`
   );

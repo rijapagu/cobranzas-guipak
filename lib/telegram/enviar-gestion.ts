@@ -80,7 +80,7 @@ export async function enviarGestion(gestionId: number): Promise<ResultadoEnvio> 
 
   // Validación doble (SPEC §2.3): si el cliente tiene depósitos POR_APLICAR
   // en conciliación, ya nos pagó — aplicar el pago antes de cobrarle.
-  const porAplicar = await pagosPorAplicar(String(gestion.codigo_cliente).trim());
+  const porAplicar = await pagosPorAplicar(String(gestion.codigo_cliente).trim(), EMPRESA_GUIPAK);
   if (porAplicar.cantidad > 0) {
     return {
       ok: false,

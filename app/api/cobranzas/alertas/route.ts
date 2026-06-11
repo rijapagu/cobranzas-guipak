@@ -85,7 +85,8 @@ export async function GET() {
       cuenta_origen: string;
       codigo_cliente: string | null;
     }>(
-      "SELECT id, monto, fecha_transaccion, cuenta_origen, codigo_cliente FROM cobranza_conciliacion WHERE estado = 'POR_APLICAR' ORDER BY fecha_transaccion DESC LIMIT 10"
+      "SELECT id, monto, fecha_transaccion, cuenta_origen, codigo_cliente FROM cobranza_conciliacion WHERE empresa_id = ? AND estado = 'POR_APLICAR' ORDER BY fecha_transaccion DESC LIMIT 10",
+      [empresaIdDeSesion(session)]
     );
 
     pagosNoAplicados.forEach(p => {

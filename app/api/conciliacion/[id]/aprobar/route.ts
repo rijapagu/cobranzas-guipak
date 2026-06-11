@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth/session';
 import { cobranzasQuery, cobranzasExecute, logAccion } from '@/lib/db/cobranzas';
+import { empresaIdDeSesion } from '@/lib/tenant';
 
 /**
  * POST /api/conciliacion/[id]/aprobar
@@ -21,8 +22,8 @@ export async function POST(
     const entryId = Number(id);
 
     const entries = await cobranzasQuery<{ id: number; estado: string; monto: number; codigo_cliente: string }>(
-      'SELECT id, estado, monto, codigo_cliente FROM cobranza_conciliacion WHERE id = ?',
-      [entryId]
+      'SELECT id, estado, monto, codigo_cliente FROM cobranza_conciliacion WHERE id = ? AND empresa_id = ?',
+      [entryId, empresaIdDeSesion(session)]
     );
 
     if (entries.length === 0) return NextResponse.json({ error: 'No encontrada' }, { status: 404 });
@@ -36,8 +37,8 @@ export async function POST(
     });
 
     await cobranzasExecute(
-      'UPDATE cobranza_conciliacion SET estado = ?, aprobado_por = ?, fecha_aprobacion = NOW() WHERE id = ?',
-      ['CONCILIADO', session.email, entryId]
+      'UPDATE cobranza_conciliacion SET estado = ?, aprobado_por = ?, fecha_aprobacion = NOW() WHERE id = ? AND empresa_id = ?',
+      ['CONCILIADO', session.email, entryId, empresaIdDeSesion(session)]
     );
 
     return NextResponse.json({ message: `Entrada ${entryId} aprobada` });

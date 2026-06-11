@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { getSession } from '@/lib/auth/session';
 import { cobranzasQuery, cobranzasExecute, logAccion } from '@/lib/db/cobranzas';
+import { empresaIdDeSesion } from '@/lib/tenant';
 
 const asignarSchema = z.object({
   codigo_cliente: z.string().min(1),
@@ -37,8 +38,8 @@ export async function POST(
     const { codigo_cliente, nombre_cliente } = parsed.data;
 
     const entries = await cobranzasQuery<{ id: number; estado: string; cuenta_origen: string; monto: number }>(
-      'SELECT id, estado, cuenta_origen, monto FROM cobranza_conciliacion WHERE id = ?',
-      [entryId]
+      'SELECT id, estado, cuenta_origen, monto FROM cobranza_conciliacion WHERE id = ? AND empresa_id = ?',
+      [entryId, empresaIdDeSesion(session)]
     );
 
     if (entries.length === 0) return NextResponse.json({ error: 'No encontrada' }, { status: 404 });
@@ -50,15 +51,15 @@ export async function POST(
 
     // Actualizar entrada con cliente asignado → POR_APLICAR
     await cobranzasExecute(
-      'UPDATE cobranza_conciliacion SET codigo_cliente = ?, estado = ?, aprobado_por = ? WHERE id = ?',
-      [codigo_cliente, 'POR_APLICAR', session.email, entryId]
+      'UPDATE cobranza_conciliacion SET codigo_cliente = ?, estado = ?, aprobado_por = ? WHERE id = ? AND empresa_id = ?',
+      [codigo_cliente, 'POR_APLICAR', session.email, entryId, empresaIdDeSesion(session)]
     );
 
     // CP-05: Registrar en sistema de aprendizaje (confianza=MANUAL)
     if (cuentaOrigen) {
       const existente = await cobranzasQuery<{ id: number; veces_usado: number }>(
-        'SELECT id, veces_usado FROM cobranza_cuentas_aprendizaje WHERE cuenta_origen = ?',
-        [cuentaOrigen]
+        'SELECT id, veces_usado FROM cobranza_cuentas_aprendizaje WHERE empresa_id = ? AND cuenta_origen = ?',
+        [empresaIdDeSesion(session), cuentaOrigen]
       );
 
       if (existente.length > 0) {
@@ -71,9 +72,9 @@ export async function POST(
         // Primera vez: insertar como MANUAL
         await cobranzasExecute(
           `INSERT INTO cobranza_cuentas_aprendizaje
-           (cuenta_origen, nombre_origen, codigo_cliente, nombre_cliente, confianza, confirmado_por)
-           VALUES (?, ?, ?, ?, 'MANUAL', ?)`,
-          [cuentaOrigen, entries[0].cuenta_origen, codigo_cliente, nombre_cliente, session.email]
+           (empresa_id, cuenta_origen, nombre_origen, codigo_cliente, nombre_cliente, confianza, confirmado_por)
+           VALUES (?, ?, ?, ?, ?, 'MANUAL', ?)`,
+          [empresaIdDeSesion(session), cuentaOrigen, entries[0].cuenta_origen, codigo_cliente, nombre_cliente, session.email]
         );
       }
     }
