@@ -18,6 +18,7 @@ import type {
   FacturaPendiente,
   ClienteCartera,
   PagoRecibo,
+  PagoFactura,
   OpcionesCartera,
 } from './tipos';
 
@@ -57,14 +58,23 @@ export function crearCsvAdapter(empresaId: number): ErpAdapter {
     },
 
     async carteraPendiente(opciones?: OpcionesCartera): Promise<FacturaPendiente[]> {
-      const porVencer = opciones?.incluirPorVencerDias ?? 0;
-      const limite = Math.min(opciones?.limite ?? 2000, 5000);
+      const limite = Math.min(opciones?.limite ?? 5000, 5000);
+      const umbralDias = opciones?.soloVencidas ? 1 : -(opciones?.incluirPorVencerDias ?? 0);
+      const filtroCliente = opciones?.codigoCliente ? 'AND f.codigo_cliente = ?' : '';
+      const params: (string | number)[] = [empresaId, umbralDias];
+      if (opciones?.codigoCliente) params.push(opciones.codigoCliente);
 
       const rows = await cobranzasQuery<{
         numero: number;
         ncf: string | null;
         codigo_cliente: string;
         nombre_cliente: string | null;
+        rnc: string | null;
+        email: string | null;
+        telefono: string | null;
+        telefono2: string | null;
+        contacto_cobros: string | null;
+        vendedor: string | null;
         total: number;
         saldo_pendiente: number;
         moneda: string;
@@ -73,7 +83,8 @@ export function crearCsvAdapter(empresaId: number): ErpAdapter {
         dias_vencida: number;
       }>(
         `SELECT f.numero, f.ncf, f.codigo_cliente,
-                c.nombre AS nombre_cliente,
+                c.nombre AS nombre_cliente, c.rnc, c.email, c.telefono,
+                c.telefono2, c.contacto_cobros, c.vendedor,
                 f.total, f.saldo_pendiente, f.moneda,
                 f.fecha_emision, f.fecha_vencimiento,
                 DATEDIFF(CURDATE(), f.fecha_vencimiento) AS dias_vencida
@@ -83,24 +94,43 @@ export function crearCsvAdapter(empresaId: number): ErpAdapter {
           WHERE f.empresa_id = ?
             AND f.saldo_pendiente > 0
             AND DATEDIFF(CURDATE(), f.fecha_vencimiento) >= ?
+            ${filtroCliente}
           ORDER BY dias_vencida DESC
           LIMIT ${limite}`,
-        [empresaId, -porVencer]
+        params
       );
 
-      return rows.map((r) => ({
-        numero: Number(r.numero),
-        ncf: r.ncf ? String(r.ncf).trim() : null,
-        codigoCliente: String(r.codigo_cliente).trim(),
-        nombreCliente: r.nombre_cliente ? String(r.nombre_cliente).trim() : String(r.codigo_cliente).trim(),
-        total: Number(r.total) || 0,
-        saldoPendiente: Number(r.saldo_pendiente) || 0,
-        totalPagado: (Number(r.total) || 0) - (Number(r.saldo_pendiente) || 0),
-        moneda: r.moneda || 'DOP',
-        fechaEmision: r.fecha_emision ? toYmd(r.fecha_emision) : null,
-        fechaVencimiento: toYmd(r.fecha_vencimiento),
-        diasVencida: Number(r.dias_vencida) || 0,
-      }));
+      return rows.map((r) => {
+        const total = Number(r.total) || 0;
+        const saldo = Number(r.saldo_pendiente) || 0;
+        return {
+          numero: Number(r.numero),
+          ncf: r.ncf ? String(r.ncf).trim() : null,
+          codigoCliente: String(r.codigo_cliente).trim(),
+          nombreCliente: r.nombre_cliente ? String(r.nombre_cliente).trim() : String(r.codigo_cliente).trim(),
+          total,
+          saldoPendiente: saldo,
+          totalPagado: total - saldo,
+          moneda: r.moneda || 'DOP',
+          fechaEmision: r.fecha_emision ? toYmd(r.fecha_emision) : null,
+          fechaVencimiento: toYmd(r.fecha_vencimiento),
+          diasVencida: Number(r.dias_vencida) || 0,
+          // Cliente embebido desde el staging (el CSV no trae email general
+          // separado del de cobros: usamos el mismo para ambos roles).
+          razonSocial: r.nombre_cliente ? String(r.nombre_cliente).trim() : null,
+          rncCliente: r.rnc ? String(r.rnc).trim() : null,
+          emailCliente: r.email ? String(r.email).trim() : null,
+          telefonoCliente: r.telefono ? String(r.telefono).trim() : null,
+          telefono2Cliente: r.telefono2 ? String(r.telefono2).trim() : null,
+          contactoCliente: r.contacto_cobros ? String(r.contacto_cobros).trim() : null,
+          vendedor: r.vendedor ? String(r.vendedor).trim() : null,
+        };
+      });
+    },
+
+    async pagosFactura(): Promise<PagoFactura[]> {
+      // El snapshot CSV no trae historial de pagos.
+      return [];
     },
 
     async saldoFactura(numero: number): Promise<number | null> {
@@ -109,6 +139,46 @@ export function crearCsvAdapter(empresaId: number): ErpAdapter {
         [empresaId, numero]
       );
       return rows.length > 0 ? Number(rows[0].saldo) : null;
+    },
+
+    async factura(numero: number, codigoCliente?: string): Promise<FacturaPendiente | null> {
+      // El staging solo guarda el snapshot pendiente: buscar sin filtro de saldo.
+      const filtroCliente = codigoCliente ? 'AND f.codigo_cliente = ?' : '';
+      const params: (string | number)[] = [empresaId, numero];
+      if (codigoCliente) params.push(codigoCliente);
+      const rows = await cobranzasQuery<{
+        numero: number; ncf: string | null; codigo_cliente: string;
+        nombre_cliente: string | null; total: number; saldo_pendiente: number;
+        moneda: string; fecha_emision: string | Date | null; fecha_vencimiento: string | Date;
+        dias_vencida: number;
+      }>(
+        `SELECT f.numero, f.ncf, f.codigo_cliente, c.nombre AS nombre_cliente,
+                f.total, f.saldo_pendiente, f.moneda, f.fecha_emision, f.fecha_vencimiento,
+                DATEDIFF(CURDATE(), f.fecha_vencimiento) AS dias_vencida
+           FROM erp_cartera_facturas f
+           LEFT JOIN erp_cartera_clientes c
+             ON c.empresa_id = f.empresa_id AND c.codigo = f.codigo_cliente
+          WHERE f.empresa_id = ? AND f.numero = ? ${filtroCliente}
+          LIMIT 1`,
+        params
+      );
+      if (rows.length === 0) return null;
+      const r = rows[0];
+      const total = Number(r.total) || 0;
+      const saldo = Number(r.saldo_pendiente) || 0;
+      return {
+        numero: Number(r.numero),
+        ncf: r.ncf ? String(r.ncf).trim() : null,
+        codigoCliente: String(r.codigo_cliente).trim(),
+        nombreCliente: r.nombre_cliente ? String(r.nombre_cliente).trim() : String(r.codigo_cliente).trim(),
+        total,
+        saldoPendiente: saldo,
+        totalPagado: total - saldo,
+        moneda: r.moneda || 'DOP',
+        fechaEmision: r.fecha_emision ? toYmd(r.fecha_emision) : null,
+        fechaVencimiento: toYmd(r.fecha_vencimiento),
+        diasVencida: Number(r.dias_vencida) || 0,
+      };
     },
 
     async cliente(codigo: string): Promise<ClienteCartera | null> {

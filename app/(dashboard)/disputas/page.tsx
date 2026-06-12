@@ -63,20 +63,19 @@ interface Disputa {
 
 interface DisputaDetalle extends Disputa {
   cliente: {
-    IC_CODE: string;
-    IC_NAME: string;
-    IC_EMAIL: string;
-    IC_PHONE: string;
+    codigo: string;
+    nombre: string;
+    email: string | null;
+    telefono: string | null;
   } | null;
   factura: {
-    IJ_INUM: number;
-    IJ_DATE: string;
-    IJ_DUEDATE: string;
-    IJ_TOT: number;
-    IJ_TOTAPPL: number;
+    numero: number;
+    ncf: string;
+    fecha_emision: string;
+    fecha_vencimiento: string;
+    total: number;
+    pagado: number;
     saldo_pendiente: number;
-    IJ_NCFFIX: string;
-    IJ_NCFNUM: number;
   } | null;
   logs: Array<{
     usuario_id: string;
@@ -508,13 +507,13 @@ function DetalleContent({ detalle }: { detalle: DisputaDetalle }) {
       <Descriptions title="Cliente" bordered size="small" column={1} style={{ marginBottom: 20 }}>
         <Descriptions.Item label="Código">{detalle.codigo_cliente}</Descriptions.Item>
         <Descriptions.Item label="Nombre">
-          {cliente ? cliente.IC_NAME : <Text type="secondary">No disponible</Text>}
+          {cliente ? cliente.nombre : <Text type="secondary">No disponible</Text>}
         </Descriptions.Item>
-        {cliente?.IC_EMAIL && (
-          <Descriptions.Item label="Email">{cliente.IC_EMAIL}</Descriptions.Item>
+        {cliente?.email && (
+          <Descriptions.Item label="Email">{cliente.email}</Descriptions.Item>
         )}
-        {cliente?.IC_PHONE && (
-          <Descriptions.Item label="Teléfono">{cliente.IC_PHONE}</Descriptions.Item>
+        {cliente?.telefono && (
+          <Descriptions.Item label="Teléfono">{cliente.telefono}</Descriptions.Item>
         )}
       </Descriptions>
 
@@ -525,16 +524,16 @@ function DetalleContent({ detalle }: { detalle: DisputaDetalle }) {
         {factura && (
           <>
             <Descriptions.Item label="NCF">
-              {factura.IJ_NCFFIX}{String(factura.IJ_NCFNUM).padStart(8, "0")}
+              {factura.ncf || "—"}
             </Descriptions.Item>
             <Descriptions.Item label="Emisión">
-              {dayjs(factura.IJ_DATE).format("DD/MM/YYYY")}
+              {factura.fecha_emision ? dayjs(factura.fecha_emision).format("DD/MM/YYYY") : "—"}
             </Descriptions.Item>
             <Descriptions.Item label="Vencimiento">
-              {dayjs(factura.IJ_DUEDATE).format("DD/MM/YYYY")}
+              {dayjs(factura.fecha_vencimiento).format("DD/MM/YYYY")}
             </Descriptions.Item>
             <Descriptions.Item label="Total">
-              {new Intl.NumberFormat("es-DO", { style: "currency", currency: "DOP" }).format(factura.IJ_TOT)}
+              {new Intl.NumberFormat("es-DO", { style: "currency", currency: "DOP" }).format(factura.total)}
             </Descriptions.Item>
             <Descriptions.Item label="Saldo pendiente">
               <Text type={factura.saldo_pendiente > 0 ? "danger" : "success"} strong>

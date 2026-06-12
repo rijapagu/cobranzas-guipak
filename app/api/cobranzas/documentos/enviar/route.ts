@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth/session';
 import { cobranzasQuery, logAccion } from '@/lib/db/cobranzas';
-import { softecQuery } from '@/lib/db/softec';
 import { enviarEmail } from '@/lib/email/sender';
 import { enviarWhatsApp } from '@/lib/evolution/client';
 import { downloadPdfBuffer } from '@/lib/drive/client';
 import { empresaIdDeSesion } from '@/lib/tenant';
+import { adaptadorParaEmpresa } from '@/lib/erp';
 
 /**
  * POST /api/cobranzas/documentos/enviar
@@ -49,13 +49,9 @@ export async function POST(request: NextRequest) {
 
     const doc = docs[0];
 
-    const clienteRows = await softecQuery<{ nombre: string }>(
-      'SELECT IC_NAME AS nombre FROM v_cobr_icust WHERE IC_CODE = ? LIMIT 1',
-      [doc.codigo_cliente]
-    );
-    const nombreCliente = clienteRows[0]?.nombre
-      ? String(clienteRows[0].nombre).trim()
-      : doc.codigo_cliente;
+    const adapter = await adaptadorParaEmpresa(empresaIdDeSesion(session));
+    const clienteErp = await adapter.cliente(doc.codigo_cliente).catch(() => null);
+    const nombreCliente = clienteErp?.nombre ?? doc.codigo_cliente;
 
     await logAccion(session.email, 'ENVIAR_FACTURA_MANUAL', 'documento', String(doc.id), {
       canal, destinatario, ij_inum: doc.ij_inum, codigo_cliente: doc.codigo_cliente,

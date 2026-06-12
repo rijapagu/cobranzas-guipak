@@ -3,12 +3,12 @@ import { getSession } from '@/lib/auth/session';
 import { cobranzasQuery, cobranzasExecute, logAccion, logError } from '@/lib/db/cobranzas';
 import { generarMensajeCobranza } from '@/lib/claude/client';
 import { getMockCartera } from '@/lib/mock/cartera-mock';
-import { softecQuery, testSoftecConnection } from '@/lib/db/softec';
 import type { FacturaVencida } from '@/lib/types/cartera';
 import { seleccionarPlantilla } from '@/lib/templates/seleccionar';
 import { renderPlantilla } from '@/lib/templates/render';
 import { obtenerSaldoAFavorPorCliente } from '@/lib/cobranzas/saldo-favor';
 import { empresaIdDeSesion, EMPRESA_GUIPAK } from '@/lib/tenant';
+import { adaptadorParaEmpresa } from '@/lib/erp';
 import { carteraCompatParaEmpresa } from '@/lib/erp/compat';
 
 /**
@@ -28,20 +28,18 @@ export async function POST() {
       return NextResponse.json({ error: 'Solo supervisores pueden generar cola' }, { status: 403 });
     }
 
-    // Guipak (empresa 1) genera desde Softec en vivo; las demás empresas
-    // desde su cartera importada via adaptador ERP. Solo facturas YA vencidas
-    // (igual que el filtro IJ_DUEDATE < CURDATE() de la query Softec).
+    // Todas las empresas generan desde el adaptador ERP (lib/erp) — solo
+    // facturas YA vencidas. El mock solo aplica a Guipak sin conexión Softec.
     const empresaId = empresaIdDeSesion(session);
     const esGuipak = empresaId === EMPRESA_GUIPAK;
-    let softecOk = false;
+    const adapter = await adaptadorParaEmpresa(empresaId);
+    const softecOk = esGuipak && (await adapter.disponible());
     let facturas: FacturaVencida[];
 
-    if (esGuipak) {
-      softecOk = await testSoftecConnection();
-      facturas = softecOk ? await queryCarteraSoftec() : getMockCartera();
+    if (esGuipak && !softecOk) {
+      facturas = getMockCartera();
     } else {
-      facturas = (await carteraCompatParaEmpresa(empresaId, { incluirPorVencerDias: 0 }))
-        .filter((f) => f.dias_vencido > 0);
+      facturas = await carteraCompatParaEmpresa(empresaId, { soloVencidas: true });
     }
 
     // CP-03: Excluir facturas con disputa activa
@@ -243,37 +241,4 @@ export async function POST() {
     await logError('generar-cola', error);
     return NextResponse.json({ error: 'Error generando cola' }, { status: 500 });
   }
-}
-
-async function queryCarteraSoftec(): Promise<FacturaVencida[]> {
-  return softecQuery<FacturaVencida>(`
-    SELECT
-      c.IC_CODE AS codigo_cliente, c.IC_NAME AS nombre_cliente,
-      c.IC_RAZON AS razon_social, c.IC_RNC AS rnc,
-      c.IC_ARCONTC AS email, c.IC_PHONE AS telefono, c.IC_PHONE2 AS telefono2,
-      c.IC_CONTACT AS contacto_general, c.IC_ARCONTC AS contacto_cobros,
-      c.IC_CRDLMT AS limite_credito,
-      f.IJ_LOCAL AS localidad, f.IJ_TYPEDOC AS tipo_doc, f.IJ_INUM AS numero_interno,
-      CONCAT(f.IJ_NCFFIX, LPAD(f.IJ_NCFNUM, 8, '0')) AS ncf_fiscal,
-      f.IJ_DATE AS fecha_emision, f.IJ_DUEDATE AS fecha_vencimiento,
-      DATEDIFF(CURDATE(), f.IJ_DUEDATE) AS dias_vencido,
-      f.IJ_TAXSUB AS subtotal_gravable, f.IJ_TAX AS itbis,
-      f.IJ_TOT AS total_factura, f.IJ_TOTAPPL AS total_pagado,
-      (f.IJ_TOT - f.IJ_TOTAPPL) AS saldo_pendiente,
-      f.IJ_DTOT AS total_factura_dop, f.IJ_DTOTAPP AS total_pagado_dop,
-      (f.IJ_DTOT - f.IJ_DTOTAPP) AS saldo_pendiente_dop,
-      f.IJ_CURRENC AS moneda, f.IJ_EXCHRAT AS tasa_cambio,
-      f.IJ_TERMS AS terminos_pago, f.IJ_NET AS dias_credito, f.IJ_SLSCODE AS vendedor,
-      CASE
-        WHEN DATEDIFF(CURDATE(), f.IJ_DUEDATE) BETWEEN 1 AND 15 THEN 'AMARILLO'
-        WHEN DATEDIFF(CURDATE(), f.IJ_DUEDATE) BETWEEN 16 AND 30 THEN 'NARANJA'
-        WHEN DATEDIFF(CURDATE(), f.IJ_DUEDATE) > 30 THEN 'ROJO'
-        ELSE 'VERDE'
-      END AS segmento_riesgo
-    FROM v_cobr_ijnl f
-    INNER JOIN v_cobr_icust c ON c.IC_CODE = f.IJ_CCODE AND c.IC_STATUS = 'A'
-    WHERE f.IJ_TYPEDOC = 'IN' AND f.IJ_INVTORF = 'T' AND f.IJ_PAID = 'F'
-      AND f.IJ_DUEDATE < CURDATE() AND (f.IJ_TOT - f.IJ_TOTAPPL) > 0
-    ORDER BY DATEDIFF(CURDATE(), f.IJ_DUEDATE) DESC
-  `);
 }

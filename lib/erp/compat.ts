@@ -1,47 +1,75 @@
 /**
  * Capa de compatibilidad (Fase 3 Etapa 2): convierte el modelo canónico del
- * adaptador ERP a los tipos legacy de la UI (`FacturaVencida`) para que las
- * empresas en modo CSV usen las MISMAS páginas que Guipak sin tocar frontend.
+ * adaptador ERP a los tipos legacy de la UI (`FacturaVencida`).
  *
- * Cuando el frontend migre al modelo canónico (cierre de Etapa 2), este
- * archivo desaparece.
+ * Desde el refactor de cierre de Etapa 2 la usan TODAS las empresas —
+ * incluida Guipak: la query de cartera vive en UN solo lugar
+ * (softecAdapter.carteraPendiente) y las rutas consumen esto.
+ *
+ * Cuando el frontend migre al modelo canónico, este archivo desaparece.
  */
 
 import { cobranzasQuery } from '@/lib/db/cobranzas';
 import { adaptadorParaEmpresa } from './index';
-import type { ClienteCartera } from './tipos';
+import type { OpcionesCartera, FacturaPendiente } from './tipos';
 import type { FacturaVencida, SegmentoRiesgo } from '@/lib/types/cartera';
 
-function segmentoDeDias(dias: number): SegmentoRiesgo {
+export function segmentoDeDias(dias: number): SegmentoRiesgo {
   if (dias >= 1 && dias <= 15) return 'AMARILLO';
   if (dias >= 16 && dias <= 30) return 'NARANJA';
   if (dias > 30) return 'ROJO';
   return 'VERDE';
 }
 
+export function facturaCanonicaACompat(f: FacturaPendiente): FacturaVencida {
+  const pagado = f.totalPagado ?? Math.max(0, f.total - f.saldoPendiente);
+  return {
+    codigo_cliente: f.codigoCliente,
+    nombre_cliente: f.nombreCliente,
+    razon_social: f.razonSocial ?? f.nombreCliente,
+    rnc: f.rncCliente ?? '',
+    email: f.emailCliente ?? null,
+    telefono: f.telefonoCliente ?? null,
+    telefono2: f.telefono2Cliente ?? null,
+    contacto_general: f.contactoCliente ?? null,
+    contacto_cobros: f.contactoCliente ?? null,
+    limite_credito: f.limiteCredito ?? 0,
+    localidad: f.localidad ?? '',
+    tipo_doc: f.tipoDoc ?? 'IN',
+    numero_interno: f.numero,
+    ncf_fiscal: f.ncf ?? '',
+    fecha_emision: f.fechaEmision ?? '',
+    fecha_vencimiento: f.fechaVencimiento,
+    dias_vencido: f.diasVencida,
+    subtotal_gravable: f.subtotalGravable ?? 0,
+    itbis: f.impuesto ?? 0,
+    total_factura: f.total,
+    total_pagado: pagado,
+    saldo_pendiente: f.saldoPendiente,
+    total_factura_dop: f.totalDop || f.total,
+    total_pagado_dop: f.totalPagadoDop || pagado,
+    saldo_pendiente_dop: f.saldoPendienteDop || f.saldoPendiente,
+    moneda: f.moneda,
+    tasa_cambio: f.tasaCambio ?? 1,
+    terminos_pago: f.terminosPago ?? '',
+    dias_credito: f.diasCredito ?? 0,
+    vendedor: f.vendedor ?? '',
+    fecha_ultimo_pago: f.fechaUltimoPago ?? null,
+    segmento_riesgo: segmentoDeDias(f.diasVencida),
+  };
+}
+
 /**
- * Cartera de una empresa NO-Guipak en el formato legacy de la UI.
+ * Cartera de una empresa en el formato legacy de la UI.
  * Aplica CP-03 (excluir facturas con disputa activa de la empresa).
- * Los campos que el origen no trae (ITBIS, límite de crédito, tasa...)
- * van en cero/valores neutros.
  */
 export async function carteraCompatParaEmpresa(
   empresaId: number,
-  opciones?: { incluirPorVencerDias?: number; limite?: number }
+  opciones?: OpcionesCartera
 ): Promise<FacturaVencida[]> {
   const adapter = await adaptadorParaEmpresa(empresaId);
-  const [cartera, clientes] = await Promise.all([
-    adapter.carteraPendiente({
-      incluirPorVencerDias: opciones?.incluirPorVencerDias ?? 5,
-      limite: opciones?.limite ?? 5000,
-    }),
-    adapter.clientes(),
-  ]);
+  const cartera = await adapter.carteraPendiente(opciones);
   if (cartera.length === 0) return [];
-
-  const clientePorCodigo = new Map<string, ClienteCartera>(
-    clientes.map((c) => [c.codigo, c])
-  );
 
   // CP-03: excluir facturas con disputa activa de ESTA empresa.
   const disputas = await cobranzasQuery<{ ij_inum: number }>(
@@ -52,42 +80,5 @@ export async function carteraCompatParaEmpresa(
 
   return cartera
     .filter((f) => !enDisputa.has(f.numero))
-    .map((f) => {
-      const cli = clientePorCodigo.get(f.codigoCliente);
-      const pagado = f.totalPagado ?? Math.max(0, f.total - f.saldoPendiente);
-      return {
-        codigo_cliente: f.codigoCliente,
-        nombre_cliente: f.nombreCliente,
-        razon_social: cli?.nombre ?? f.nombreCliente,
-        rnc: cli?.rnc ?? '',
-        email: cli?.email ?? null,
-        telefono: cli?.telefono ?? null,
-        telefono2: cli?.telefono2 ?? null,
-        contacto_general: cli?.contactoCobros ?? null,
-        contacto_cobros: cli?.contactoCobros ?? null,
-        limite_credito: 0,
-        localidad: '',
-        tipo_doc: 'IN',
-        numero_interno: f.numero,
-        ncf_fiscal: f.ncf ?? '',
-        fecha_emision: f.fechaEmision ?? '',
-        fecha_vencimiento: f.fechaVencimiento,
-        dias_vencido: f.diasVencida,
-        subtotal_gravable: 0,
-        itbis: 0,
-        total_factura: f.total,
-        total_pagado: pagado,
-        saldo_pendiente: f.saldoPendiente,
-        total_factura_dop: f.total,
-        total_pagado_dop: pagado,
-        saldo_pendiente_dop: f.saldoPendiente,
-        moneda: f.moneda,
-        tasa_cambio: 1,
-        terminos_pago: '',
-        dias_credito: 0,
-        vendedor: cli?.vendedor ?? '',
-        fecha_ultimo_pago: null,
-        segmento_riesgo: segmentoDeDias(f.diasVencida),
-      } satisfies FacturaVencida;
-    });
+    .map(facturaCanonicaACompat);
 }

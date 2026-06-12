@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { getSession } from '@/lib/auth/session';
 import { cobranzasQuery, cobranzasExecute, logAccion } from '@/lib/db/cobranzas';
-import { softecQuery } from '@/lib/db/softec';
+import { adaptadorParaEmpresa } from '@/lib/erp';
 import { empresaIdDeSesion } from '@/lib/tenant';
 
 const EstadoEnum = z.enum(['ABIERTA', 'EN_REVISION', 'RESUELTA', 'ANULADA']);
@@ -73,19 +73,19 @@ export async function GET(req: NextRequest) {
   );
   const porEstado = Object.fromEntries(conteos.map((c) => [c.estado, Number(c.total)]));
 
-  // Enriquecer con nombres de clientes desde Softec (batch)
+  // Enriquecer con nombres de clientes desde el ERP de la empresa (batch)
   const codigos = [...new Set(disputas.map((d) => d.codigo_cliente))];
   let nombresPorCodigo: Record<string, string> = {};
   if (codigos.length > 0) {
-    const placeholders = codigos.map(() => '?').join(',');
     try {
-      const clientes = await softecQuery<{ IC_CODE: string; IC_NAME: string }>(
-        `SELECT IC_CODE, IC_NAME FROM v_cobr_icust WHERE IC_CODE IN (${placeholders})`,
-        codigos
+      const adapter = await adaptadorParaEmpresa(empresaId);
+      const clientes = await adapter.clientes();
+      const buscados = new Set(codigos.map((c) => String(c).trim()));
+      nombresPorCodigo = Object.fromEntries(
+        clientes.filter((c) => buscados.has(c.codigo)).map((c) => [c.codigo, c.nombre])
       );
-      nombresPorCodigo = Object.fromEntries(clientes.map((c) => [c.IC_CODE.trim(), c.IC_NAME.trim()]));
     } catch {
-      // Softec puede no estar disponible en local — continuar sin nombres
+      // ERP puede no estar disponible — continuar sin nombres
     }
   }
 

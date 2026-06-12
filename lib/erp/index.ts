@@ -11,7 +11,7 @@ import { EMPRESA_GUIPAK } from '@/lib/tenant';
 import { cobranzasQuery } from '@/lib/db/cobranzas';
 import { softecAdapter } from './softec';
 import { crearCsvAdapter } from './csv';
-import type { ErpAdapter, FacturaPendiente, ClienteCartera, PagoRecibo, TipoErp } from './tipos';
+import type { ErpAdapter, FacturaPendiente, ClienteCartera, PagoRecibo, PagoFactura, TipoErp } from './tipos';
 
 const adaptadorNulo: ErpAdapter = {
   tipo: 'NINGUNO',
@@ -24,10 +24,16 @@ const adaptadorNulo: ErpAdapter = {
   async saldoFactura(): Promise<number | null> {
     return null;
   },
+  async factura(): Promise<FacturaPendiente | null> {
+    return null;
+  },
   async cliente(): Promise<ClienteCartera | null> {
     return null;
   },
   async clientes(): Promise<ClienteCartera[]> {
+    return [];
+  },
+  async pagosFactura(): Promise<PagoFactura[]> {
     return [];
   },
   async recibosEnRango(): Promise<PagoRecibo[]> {

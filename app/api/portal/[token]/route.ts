@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { cobranzasQuery, cobranzasExecute } from '@/lib/db/cobranzas';
-import { softecQuery, testSoftecConnection } from '@/lib/db/softec';
+import { EMPRESA_GUIPAK } from '@/lib/tenant';
+import { adaptadorParaEmpresa } from '@/lib/erp';
 import { obtenerSaldoAFavorPorCliente, ajustarSaldoCliente } from '@/lib/cobranzas/saldo-favor';
 import { getMockCartera } from '@/lib/mock/cartera-mock';
 import { rateLimit, ipDeRequest } from '@/lib/auth/rate-limit';
@@ -54,39 +55,40 @@ export async function GET(
 
     const codigoCliente = portalToken.codigo_cliente;
 
-    // Obtener facturas del cliente
-    const softecOk = await testSoftecConnection();
+    // Obtener facturas del cliente — la empresa se resuelve DESDE el token
+    // (CP-07) y la cartera viene del adaptador ERP de ESA empresa: el portal
+    // funciona igual para Guipak (Softec) que para tenants CSV.
+    const empresaPortal = Number(portalToken.empresa_id) || EMPRESA_GUIPAK;
+    const adapter = await adaptadorParaEmpresa(empresaPortal);
+    const erpOk = await adapter.disponible();
     let facturas: Record<string, unknown>[] = [];
     let nombreCliente = '';
 
-    if (softecOk) {
-      // Query Softec — CP-01: SOLO SELECT, CP-04: filtros obligatorios
-      const rows = await softecQuery<Record<string, unknown>>(`
-        SELECT
-          c.IC_NAME AS nombre_cliente,
-          f.IJ_INUM AS numero_interno,
-          CONCAT(f.IJ_NCFFIX, LPAD(f.IJ_NCFNUM, 8, '0')) AS ncf_fiscal,
-          f.IJ_DATE AS fecha_emision,
-          f.IJ_DUEDATE AS fecha_vencimiento,
-          DATEDIFF(CURDATE(), f.IJ_DUEDATE) AS dias_vencido,
-          f.IJ_TOT AS total_factura,
-          f.IJ_TOTAPPL AS total_pagado,
-          (f.IJ_TOT - f.IJ_TOTAPPL) AS saldo_pendiente,
-          f.IJ_CURRENC AS moneda
-        FROM v_cobr_ijnl f
-        INNER JOIN v_cobr_icust c ON c.IC_CODE = f.IJ_CCODE
-        WHERE f.IJ_CCODE = ?
-          AND f.IJ_TYPEDOC = 'IN'
-          AND f.IJ_INVTORF = 'T'
-          AND f.IJ_PAID = 'F'
-          AND (f.IJ_TOT - f.IJ_TOTAPPL) > 0
-        ORDER BY f.IJ_DUEDATE ASC
-      `, [codigoCliente]);
-
-      facturas = rows;
-      if (rows.length > 0) {
-        nombreCliente = String(rows[0].nombre_cliente || '');
+    if (erpOk) {
+      const cartera = await adapter.carteraPendiente({
+        incluirPorVencerDias: 36500,
+        codigoCliente,
+      });
+      facturas = cartera
+        .sort((a, b) => a.fechaVencimiento.localeCompare(b.fechaVencimiento))
+        .map((f) => ({
+          nombre_cliente: f.nombreCliente,
+          numero_interno: f.numero,
+          ncf_fiscal: f.ncf ?? '',
+          fecha_emision: f.fechaEmision ?? '',
+          fecha_vencimiento: f.fechaVencimiento,
+          dias_vencido: f.diasVencida,
+          total_factura: f.total,
+          total_pagado: f.totalPagado ?? Math.max(0, f.total - f.saldoPendiente),
+          saldo_pendiente: f.saldoPendiente,
+          moneda: f.moneda,
+        }));
+      if (cartera.length > 0) {
+        nombreCliente = cartera[0].nombreCliente;
       }
+    } else if (empresaPortal !== EMPRESA_GUIPAK) {
+      // Tenant sin cartera importada: portal vacío (sin mock de demo).
+      facturas = [];
     } else {
       // Mock mode
       const mockData = getMockCartera();
@@ -160,7 +162,7 @@ export async function GET(
     // cubre todo el pendiente, generamos un mensaje claro para que NO
     // perciba el portal como un cobro injusto.
     let saldoAFavor = 0;
-    if (softecOk) {
+    if (empresaPortal === EMPRESA_GUIPAK && erpOk) {
       const favorMap = await obtenerSaldoAFavorPorCliente([codigoCliente]);
       saldoAFavor = favorMap.get(String(codigoCliente).trim()) ?? 0;
     }
@@ -194,7 +196,7 @@ export async function GET(
         cubierto_por_anticipo: ajuste.cubierto_por_anticipo,
         mensaje,
       },
-      modo: softecOk ? 'live' : 'mock',
+      modo: empresaPortal === EMPRESA_GUIPAK && !erpOk ? 'mock' : 'live',
     });
   } catch (error) {
     console.error('[PORTAL] Error:', error);

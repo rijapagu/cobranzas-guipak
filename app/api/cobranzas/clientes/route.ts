@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth/session';
 import { cobranzasQuery, cobranzasExecute, logAccion } from '@/lib/db/cobranzas';
-import { softecQuery, testSoftecConnection } from '@/lib/db/softec';
 import { empresaIdDeSesion, EMPRESA_GUIPAK } from '@/lib/tenant';
 import { adaptadorParaEmpresa } from '@/lib/erp';
 import { obtenerSaldoAFavorPorCliente } from '@/lib/cobranzas/saldo-favor';
@@ -50,15 +49,15 @@ export async function GET(request: NextRequest) {
   const filtro = request.nextUrl.searchParams.get('filtro'); // sin_email, sin_whatsapp, sin_contacto, pausados
 
   try {
-    // Guipak (empresa 1) sigue en Softec en vivo; las demás empresas leen su
-    // cartera importada via adaptador ERP (lib/erp).
+    // Todas las empresas (Guipak incluida) leen via adaptador ERP (lib/erp).
+    // El mock solo aplica a Guipak sin conexión Softec.
     const empresaIdRuta = empresaIdDeSesion(session);
     const esGuipak = empresaIdRuta === EMPRESA_GUIPAK;
-    let softecOk = false;
+    const adapter = await adaptadorParaEmpresa(empresaIdRuta);
+    const softecOk = esGuipak && (await adapter.disponible());
     let clientesBase: ClienteEnriquecido[];
 
-    if (!esGuipak) {
-      const adapter = await adaptadorParaEmpresa(empresaIdRuta);
+    if (!esGuipak || softecOk) {
       const [cartera, clientesErp] = await Promise.all([
         // 36500 días por vencer = toda factura con saldo, vencida o no
         // (la query Softec equivalente tampoco filtra por fecha).
@@ -83,7 +82,9 @@ export async function GET(request: NextRequest) {
             email_softec: cli?.email ?? null,
             telefono_softec: cli?.telefono ?? null,
             telefono2_softec: cli?.telefono2 ?? null,
-            contacto_cobros_softec: cli?.contactoCobros ?? null,
+            // Paridad legacy: en Softec este campo era IC_ARCONTC (email CxP);
+            // en CSV no existe ese rol separado y cae al contacto de cobros.
+            contacto_cobros_softec: cli?.emailCobros ?? cli?.contactoCobros ?? null,
             vendedor: cli?.vendedor ?? '',
             email_enriq: null,
             whatsapp_enriq: null,
@@ -102,60 +103,6 @@ export async function GET(request: NextRequest) {
           };
         })
         .sort((x, y) => y.saldo_total - x.saldo_total);
-    } else if (await testSoftecConnection()) {
-      softecOk = true;
-      // Query clientes con facturas pendientes desde Softec
-      const rows = await softecQuery<{
-        codigo_cliente: string;
-        nombre_cliente: string;
-        rnc: string;
-        email_softec: string | null;
-        telefono_softec: string | null;
-        telefono2_softec: string | null;
-        contacto_cobros_softec: string | null;
-        vendedor: string;
-        total_facturas_pendientes: number;
-        saldo_total: number;
-      }>(`
-        SELECT
-          c.IC_CODE AS codigo_cliente,
-          c.IC_NAME AS nombre_cliente,
-          c.IC_RNC AS rnc,
-          c.IC_EMAIL AS email_softec,
-          c.IC_PHONE AS telefono_softec,
-          c.IC_PHONE2 AS telefono2_softec,
-          c.IC_ARCONTC AS contacto_cobros_softec,
-          c.IC_SLSCODE AS vendedor,
-          COUNT(f.IJ_INUM) AS total_facturas_pendientes,
-          SUM(f.IJ_TOT - f.IJ_TOTAPPL) AS saldo_total
-        FROM v_cobr_icust c
-        INNER JOIN v_cobr_ijnl f ON f.IJ_CCODE = c.IC_CODE
-        WHERE c.IC_STATUS = 'A'
-          AND f.IJ_TYPEDOC = 'IN'
-          AND f.IJ_INVTORF = 'T'
-          AND f.IJ_PAID = 'F'
-          AND (f.IJ_TOT - f.IJ_TOTAPPL) > 0
-        GROUP BY c.IC_CODE, c.IC_NAME, c.IC_RNC, c.IC_EMAIL,
-                 c.IC_PHONE, c.IC_PHONE2, c.IC_ARCONTC, c.IC_SLSCODE
-        ORDER BY saldo_total DESC
-      `);
-
-      clientesBase = rows.map(r => ({
-        ...r,
-        email_enriq: null,
-        whatsapp_enriq: null,
-        contacto_cobros_enriq: null,
-        canal_preferido: null,
-        no_contactar: false,
-        pausa_hasta: null,
-        notas_cobros: null,
-        tiene_email: !!r.email_softec?.trim(),
-        tiene_whatsapp: !!r.telefono_softec?.trim(),
-        // CP-15: se completa abajo con datos del helper.
-        saldo_a_favor: 0,
-        saldo_neto: Number(r.saldo_total) || 0,
-        cubierto_por_anticipo: false,
-      }));
     } else {
       // Mock
       const mockData = getMockCartera();

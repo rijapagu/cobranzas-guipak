@@ -2,8 +2,9 @@ import { NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth/session';
 import { empresaIdDeSesion, EMPRESA_GUIPAK } from '@/lib/tenant';
 import { cobranzasQuery } from '@/lib/db/cobranzas';
-import { softecQuery, testSoftecConnection } from '@/lib/db/softec';
 import { obtenerSaldoAFavorPorCliente } from '@/lib/cobranzas/saldo-favor';
+import { adaptadorParaEmpresa } from '@/lib/erp';
+import { carteraCompatParaEmpresa } from '@/lib/erp/compat';
 
 interface Alerta {
   tipo: 'PROMESA_VENCIDA' | 'FACTURA_SIN_GESTION' | 'PAGO_SIN_REGISTRAR' | 'ESCALADO' | 'CLIENTE_NUEVO_MORA';
@@ -100,38 +101,35 @@ export async function GET() {
       });
     });
 
-    // 4. Facturas con 30+ días sin gestión (solo si Softec conectado).
-    // Softec es el ERP de Guipak: para otras empresas se omite (Etapa 2: lib/erp).
-    const softecOk = empresaIdDeSesion(session) === EMPRESA_GUIPAK && await testSoftecConnection();
-    if (softecOk) {
-      const sinGestion = await softecQuery<{
-        codigo_cliente: string;
-        nombre_cliente: string;
-        facturas: number;
-        saldo: number;
-        max_dias: number;
-      }>(`
-        SELECT
-          f.IJ_CCODE AS codigo_cliente,
-          c.IC_NAME AS nombre_cliente,
-          COUNT(*) AS facturas,
-          SUM(f.IJ_TOT - f.IJ_TOTAPPL) AS saldo,
-          MAX(DATEDIFF(CURDATE(), f.IJ_DUEDATE)) AS max_dias
-        FROM v_cobr_ijnl f
-        INNER JOIN v_cobr_icust c ON c.IC_CODE = f.IJ_CCODE AND c.IC_STATUS = 'A'
-        WHERE f.IJ_TYPEDOC = 'IN' AND f.IJ_INVTORF = 'T' AND f.IJ_PAID = 'F'
-          AND (f.IJ_TOT - f.IJ_TOTAPPL) > 0
-          AND DATEDIFF(CURDATE(), f.IJ_DUEDATE) > 30
-        GROUP BY f.IJ_CCODE, c.IC_NAME
-        HAVING facturas >= 3
-        ORDER BY saldo DESC
-        LIMIT 10
-      `);
+    // 4. Facturas con 30+ días sin gestión — desde el adaptador ERP, para
+    // todas las empresas. CP-15 (saldo a favor) sigue siendo solo-Softec.
+    const empresaIdAlertas = empresaIdDeSesion(session);
+    const esGuipak = empresaIdAlertas === EMPRESA_GUIPAK;
+    const adapter = await adaptadorParaEmpresa(empresaIdAlertas);
+    const erpOk = await adapter.disponible();
+    if (erpOk) {
+      const cartera = (await carteraCompatParaEmpresa(empresaIdAlertas, { soloVencidas: true }))
+        .filter((f) => f.dias_vencido > 30);
+      const porCliente = new Map<string, { nombre_cliente: string; facturas: number; saldo: number; max_dias: number }>();
+      for (const f of cartera) {
+        const s = porCliente.get(f.codigo_cliente) ?? {
+          nombre_cliente: f.nombre_cliente, facturas: 0, saldo: 0, max_dias: 0,
+        };
+        s.facturas++;
+        s.saldo += Number(f.saldo_pendiente) || 0;
+        s.max_dias = Math.max(s.max_dias, f.dias_vencido);
+        porCliente.set(f.codigo_cliente, s);
+      }
+      const sinGestion = [...porCliente.entries()]
+        .map(([codigo_cliente, s]) => ({ codigo_cliente, ...s }))
+        .filter((s) => s.facturas >= 3)
+        .sort((a, b) => b.saldo - a.saldo)
+        .slice(0, 10);
 
       // CP-15: ajustar por saldo a favor del cliente. Si el cliente está
       // cubierto por anticipos (favor >= pendiente), no generamos alerta.
       const codigosSinGestion = sinGestion.map(s => String(s.codigo_cliente).trim());
-      const saldosFavor = codigosSinGestion.length > 0
+      const saldosFavor = esGuipak && codigosSinGestion.length > 0
         ? await obtenerSaldoAFavorPorCliente(codigosSinGestion)
         : new Map<string, number>();
 

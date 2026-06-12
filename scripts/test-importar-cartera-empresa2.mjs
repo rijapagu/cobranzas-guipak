@@ -61,14 +61,15 @@ const check = (cond, msg) => {
   if (!cond) fallos++;
 };
 
-// Cartera
+// Cartera (la página de cartera muestra SOLO vencidas — paridad con Guipak:
+// la 9003 por vencer queda fuera aquí pero cuenta en dashboard/clientes)
 const cart = await (await fetch(`${BASE}/api/softec/cartera-vencida`, { headers: { cookie } })).json();
-check(cart.total === 3, `cartera: 3 facturas (vino ${cart.total})`);
+check(cart.total === 2, `cartera: 2 facturas vencidas (vino ${cart.total})`);
 const f9001 = cart.facturas?.find((f) => f.numero_interno === 9001);
 check(!!f9001 && f9001.segmento_riesgo === 'ROJO' && Number(f9001.saldo_pendiente) === 8500.5,
   'cartera: factura 9001 ROJO con saldo 8500.50');
-check(cart.facturas?.find((f) => f.numero_interno === 9003)?.segmento_riesgo === 'VERDE',
-  'cartera: factura 9003 por vencer = VERDE');
+check(!cart.facturas?.some((f) => f.numero_interno === 9003),
+  'cartera: factura 9003 por vencer NO aparece (solo vencidas)');
 check(f9001?.email === 'pagos@comercialprueba.test', 'cartera: email del cliente cruzado');
 
 // Segmentos (solo vencidas: 9001 ROJO + 9002 AMARILLO)

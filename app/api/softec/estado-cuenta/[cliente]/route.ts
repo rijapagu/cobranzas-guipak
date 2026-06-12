@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { softecQuery, testSoftecConnection } from '@/lib/db/softec';
 import { getMockPagos } from '@/lib/mock/cartera-mock';
 import { getSession } from '@/lib/auth/session';
 import { empresaIdDeSesion, EMPRESA_GUIPAK } from '@/lib/tenant';
+import { adaptadorParaEmpresa } from '@/lib/erp';
 import type { PagoAplicado } from '@/lib/types/cartera';
 
 /**
@@ -26,46 +26,38 @@ export async function GET(
       return NextResponse.json({ error: 'Parámetro factura requerido' }, { status: 400 });
     }
 
-    // El ERP Softec es de Guipak (empresa 1); otras empresas ven vacío (Etapa 2: lib/erp).
-    if (empresaIdDeSesion(session) !== EMPRESA_GUIPAK) {
-      return NextResponse.json({ cliente, factura: Number(factura), pagos: [], modo: 'live' });
-    }
-
-    const softecOk = await testSoftecConnection();
+    // Todas las empresas leen via adaptador ERP (lib/erp): en orígenes sin
+    // historial de pagos (CSV) devuelve []. El mock solo aplica a Guipak
+    // sin conexión Softec.
+    const empresaId = empresaIdDeSesion(session);
+    const esGuipak = empresaId === EMPRESA_GUIPAK;
+    const adapter = await adaptadorParaEmpresa(empresaId);
+    const softecOk = esGuipak && (await adapter.disponible());
     let pagos: PagoAplicado[];
 
-    if (softecOk) {
-      pagos = await softecQuery<PagoAplicado>(
-        `SELECT
-          r.IR_PDATE          AS fecha_pago,
-          r.IR_PAYDOC         AS tipo_recibo,
-          r.IR_RECNUM         AS numero_recibo,
-          r.IR_FTYPDOC        AS tipo_factura,
-          r.IR_FINUM          AS numero_factura,
-          r.IR_AMTPAID        AS monto_aplicado,
-          r.IR_DAMTPAI        AS monto_aplicado_dop,
-          p.IJ_DATE           AS fecha_recibo,
-          p.IJ_TOT            AS total_recibo,
-          p.IJ_DESCR          AS referencia_pago
-        FROM v_cobr_irjnl r
-        LEFT JOIN v_cobr_ijnl_pay p
-          ON  p.IJ_LOCAL  = r.IR_PLOCAL
-          AND p.IJ_RECNUM = r.IR_RECNUM
-        WHERE
-          r.IR_CCODE   = ?
-          AND r.IR_FINUM = ?
-        ORDER BY r.IR_PDATE ASC`,
-        [cliente, Number(factura)]
-      );
-    } else {
+    if (esGuipak && !softecOk) {
       pagos = getMockPagos(Number(factura));
+    } else {
+      const canon = await adapter.pagosFactura(Number(factura), cliente);
+      pagos = canon.map((p) => ({
+        fecha_pago: p.fecha,
+        tipo_recibo: p.tipoRecibo ?? '',
+        numero_recibo: p.numeroRecibo ?? 0,
+        tipo_factura: 'IN',
+        numero_factura: Number(factura),
+        monto_aplicado: p.monto,
+        monto_aplicado_dop: p.montoDop ?? p.monto,
+        fecha_recibo: p.fechaRecibo ?? '',
+        total_recibo: p.totalRecibo ?? 0,
+        referencia_pago: p.referencia ?? '',
+      }));
     }
 
     return NextResponse.json({
       cliente,
       factura: Number(factura),
       pagos,
-      modo: softecOk ? 'live' : 'mock',
+      modo: esGuipak && !softecOk ? 'mock' : 'live',
     });
   } catch (error) {
     console.error('[ESTADO-CUENTA] Error:', error);

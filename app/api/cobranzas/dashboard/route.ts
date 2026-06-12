@@ -111,8 +111,11 @@ export async function GET(request: NextRequest) {
       modo: esGuipak && !softecOk ? 'mock' : 'live',
     };
 
-    // --- Datos de cartera: adaptador ERP (no-Guipak), Softec o Mock ---
-    if (!esGuipak) {
+    // --- Datos de cartera via adaptador ERP (todas las empresas) ---
+    // El mock solo aplica a Guipak sin conexión Softec. DSO, saldo a favor
+    // (CP-15) y el conteo exacto de clientes sin contacto son dimensiones
+    // Softec y se calculan aparte solo para Guipak en vivo.
+    if (!esGuipak || softecOk) {
       const cartera = await carteraCompatParaEmpresa(empresaId, { incluirPorVencerDias: 36500 });
       const segMap: Record<string, { facturas: number; clientes: Set<string>; saldo: number }> = {};
       const clienteMap: Record<string, { nombre: string; saldo: number; facturas: number }> = {};
@@ -151,129 +154,66 @@ export async function GET(request: NextRequest) {
       kpis.clientes_sin_contacto = cartera
         .filter((f) => !f.email?.trim() && !f.telefono?.trim())
         .reduce((set, f) => set.add(f.codigo_cliente), new Set<string>()).size;
-    } else if (softecOk) {
-      // Resumen por segmento
-      const segmentos = await softecQuery<{
-        segmento: string;
-        num_facturas: number;
-        num_clientes: number;
-        saldo_total: number;
-      }>(`
-        SELECT
-          CASE
-            WHEN DATEDIFF(CURDATE(), f.IJ_DUEDATE) BETWEEN 1 AND 15 THEN 'AMARILLO'
-            WHEN DATEDIFF(CURDATE(), f.IJ_DUEDATE) BETWEEN 16 AND 30 THEN 'NARANJA'
-            WHEN DATEDIFF(CURDATE(), f.IJ_DUEDATE) > 30 THEN 'ROJO'
-            ELSE 'VERDE'
-          END AS segmento,
-          COUNT(*) AS num_facturas,
-          COUNT(DISTINCT f.IJ_CCODE) AS num_clientes,
-          SUM(f.IJ_TOT - f.IJ_TOTAPPL) AS saldo_total
-        FROM v_cobr_ijnl f
-        WHERE f.IJ_TYPEDOC = 'IN' AND f.IJ_INVTORF = 'T' AND f.IJ_PAID = 'F'
-          AND (f.IJ_TOT - f.IJ_TOTAPPL) > 0
-        GROUP BY segmento
-        ORDER BY FIELD(segmento, 'ROJO', 'NARANJA', 'AMARILLO', 'VERDE')
-      `);
 
-      kpis.segmentos = segmentos.map(s => ({
-        segmento: s.segmento,
-        facturas: Number(s.num_facturas),
-        clientes: Number(s.num_clientes),
-        saldo: Number(s.saldo_total),
-      }));
-      kpis.total_facturas = kpis.segmentos.reduce((sum, s) => sum + s.facturas, 0);
-      kpis.total_clientes = kpis.segmentos.reduce((sum, s) => sum + s.clientes, 0);
-      kpis.cartera_total = kpis.segmentos.reduce((sum, s) => sum + s.saldo, 0);
+      if (softecOk) {
+        // CP-15: top clientes reordenado por saldo NETO (top 30 candidatos
+        // por bruto, restar saldo a favor, quedarse con 10).
+        const candidatos = Object.entries(clienteMap)
+          .sort(([, a], [, b]) => b.saldo - a.saldo)
+          .slice(0, 30);
+        const saldosFavor = await obtenerSaldoAFavorPorCliente(candidatos.map(([c]) => c));
+        kpis.top_clientes = candidatos
+          .map(([codigo, d]) => {
+            const favor = saldosFavor.get(codigo) ?? 0;
+            return {
+              codigo,
+              nombre: d.nombre,
+              saldo: d.saldo,
+              saldo_a_favor: Math.min(d.saldo, favor),
+              saldo_neto: Math.max(0, d.saldo - favor),
+              facturas: d.facturas,
+            };
+          })
+          .sort((a, b) => b.saldo_neto - a.saldo_neto)
+          .slice(0, 10);
 
-      // Top clientes — CP-15: traemos más candidatos (top 30 por bruto),
-      // restamos saldo a favor, reordenamos por NETO y nos quedamos con 10.
-      const top = await softecQuery<{
-        codigo: string;
-        nombre: string;
-        saldo: number;
-        facturas: number;
-      }>(`
-        SELECT
-          c.IC_CODE AS codigo,
-          c.IC_NAME AS nombre,
-          SUM(f.IJ_TOT - f.IJ_TOTAPPL) AS saldo,
-          COUNT(*) AS facturas
-        FROM v_cobr_ijnl f
-        INNER JOIN v_cobr_icust c ON c.IC_CODE = f.IJ_CCODE AND c.IC_STATUS = 'A'
-        WHERE f.IJ_TYPEDOC = 'IN' AND f.IJ_INVTORF = 'T' AND f.IJ_PAID = 'F'
-          AND (f.IJ_TOT - f.IJ_TOTAPPL) > 0
-          AND f.IJ_DUEDATE < CURDATE()
-        GROUP BY c.IC_CODE, c.IC_NAME
-        ORDER BY saldo DESC
-        LIMIT 30
-      `);
-      const codigos = top.map(t => String(t.codigo).trim());
-      const saldosFavor = await obtenerSaldoAFavorPorCliente(codigos);
-      kpis.top_clientes = top
-        .map(t => {
-          const codigo = String(t.codigo).trim();
-          const saldoBruto = Number(t.saldo);
-          const favor = saldosFavor.get(codigo) ?? 0;
-          const aplicable = Math.min(saldoBruto, favor);
-          const neto = Math.max(0, saldoBruto - favor);
-          return {
-            codigo,
-            nombre: String(t.nombre).trim(),
-            saldo: saldoBruto,
-            saldo_a_favor: aplicable,
-            saldo_neto: neto,
-            facturas: Number(t.facturas),
-          };
-        })
-        .sort((a, b) => b.saldo_neto - a.saldo_neto)
-        .slice(0, 10);
+        // CP-15: cartera neta global (favor aplicado por cliente, sin
+        // transferir entre clientes).
+        const saldosFavorTodos = await obtenerSaldoAFavorPorCliente(Object.keys(clienteMap));
+        let aFavorAplicable = 0;
+        let netoAcumulado = 0;
+        for (const [codigo, d] of Object.entries(clienteMap)) {
+          const favor = saldosFavorTodos.get(codigo) ?? 0;
+          aFavorAplicable += Math.min(d.saldo, favor);
+          netoAcumulado += Math.max(0, d.saldo - favor);
+        }
+        kpis.cartera_total_a_favor = Math.round(aFavorAplicable * 100) / 100;
+        kpis.cartera_total_neta = Math.round(netoAcumulado * 100) / 100;
 
-      // CP-15: cartera neta global. Restamos saldo a favor solo en clientes
-      // que tienen pendiente — no transferimos entre clientes.
-      const clientesPendientes = await softecQuery<{ codigo_cliente: string; pendiente: number }>(`
-        SELECT
-          f.IJ_CCODE AS codigo_cliente,
-          SUM(f.IJ_TOT - f.IJ_TOTAPPL) AS pendiente
-        FROM v_cobr_ijnl f
-        WHERE f.IJ_TYPEDOC = 'IN' AND f.IJ_INVTORF = 'T' AND f.IJ_PAID = 'F'
-          AND (f.IJ_TOT - f.IJ_TOTAPPL) > 0
-        GROUP BY f.IJ_CCODE
-      `);
-      const saldosFavorTodos = await obtenerSaldoAFavorPorCliente();
-      let aFavorAplicable = 0;
-      let netoAcumulado = 0;
-      for (const r of clientesPendientes) {
-        const codigo = String(r.codigo_cliente).trim();
-        const pendiente = Number(r.pendiente) || 0;
-        const favor = saldosFavorTodos.get(codigo) ?? 0;
-        aFavorAplicable += Math.min(pendiente, favor);
-        netoAcumulado += Math.max(0, pendiente - favor);
+        // DSO = (CxC / Ventas últimos 90 días) × 90 — requiere las ventas
+        // del ERP: query especializada solo-Softec.
+        const dsoData = await softecQuery<{ cxc: number; ventas_90: number }>(`
+          SELECT
+            (SELECT SUM(IJ_TOT - IJ_TOTAPPL) FROM v_cobr_ijnl WHERE IJ_TYPEDOC='IN' AND IJ_INVTORF='T' AND IJ_PAID='F' AND (IJ_TOT - IJ_TOTAPPL) > 0) AS cxc,
+            (SELECT SUM(IJ_TOT) FROM v_cobr_ijnl WHERE IJ_TYPEDOC='IN' AND IJ_INVTORF='T' AND IJ_DATE >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)) AS ventas_90
+        `);
+        if (dsoData[0] && Number(dsoData[0].ventas_90) > 0) {
+          kpis.dso = Math.round((Number(dsoData[0].cxc) / Number(dsoData[0].ventas_90)) * 90);
+        }
+
+        // Clientes sin contacto con la semántica legacy exacta (IC_EMAIL /
+        // IC_PHONE — el modelo canónico expone el email de CxP, no el general).
+        const sinContacto = await softecQuery<{ total: number }>(`
+          SELECT COUNT(DISTINCT c.IC_CODE) AS total
+          FROM v_cobr_icust c
+          INNER JOIN v_cobr_ijnl f ON f.IJ_CCODE = c.IC_CODE
+          WHERE c.IC_STATUS = 'A' AND f.IJ_TYPEDOC = 'IN' AND f.IJ_INVTORF = 'T' AND f.IJ_PAID = 'F'
+            AND (f.IJ_TOT - f.IJ_TOTAPPL) > 0
+            AND (c.IC_EMAIL IS NULL OR TRIM(c.IC_EMAIL) = '')
+            AND (c.IC_PHONE IS NULL OR TRIM(c.IC_PHONE) = '')
+        `);
+        kpis.clientes_sin_contacto = Number(sinContacto[0]?.total) || 0;
       }
-      kpis.cartera_total_a_favor = Math.round(aFavorAplicable * 100) / 100;
-      kpis.cartera_total_neta = Math.round(netoAcumulado * 100) / 100;
-
-      // DSO = (CxC / Ventas últimos 90 días) × 90
-      const dsoData = await softecQuery<{ cxc: number; ventas_90: number }>(`
-        SELECT
-          (SELECT SUM(IJ_TOT - IJ_TOTAPPL) FROM v_cobr_ijnl WHERE IJ_TYPEDOC='IN' AND IJ_INVTORF='T' AND IJ_PAID='F' AND (IJ_TOT - IJ_TOTAPPL) > 0) AS cxc,
-          (SELECT SUM(IJ_TOT) FROM v_cobr_ijnl WHERE IJ_TYPEDOC='IN' AND IJ_INVTORF='T' AND IJ_DATE >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)) AS ventas_90
-      `);
-      if (dsoData[0] && Number(dsoData[0].ventas_90) > 0) {
-        kpis.dso = Math.round((Number(dsoData[0].cxc) / Number(dsoData[0].ventas_90)) * 90);
-      }
-
-      // Clientes sin contacto
-      const sinContacto = await softecQuery<{ total: number }>(`
-        SELECT COUNT(DISTINCT c.IC_CODE) AS total
-        FROM v_cobr_icust c
-        INNER JOIN v_cobr_ijnl f ON f.IJ_CCODE = c.IC_CODE
-        WHERE c.IC_STATUS = 'A' AND f.IJ_TYPEDOC = 'IN' AND f.IJ_INVTORF = 'T' AND f.IJ_PAID = 'F'
-          AND (f.IJ_TOT - f.IJ_TOTAPPL) > 0
-          AND (c.IC_EMAIL IS NULL OR TRIM(c.IC_EMAIL) = '')
-          AND (c.IC_PHONE IS NULL OR TRIM(c.IC_PHONE) = '')
-      `);
-      kpis.clientes_sin_contacto = Number(sinContacto[0]?.total) || 0;
     } else {
       // Mock
       const mockData = getMockCartera();

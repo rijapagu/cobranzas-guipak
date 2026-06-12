@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth/session';
-import { softecQuery, testSoftecConnection } from '@/lib/db/softec';
 import { logAccion } from '@/lib/db/cobranzas';
 import { obtenerSaldoAFavorPorCliente, ajustarSaldoCliente } from '@/lib/cobranzas/saldo-favor';
 import { getMockCartera } from '@/lib/mock/cartera-mock';
@@ -35,22 +34,21 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    // Guipak (empresa 1) exporta desde Softec; las demás desde su cartera
-    // importada via adaptador ERP. CP-15 es solo-Softec (favor = 0 en CSV).
+    // Todas las empresas exportan desde el adaptador ERP (lib/erp).
+    // CP-15 es solo-Softec; el mock solo aplica a Guipak sin conexión.
     const empresaId = empresaIdDeSesion(session);
     const esGuipak = empresaId === EMPRESA_GUIPAK;
-    let softecOk = false;
+    const adapter = await adaptadorParaEmpresa(empresaId);
+    const softecOk = esGuipak && (await adapter.disponible());
     let facturas: Record<string, unknown>[];
     let nombreCliente = codigoCliente;
 
-    if (!esGuipak) {
-      const adapter = await adaptadorParaEmpresa(empresaId);
+    if (!esGuipak || softecOk) {
       const [cartera, cli] = await Promise.all([
-        adapter.carteraPendiente({ incluirPorVencerDias: 36500, limite: 5000 }),
+        adapter.carteraPendiente({ incluirPorVencerDias: 36500, codigoCliente }),
         adapter.cliente(codigoCliente),
       ]);
       const delCliente = cartera
-        .filter((f) => f.codigoCliente === codigoCliente)
         .sort((a, b) => a.fechaVencimiento.localeCompare(b.fechaVencimiento));
       if (cli) nombreCliente = cli.nombre;
       else if (delCliente[0]) nombreCliente = delCliente[0].nombreCliente;
@@ -66,31 +64,6 @@ export async function GET(request: NextRequest) {
         'Saldo': f.saldoPendiente,
         'Moneda': f.moneda,
       }));
-    } else if (await testSoftecConnection()) {
-      softecOk = true;
-      facturas = await softecQuery<Record<string, unknown>>(`
-        SELECT
-          c.IC_NAME AS 'Nombre Cliente',
-          f.IJ_INUM AS '# Factura',
-          CONCAT(f.IJ_NCFFIX, LPAD(f.IJ_NCFNUM, 8, '0')) AS 'NCF',
-          f.IJ_DATE AS 'Fecha Emisión',
-          f.IJ_DUEDATE AS 'Fecha Vencimiento',
-          DATEDIFF(CURDATE(), f.IJ_DUEDATE) AS 'Días Vencido',
-          f.IJ_TOT AS 'Total',
-          f.IJ_TOTAPPL AS 'Pagado',
-          (f.IJ_TOT - f.IJ_TOTAPPL) AS 'Saldo',
-          f.IJ_CURRENC AS 'Moneda'
-        FROM v_cobr_ijnl f
-        INNER JOIN v_cobr_icust c ON c.IC_CODE = f.IJ_CCODE
-        WHERE f.IJ_CCODE = ?
-          AND f.IJ_TYPEDOC = 'IN' AND f.IJ_INVTORF = 'T' AND f.IJ_PAID = 'F'
-          AND (f.IJ_TOT - f.IJ_TOTAPPL) > 0
-        ORDER BY f.IJ_DUEDATE ASC
-      `, [codigoCliente]);
-
-      if (facturas.length > 0) {
-        nombreCliente = String(facturas[0]['Nombre Cliente']);
-      }
     } else {
       const mock = getMockCartera().filter(f => f.codigo_cliente === codigoCliente);
       if (mock.length > 0) nombreCliente = mock[0].nombre_cliente;

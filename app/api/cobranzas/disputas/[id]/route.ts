@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { getSession } from '@/lib/auth/session';
 import { cobranzasQuery, cobranzasExecute, logAccion } from '@/lib/db/cobranzas';
 import { empresaIdDeSesion } from '@/lib/tenant';
-import { softecQuery } from '@/lib/db/softec';
+import { adaptadorParaEmpresa } from '@/lib/erp';
 
 const UpdateSchema = z.object({
   motivo: z.string().min(5).optional(),
@@ -31,29 +31,35 @@ export async function GET(
   if (rows.length === 0) return NextResponse.json({ error: 'No encontrada' }, { status: 404 });
   const disputa = rows[0] as Record<string, unknown>;
 
-  // Datos del cliente y factura desde Softec
-  type ClienteRow = { IC_CODE: string; IC_NAME: string; IC_EMAIL: string; IC_PHONE: string };
-  type FacturaRow = { IJ_INUM: number; IJ_DATE: string; IJ_DUEDATE: string; IJ_TOT: number; IJ_TOTAPPL: number; IJ_NCFFIX: string; IJ_NCFNUM: number };
-
-  let cliente: ClienteRow | null = null;
-  let factura: FacturaRow | null = null;
+  // Datos del cliente y factura desde el ERP de la empresa (modelo canónico —
+  // los nombres IJ_/IC_ quedan encapsulados en el adaptador).
+  let cliente: { codigo: string; nombre: string; email: string | null; telefono: string | null } | null = null;
+  let factura: {
+    numero: number; ncf: string; fecha_emision: string; fecha_vencimiento: string;
+    total: number; pagado: number;
+  } | null = null;
 
   try {
-    const clientes = await softecQuery<ClienteRow>(
-      'SELECT IC_CODE, IC_NAME, IC_EMAIL, IC_PHONE FROM v_cobr_icust WHERE IC_CODE = ?',
-      [String(disputa.codigo_cliente)]
-    );
-    if (clientes.length > 0) cliente = clientes[0];
-
-    const facturas = await softecQuery<FacturaRow>(
-      `SELECT IJ_INUM, IJ_DATE, IJ_DUEDATE, IJ_TOT, IJ_TOTAPPL, IJ_NCFFIX, IJ_NCFNUM
-         FROM v_cobr_ijnl
-        WHERE IJ_INUM = ? AND IJ_CCODE = ?`,
-      [Number(disputa.ij_inum), String(disputa.codigo_cliente)]
-    );
-    if (facturas.length > 0) factura = facturas[0];
+    const adapter = await adaptadorParaEmpresa(empresaIdDeSesion(session));
+    const [cli, fac] = await Promise.all([
+      adapter.cliente(String(disputa.codigo_cliente)),
+      adapter.factura(Number(disputa.ij_inum), String(disputa.codigo_cliente)),
+    ]);
+    if (cli) {
+      cliente = { codigo: cli.codigo, nombre: cli.nombre, email: cli.email ?? null, telefono: cli.telefono ?? null };
+    }
+    if (fac) {
+      factura = {
+        numero: fac.numero,
+        ncf: fac.ncf ?? '',
+        fecha_emision: fac.fechaEmision ?? '',
+        fecha_vencimiento: fac.fechaVencimiento,
+        total: fac.total,
+        pagado: fac.totalPagado ?? Math.max(0, fac.total - fac.saldoPendiente),
+      };
+    }
   } catch {
-    // Softec no disponible — continuar sin datos adicionales
+    // ERP no disponible — continuar sin datos adicionales
   }
 
   // Historial de acciones para esta disputa
@@ -67,7 +73,7 @@ export async function GET(
   );
 
   const facturaOut = factura
-    ? { ...factura, IJ_TOT: Number(factura.IJ_TOT), IJ_TOTAPPL: Number(factura.IJ_TOTAPPL), saldo_pendiente: Number(factura.IJ_TOT) - Number(factura.IJ_TOTAPPL) }
+    ? { ...factura, saldo_pendiente: factura.total - factura.pagado }
     : null;
 
   return NextResponse.json({

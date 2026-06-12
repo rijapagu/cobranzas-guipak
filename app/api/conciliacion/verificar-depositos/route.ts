@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth/session';
-import { softecQuery, testSoftecConnection } from '@/lib/db/softec';
 import { cobranzasQuery } from '@/lib/db/cobranzas';
+import { adaptadorParaEmpresa } from '@/lib/erp';
 import { toYmd, addDiasYmd } from '@/lib/utils/fechas';
 import { empresaIdDeSesion, EMPRESA_GUIPAK } from '@/lib/tenant';
 
@@ -40,31 +40,25 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    const softecOk = await testSoftecConnection();
-    if (!softecOk) {
-      return NextResponse.json({ error: 'No se pudo conectar a Softec' }, { status: 503 });
+    const adapter = await adaptadorParaEmpresa(empresaIdDeSesion(session));
+    if (!(await adapter.disponible())) {
+      return NextResponse.json({ error: 'No se pudo conectar al ERP' }, { status: 503 });
     }
 
-    // 1. Recibos EF+CK de Softec (últimos N días)
-    const recibos = await softecQuery<{
-      fecha: string;
-      ij_pay: string;
-      total: number;
-      cantidad: number;
-    }>(
-      `SELECT
-         DATE(IJ_DATE) AS fecha,
-         IJ_PAY AS ij_pay,
-         SUM(IJ_TOT) AS total,
-         COUNT(*) AS cantidad
-       FROM v_cobr_ijnl_pay
-       WHERE IJ_SINORIN = 'RC'
-         AND IJ_PAY IN ('EF', 'CK')
-         AND IJ_DATE >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
-       GROUP BY DATE(IJ_DATE), IJ_PAY
-       ORDER BY fecha DESC`,
-      [dias]
-    );
+    // 1. Recibos EF+CK del ERP (últimos N días), agregados por día y método.
+    const hoyDate = new Date();
+    const desdeDate = new Date(hoyDate.getTime() - dias * 24 * 3600 * 1000);
+    const todosRecibos = await adapter.recibosEnRango(toYmd(desdeDate), toYmd(hoyDate));
+    const porDiaMetodo = new Map<string, { fecha: string; ij_pay: string; total: number; cantidad: number }>();
+    for (const r of todosRecibos) {
+      if (r.metodo !== 'EF' && r.metodo !== 'CK') continue;
+      const clave = `${r.fecha}|${r.metodo}`;
+      const acc = porDiaMetodo.get(clave) ?? { fecha: r.fecha, ij_pay: r.metodo, total: 0, cantidad: 0 };
+      acc.total += r.monto;
+      acc.cantidad++;
+      porDiaMetodo.set(clave, acc);
+    }
+    const recibos = [...porDiaMetodo.values()].sort((a, b) => b.fecha.localeCompare(a.fecha));
 
     // 2. Depósitos consolidados del banco (ya cargados en conciliación)
     const depositos = await cobranzasQuery<{

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth/session';
 import { cobranzasQuery, cobranzasExecute, logAccion, logError } from '@/lib/db/cobranzas';
-import { softecQuery, testSoftecConnection } from '@/lib/db/softec';
+import { adaptadorParaEmpresa } from '@/lib/erp';
 import { enviarWhatsApp } from '@/lib/evolution/client';
 import { enviarEmail } from '@/lib/email/sender';
 import { resolverEmailPropio, resolverWhatsAppPropio } from '@/lib/cobranzas/contactos';
@@ -91,16 +91,14 @@ export async function POST(
     );
 
     if (horasDesdeConsulta > 4) {
-      const softecOk = await testSoftecConnection();
-      if (softecOk) {
-        const saldoRows = await softecQuery<{ saldo: number }>(
-          `SELECT (IJ_TOT - IJ_TOTAPPL) as saldo FROM v_cobr_ijnl
-           WHERE IJ_INUM = ? AND IJ_TYPEDOC = 'IN' AND IJ_INVTORF = 'T'
-           LIMIT 1`,
-          [g.ij_inum]
-        );
+      // CP-06 via adaptador ERP: en Softec es saldo en vivo; en CSV es el
+      // último snapshot importado (degradación documentada — advierte, no
+      // bloquea si el snapshot está viejo).
+      const adapterCp06 = await adaptadorParaEmpresa(empresaId);
+      if (await adapterCp06.disponible()) {
+        const saldo = await adapterCp06.saldoFactura(g.ij_inum);
 
-        if (saldoRows.length > 0 && saldoRows[0].saldo <= 0) {
+        if (saldo !== null && saldo <= 0) {
           // Factura ya pagada — cancelar gestión
           await cobranzasExecute(
             "UPDATE cobranza_gestiones SET estado = 'DESCARTADO', motivo_descarte = 'FACTURA_PAGADA' WHERE id = ? AND empresa_id = ?",
@@ -278,17 +276,15 @@ async function obtenerContactoCliente(codigoCliente: string, empresaId: number):
     return { email: emailPropio, telefono: waPropio };
   }
 
-  // Fallback a Softec (IC_ARCONTC para email, IC_PHONE para teléfono)
-  const softecOk = await testSoftecConnection();
-  if (softecOk) {
-    const clientes = await softecQuery<{ IC_PHONE: string; IC_ARCONTC: string }>(
-      'SELECT IC_PHONE, IC_ARCONTC FROM v_cobr_icust WHERE IC_CODE = ? LIMIT 1',
-      [codigoCliente]
-    );
-    if (clientes.length > 0) {
+  // Fallback al ERP de la empresa (en Softec: IC_ARCONTC para email,
+  // IC_PHONE para teléfono).
+  const adapter = await adaptadorParaEmpresa(empresaId);
+  if (await adapter.disponible()) {
+    const cli = await adapter.cliente(codigoCliente);
+    if (cli) {
       return {
-        telefono: clientes[0].IC_PHONE?.trim() || null,
-        email: clientes[0].IC_ARCONTC?.trim() || null,
+        telefono: cli.telefono ?? null,
+        email: cli.emailCobros ?? null,
       };
     }
   }

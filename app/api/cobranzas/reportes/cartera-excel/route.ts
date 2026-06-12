@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth/session';
-import { softecQuery, testSoftecConnection } from '@/lib/db/softec';
 import { logAccion } from '@/lib/db/cobranzas';
+import { adaptadorParaEmpresa } from '@/lib/erp';
 import { obtenerSaldoAFavorPorCliente } from '@/lib/cobranzas/saldo-favor';
 import { getMockCartera } from '@/lib/mock/cartera-mock';
 import { empresaIdDeSesion, EMPRESA_GUIPAK } from '@/lib/tenant';
@@ -19,16 +19,16 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    // Guipak (empresa 1) exporta desde Softec; las demás empresas desde su
-    // cartera importada via adaptador ERP (solo vencidas, igual que Softec).
+    // Todas las empresas exportan desde el adaptador ERP (solo vencidas).
+    // El mock solo aplica a Guipak sin conexión Softec.
     const empresaId = empresaIdDeSesion(session);
     const esGuipak = empresaId === EMPRESA_GUIPAK;
-    let softecOk = false;
+    const adapter = await adaptadorParaEmpresa(empresaId);
+    const softecOk = esGuipak && (await adapter.disponible());
     let facturas: Record<string, unknown>[];
 
-    if (!esGuipak) {
-      const cartera = (await carteraCompatParaEmpresa(empresaId, { incluirPorVencerDias: 0 }))
-        .filter((f) => f.dias_vencido > 0);
+    if (!esGuipak || softecOk) {
+      const cartera = await carteraCompatParaEmpresa(empresaId, { soloVencidas: true });
       facturas = cartera.map((f) => ({
         'Código Cliente': f.codigo_cliente,
         'Nombre Cliente': f.nombre_cliente,
@@ -48,40 +48,6 @@ export async function GET(request: NextRequest) {
         'Teléfono': f.telefono || '',
         'Contacto General': f.contacto_cobros || '',
       }));
-    } else if (await testSoftecConnection()) {
-      softecOk = true;
-      // CP-04: filtros obligatorios
-      facturas = await softecQuery<Record<string, unknown>>(`
-        SELECT
-          c.IC_CODE AS 'Código Cliente',
-          c.IC_NAME AS 'Nombre Cliente',
-          c.IC_RNC AS 'RNC',
-          f.IJ_INUM AS '# Factura',
-          CONCAT(f.IJ_NCFFIX, LPAD(f.IJ_NCFNUM, 8, '0')) AS 'NCF',
-          f.IJ_DATE AS 'Fecha Emisión',
-          f.IJ_DUEDATE AS 'Fecha Vencimiento',
-          DATEDIFF(CURDATE(), f.IJ_DUEDATE) AS 'Días Vencido',
-          f.IJ_TOT AS 'Total Factura',
-          f.IJ_TOTAPPL AS 'Total Pagado',
-          (f.IJ_TOT - f.IJ_TOTAPPL) AS 'Saldo Pendiente',
-          f.IJ_CURRENC AS 'Moneda',
-          f.IJ_SLSCODE AS 'Vendedor',
-          CASE
-            WHEN DATEDIFF(CURDATE(), f.IJ_DUEDATE) BETWEEN 1 AND 15 THEN 'AMARILLO'
-            WHEN DATEDIFF(CURDATE(), f.IJ_DUEDATE) BETWEEN 16 AND 30 THEN 'NARANJA'
-            WHEN DATEDIFF(CURDATE(), f.IJ_DUEDATE) > 30 THEN 'ROJO'
-            ELSE 'VERDE'
-          END AS 'Segmento',
-          c.IC_ARCONTC AS 'Email CxP',
-          c.IC_PHONE AS 'Teléfono',
-          c.IC_CONTACT AS 'Contacto General'
-        FROM v_cobr_ijnl f
-        INNER JOIN v_cobr_icust c ON c.IC_CODE = f.IJ_CCODE AND c.IC_STATUS = 'A'
-        WHERE f.IJ_TYPEDOC = 'IN' AND f.IJ_INVTORF = 'T' AND f.IJ_PAID = 'F'
-          AND (f.IJ_TOT - f.IJ_TOTAPPL) > 0
-          AND f.IJ_DUEDATE < CURDATE()
-        ORDER BY DATEDIFF(CURDATE(), f.IJ_DUEDATE) DESC
-      `);
     } else {
       const mock = getMockCartera();
       facturas = mock.map(f => ({
