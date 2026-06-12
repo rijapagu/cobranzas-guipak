@@ -119,24 +119,30 @@ interface ConfigGuardada {
   evolution?: (Omit<EvolutionEmpresa, 'apikey'> & { apikey?: string }) | null;
 }
 
+/** mysql2 devuelve las columnas JSON ya parseadas (objeto), no string. */
+function parsearConfigColumna(valor: unknown): ConfigGuardada {
+  try {
+    if (!valor) return {};
+    if (typeof valor === 'string') return JSON.parse(valor) as ConfigGuardada;
+    if (typeof valor === 'object') return valor as ConfigGuardada;
+  } catch {
+    // config corrupta → tratar como vacía
+  }
+  return {};
+}
+
 export async function configDeEmpresa(empresaId: number): Promise<EmpresaConfig> {
   if (empresaId === EMPRESA_GUIPAK) return configGuipakDesdeEnv();
 
   const hit = cache.get(empresaId);
   if (hit && hit.expira > Date.now()) return hit.config;
 
-  const rows = await cobranzasQuery<{ nombre: string; config: string | null }>(
+  const rows = await cobranzasQuery<{ nombre: string; config: unknown }>(
     'SELECT nombre, config FROM empresas WHERE id = ? AND activa = 1 LIMIT 1',
     [empresaId]
   );
   const nombreEmpresa = rows[0]?.nombre ?? `Empresa ${empresaId}`;
-
-  let guardada: ConfigGuardada = {};
-  try {
-    guardada = rows[0]?.config ? JSON.parse(rows[0].config) : {};
-  } catch {
-    // config corrupta → tratar como vacía (los envíos fallarán con mensaje claro)
-  }
+  const guardada = parsearConfigColumna(rows[0]?.config);
 
   const config: EmpresaConfig = {
     identidad: {
@@ -184,14 +190,11 @@ export async function guardarConfigEmpresa(
     throw new Error('La configuración de Guipak se gestiona por variables de entorno del servidor');
   }
 
-  const rows = await cobranzasQuery<{ config: string | null }>(
+  const rows = await cobranzasQuery<{ config: unknown }>(
     'SELECT config FROM empresas WHERE id = ? LIMIT 1',
     [empresaId]
   );
-  let actual: ConfigGuardada = {};
-  try {
-    actual = rows[0]?.config ? JSON.parse(rows[0].config) : {};
-  } catch { /* sobrescribir config corrupta */ }
+  const actual = parsearConfigColumna(rows[0]?.config);
 
   if (parche.identidad !== undefined) {
     actual.identidad = { ...actual.identidad, ...parche.identidad };
