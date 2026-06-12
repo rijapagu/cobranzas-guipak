@@ -37,7 +37,7 @@ export async function GET(request: NextRequest) {
       `
       SELECT
         c.codigo_cliente,
-        COALESCE(ci.nombre_cliente COLLATE utf8mb4_0900_ai_ci, c.codigo_cliente) AS nombre_cliente,
+        COALESCE(MAX(ci.nombre_cliente) COLLATE utf8mb4_0900_ai_ci, c.codigo_cliente) AS nombre_cliente,
         COUNT(*) as total_mensajes,
         SUM(CASE WHEN c.direccion = 'RECIBIDO' AND NOT EXISTS (
           SELECT 1 FROM cobranza_conversaciones c2
@@ -66,8 +66,6 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ conversaciones });
   } catch (error) {
     console.error('[CONVERSACIONES] Error:', error);
-    // TEMP-DEBUG aislamiento: quitar tras diagnosticar
-    const detalle = error instanceof Error ? error.message : String(error);
-    return NextResponse.json({ error: 'Error consultando conversaciones', detalle }, { status: 500 });
+    return NextResponse.json({ error: 'Error consultando conversaciones' }, { status: 500 });
   }
 }
