@@ -5,6 +5,7 @@ import { logAccion } from '@/lib/db/cobranzas';
 import { obtenerSaldoAFavorPorCliente, ajustarSaldoCliente } from '@/lib/cobranzas/saldo-favor';
 import { getMockCartera } from '@/lib/mock/cartera-mock';
 import { empresaIdDeSesion, EMPRESA_GUIPAK } from '@/lib/tenant';
+import { adaptadorParaEmpresa } from '@/lib/erp';
 import * as XLSX from 'xlsx';
 
 /**
@@ -33,17 +34,40 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Parámetro cliente requerido' }, { status: 400 });
   }
 
-  // El ERP Softec es de Guipak (empresa 1); sin ERP no hay estado de cuenta que exportar (Etapa 2: lib/erp).
-  if (empresaIdDeSesion(session) !== EMPRESA_GUIPAK) {
-    return NextResponse.json({ error: 'Esta empresa no tiene ERP configurado todavía' }, { status: 409 });
-  }
-
   try {
-    const softecOk = await testSoftecConnection();
+    // Guipak (empresa 1) exporta desde Softec; las demás desde su cartera
+    // importada via adaptador ERP. CP-15 es solo-Softec (favor = 0 en CSV).
+    const empresaId = empresaIdDeSesion(session);
+    const esGuipak = empresaId === EMPRESA_GUIPAK;
+    let softecOk = false;
     let facturas: Record<string, unknown>[];
     let nombreCliente = codigoCliente;
 
-    if (softecOk) {
+    if (!esGuipak) {
+      const adapter = await adaptadorParaEmpresa(empresaId);
+      const [cartera, cli] = await Promise.all([
+        adapter.carteraPendiente({ incluirPorVencerDias: 36500, limite: 5000 }),
+        adapter.cliente(codigoCliente),
+      ]);
+      const delCliente = cartera
+        .filter((f) => f.codigoCliente === codigoCliente)
+        .sort((a, b) => a.fechaVencimiento.localeCompare(b.fechaVencimiento));
+      if (cli) nombreCliente = cli.nombre;
+      else if (delCliente[0]) nombreCliente = delCliente[0].nombreCliente;
+      facturas = delCliente.map((f) => ({
+        'Nombre Cliente': f.nombreCliente,
+        '# Factura': f.numero,
+        'NCF': f.ncf ?? '',
+        'Fecha Emisión': f.fechaEmision ?? '',
+        'Fecha Vencimiento': f.fechaVencimiento,
+        'Días Vencido': f.diasVencida,
+        'Total': f.total,
+        'Pagado': f.totalPagado ?? Math.max(0, f.total - f.saldoPendiente),
+        'Saldo': f.saldoPendiente,
+        'Moneda': f.moneda,
+      }));
+    } else if (await testSoftecConnection()) {
+      softecOk = true;
       facturas = await softecQuery<Record<string, unknown>>(`
         SELECT
           c.IC_NAME AS 'Nombre Cliente',

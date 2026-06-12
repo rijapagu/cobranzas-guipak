@@ -5,6 +5,7 @@ import { logAccion } from '@/lib/db/cobranzas';
 import { obtenerSaldoAFavorPorCliente } from '@/lib/cobranzas/saldo-favor';
 import { getMockCartera } from '@/lib/mock/cartera-mock';
 import { empresaIdDeSesion, EMPRESA_GUIPAK } from '@/lib/tenant';
+import { carteraCompatParaEmpresa } from '@/lib/erp/compat';
 import * as XLSX from 'xlsx';
 
 /**
@@ -17,16 +18,38 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
   }
 
-  // El ERP Softec es de Guipak (empresa 1); sin ERP no hay cartera que exportar (Etapa 2: lib/erp).
-  if (empresaIdDeSesion(session) !== EMPRESA_GUIPAK) {
-    return NextResponse.json({ error: 'Esta empresa no tiene ERP configurado todavía' }, { status: 409 });
-  }
-
   try {
-    const softecOk = await testSoftecConnection();
+    // Guipak (empresa 1) exporta desde Softec; las demás empresas desde su
+    // cartera importada via adaptador ERP (solo vencidas, igual que Softec).
+    const empresaId = empresaIdDeSesion(session);
+    const esGuipak = empresaId === EMPRESA_GUIPAK;
+    let softecOk = false;
     let facturas: Record<string, unknown>[];
 
-    if (softecOk) {
+    if (!esGuipak) {
+      const cartera = (await carteraCompatParaEmpresa(empresaId, { incluirPorVencerDias: 0 }))
+        .filter((f) => f.dias_vencido > 0);
+      facturas = cartera.map((f) => ({
+        'Código Cliente': f.codigo_cliente,
+        'Nombre Cliente': f.nombre_cliente,
+        'RNC': f.rnc,
+        '# Factura': f.numero_interno,
+        'NCF': f.ncf_fiscal,
+        'Fecha Emisión': f.fecha_emision,
+        'Fecha Vencimiento': f.fecha_vencimiento,
+        'Días Vencido': f.dias_vencido,
+        'Total Factura': f.total_factura,
+        'Total Pagado': f.total_pagado,
+        'Saldo Pendiente': f.saldo_pendiente,
+        'Moneda': f.moneda,
+        'Vendedor': f.vendedor,
+        'Segmento': f.segmento_riesgo,
+        'Email CxP': f.email || '',
+        'Teléfono': f.telefono || '',
+        'Contacto General': f.contacto_cobros || '',
+      }));
+    } else if (await testSoftecConnection()) {
+      softecOk = true;
       // CP-04: filtros obligatorios
       facturas = await softecQuery<Record<string, unknown>>(`
         SELECT
@@ -136,7 +159,7 @@ export async function GET(request: NextRequest) {
 
     await logAccion(session.email, 'REPORTE_CARTERA_EXCEL', 'reporte', 'cartera', {
       total_registros: Array.isArray(facturas) ? facturas.length : 0,
-      modo: softecOk ? 'live' : 'mock',
+      modo: esGuipak && !softecOk ? 'mock' : 'live',
     });
 
     return new NextResponse(buffer, {

@@ -4,6 +4,7 @@ import { softecQuery, testSoftecConnection } from '@/lib/db/softec';
 import { obtenerSaldoAFavorPorCliente, ajustarSaldoCliente } from '@/lib/cobranzas/saldo-favor';
 import { getMockCartera } from '@/lib/mock/cartera-mock';
 import { empresaIdDeSesion, EMPRESA_GUIPAK } from '@/lib/tenant';
+import { adaptadorParaEmpresa } from '@/lib/erp';
 
 export interface FacturaEstadoCuenta {
   numero: number;
@@ -52,28 +53,39 @@ export async function GET(
     return NextResponse.json({ error: 'Código de cliente requerido' }, { status: 400 });
   }
 
-  // El ERP Softec es de Guipak (empresa 1); otras empresas ven vacío (Etapa 2: lib/erp).
-  if (empresaIdDeSesion(session) !== EMPRESA_GUIPAK) {
-    return NextResponse.json({
-      codigo_cliente: codigo,
-      nombre_cliente: codigo,
-      facturas: [],
-      resumen: {
-        total_facturas: 0,
-        saldo_bruto: 0,
-        saldo_a_favor: 0,
-        saldo_neto: 0,
-        cubierto_por_anticipo: false,
-      },
-    });
-  }
-
   try {
-    const softecOk = await testSoftecConnection();
+    // Guipak (empresa 1) sigue en Softec; las demás empresas leen su cartera
+    // importada via adaptador ERP. CP-15 (saldo a favor) es solo-Softec.
+    const empresaId = empresaIdDeSesion(session);
+    const esGuipak = empresaId === EMPRESA_GUIPAK;
+    let softecOk = false;
     let facturas: FacturaEstadoCuenta[] = [];
     let nombreCliente = codigo;
 
-    if (softecOk) {
+    if (!esGuipak) {
+      const adapter = await adaptadorParaEmpresa(empresaId);
+      const [cartera, cli] = await Promise.all([
+        adapter.carteraPendiente({ incluirPorVencerDias: 36500, limite: 5000 }),
+        adapter.cliente(codigo),
+      ]);
+      const delCliente = cartera.filter((f) => f.codigoCliente === codigo);
+      if (cli) nombreCliente = cli.nombre;
+      else if (delCliente[0]) nombreCliente = delCliente[0].nombreCliente;
+      facturas = delCliente
+        .sort((a, b) => a.fechaVencimiento.localeCompare(b.fechaVencimiento))
+        .map((f) => ({
+          numero: f.numero,
+          ncf: f.ncf ?? '',
+          fecha_emision: f.fechaEmision ?? '',
+          fecha_vencimiento: f.fechaVencimiento,
+          dias_vencido: f.diasVencida,
+          total: f.total,
+          pagado: f.totalPagado ?? Math.max(0, f.total - f.saldoPendiente),
+          saldo: f.saldoPendiente,
+          moneda: f.moneda,
+        }));
+    } else if (await testSoftecConnection()) {
+      softecOk = true;
       const rows = await softecQuery<Record<string, unknown>>(`
         SELECT
           c.IC_NAME           AS nombre_cliente,

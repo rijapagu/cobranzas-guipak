@@ -9,6 +9,7 @@ import { seleccionarPlantilla } from '@/lib/templates/seleccionar';
 import { renderPlantilla } from '@/lib/templates/render';
 import { obtenerSaldoAFavorPorCliente } from '@/lib/cobranzas/saldo-favor';
 import { empresaIdDeSesion, EMPRESA_GUIPAK } from '@/lib/tenant';
+import { carteraCompatParaEmpresa } from '@/lib/erp/compat';
 
 /**
  * POST /api/cobranzas/generar-cola
@@ -27,28 +28,20 @@ export async function POST() {
       return NextResponse.json({ error: 'Solo supervisores pueden generar cola' }, { status: 403 });
     }
 
-    // El ERP Softec es de Guipak (empresa 1): otras empresas no tienen cartera
-    // de la cual generar cola hasta que la Etapa 2 enchufe lib/erp.
+    // Guipak (empresa 1) genera desde Softec en vivo; las demás empresas
+    // desde su cartera importada via adaptador ERP. Solo facturas YA vencidas
+    // (igual que el filtro IJ_DUEDATE < CURDATE() de la query Softec).
     const empresaId = empresaIdDeSesion(session);
-    if (empresaId !== EMPRESA_GUIPAK) {
-      return NextResponse.json({
-        message: 'Esta empresa no tiene ERP configurado todavía: 0 gestiones creadas',
-        generadas: 0,
-        total_facturas: 0,
-        clientes_excluidos_por_saldo_a_favor: 0,
-        facturas_excluidas_por_saldo_a_favor: 0,
-        modo: 'live',
-      });
-    }
-
-    // Obtener facturas vencidas
-    const softecOk = await testSoftecConnection();
+    const esGuipak = empresaId === EMPRESA_GUIPAK;
+    let softecOk = false;
     let facturas: FacturaVencida[];
 
-    if (softecOk) {
-      facturas = await queryCarteraSoftec();
+    if (esGuipak) {
+      softecOk = await testSoftecConnection();
+      facturas = softecOk ? await queryCarteraSoftec() : getMockCartera();
     } else {
-      facturas = getMockCartera();
+      facturas = (await carteraCompatParaEmpresa(empresaId, { incluirPorVencerDias: 0 }))
+        .filter((f) => f.dias_vencido > 0);
     }
 
     // CP-03: Excluir facturas con disputa activa
@@ -233,7 +226,7 @@ export async function POST() {
         // CP-15: trazabilidad de exclusiones por saldo a favor
         clientes_excluidos_por_saldo_a_favor: clientesCubiertosExcluidos,
         facturas_excluidas_por_saldo_a_favor: facturasExcluidasPorCobertura,
-        modo: softecOk ? 'live' : 'mock',
+        modo: esGuipak && !softecOk ? 'mock' : 'live',
       }
     );
 
@@ -244,7 +237,7 @@ export async function POST() {
       // CP-15: feedback al UI de cuántos clientes se omitieron por anticipos.
       clientes_excluidos_por_saldo_a_favor: clientesCubiertosExcluidos,
       facturas_excluidas_por_saldo_a_favor: facturasExcluidasPorCobertura,
-      modo: softecOk ? 'live' : 'mock',
+      modo: esGuipak && !softecOk ? 'mock' : 'live',
     });
   } catch (error) {
     await logError('generar-cola', error);
