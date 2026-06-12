@@ -66,6 +66,8 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ conversaciones });
   } catch (error) {
     console.error('[CONVERSACIONES] Error:', error);
-    return NextResponse.json({ error: 'Error consultando conversaciones' }, { status: 500 });
+    // TEMP-DEBUG aislamiento: quitar tras diagnosticar
+    const detalle = error instanceof Error ? error.message : String(error);
+    return NextResponse.json({ error: 'Error consultando conversaciones', detalle }, { status: 500 });
   }
 }

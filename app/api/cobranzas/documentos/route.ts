@@ -87,7 +87,9 @@ export async function GET(request: NextRequest) {
     });
   } catch (error) {
     console.error('[DOCUMENTOS] Error:', error);
-    return NextResponse.json({ error: 'Error consultando documentos' }, { status: 500 });
+    // TEMP-DEBUG aislamiento: quitar tras diagnosticar
+    const detalle = error instanceof Error ? error.message : String(error);
+    return NextResponse.json({ error: 'Error consultando documentos', detalle }, { status: 500 });
   }
 }
 
