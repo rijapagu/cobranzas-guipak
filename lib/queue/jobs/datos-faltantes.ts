@@ -98,7 +98,7 @@ export async function ejecutarDatosFaltantes(): Promise<StatsDatosFaltantes> {
   }>(
     `SELECT codigo_cliente, email, whatsapp
      FROM cobranza_clientes_enriquecidos
-     WHERE codigo_cliente IN (${placeholders})`,
+     WHERE empresa_id = 1 AND codigo_cliente IN (${placeholders})`,
     codigos
   );
   const enriqMap = new Map(enriqRows.map((r) => [String(r.codigo_cliente).trim(), r]));

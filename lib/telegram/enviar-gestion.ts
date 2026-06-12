@@ -111,11 +111,11 @@ export async function enviarGestion(gestionId: number): Promise<ResultadoEnvio> 
     : codigo;
 
   // Prioridad: nuestra BD (contactos + enriquecidos) > Softec IC_ARCONTC
-  const emailPropio = await resolverEmailPropio(codigo);
+  const emailPropio = await resolverEmailPropio(codigo, EMPRESA_GUIPAK);
   const emailDestino = emailPropio ||
     (clienteSoftec[0]?.email_softec ? String(clienteSoftec[0].email_softec).trim() : '');
 
-  const telefonoPropio = await resolverWhatsAppPropio(codigo);
+  const telefonoPropio = await resolverWhatsAppPropio(codigo, EMPRESA_GUIPAK);
   const telefonoDestino = telefonoPropio ||
     (clienteSoftec[0]?.telefono ? String(clienteSoftec[0].telefono).trim() : '');
 

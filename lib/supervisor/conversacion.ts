@@ -90,7 +90,7 @@ async function buscarClientesMencionados(pregunta: string): Promise<CarteraRow[]
     `SELECT nombre_cliente, saldo_neto, risk_level, risk_score, dias_mora_promedio,
             tasa_cumplimiento_promesas, tendencia
      FROM cobranza_cliente_inteligencia
-     WHERE (${likeClauses}) AND saldo_neto > 0
+     WHERE empresa_id = 1 AND (${likeClauses}) AND saldo_neto > 0
      ORDER BY saldo_neto DESC
      LIMIT 5`,
     params
@@ -116,14 +116,14 @@ async function construirContexto(pregunta: string): Promise<string> {
             COALESCE(SUM(saldo_neto), 0) AS saldo_total,
             COALESCE(SUM(risk_level IN ('ROJO','CRITICO')), 0) AS en_rojo
      FROM cobranza_cliente_inteligencia
-     WHERE saldo_neto > 0`
+     WHERE empresa_id = 1 AND saldo_neto > 0`
   );
 
   const top = await cobranzasQuery<CarteraRow>(
     `SELECT nombre_cliente, saldo_neto, risk_level, risk_score, dias_mora_promedio,
             tasa_cumplimiento_promesas, tendencia
      FROM cobranza_cliente_inteligencia
-     WHERE saldo_neto > 0
+     WHERE empresa_id = 1 AND saldo_neto > 0
      ORDER BY saldo_neto DESC
      LIMIT ${topN}`
   );

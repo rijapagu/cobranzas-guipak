@@ -177,7 +177,7 @@ async function buscarClientePorTelefono(telefono: string): Promise<{ codigo: str
   // Buscar en datos enriquecidos
   const enriq = await cobranzasQuery<{ codigo_cliente: string }>(
     `SELECT codigo_cliente FROM cobranza_clientes_enriquecidos
-     WHERE whatsapp LIKE ? OR whatsapp2 LIKE ? LIMIT 1`,
+     WHERE empresa_id = 1 AND (whatsapp LIKE ? OR whatsapp2 LIKE ?) LIMIT 1`,
     [`%${numLimpio.slice(-10)}%`, `%${numLimpio.slice(-10)}%`]
   );
 

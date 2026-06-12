@@ -141,7 +141,7 @@ export async function ejecutarCadenciasHorarias(): Promise<{
 
   // Exclusiones: clientes pausados / no contactar
   const pausadosRows = await cobranzasQuery<{ codigo_cliente: string }>(
-    "SELECT codigo_cliente FROM cobranza_clientes_enriquecidos WHERE no_contactar=1 OR (pausa_hasta IS NOT NULL AND pausa_hasta > NOW())"
+    "SELECT codigo_cliente FROM cobranza_clientes_enriquecidos WHERE empresa_id = 1 AND (no_contactar=1 OR (pausa_hasta IS NOT NULL AND pausa_hasta > NOW()))"
   );
   const pausados = new Set(pausadosRows.map((p) => String(p.codigo_cliente).trim()));
 

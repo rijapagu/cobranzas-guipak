@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth/session';
 import { cobranzasQuery, cobranzasExecute, logAccion } from '@/lib/db/cobranzas';
 import { softecQuery, testSoftecConnection } from '@/lib/db/softec';
+import { empresaIdDeSesion } from '@/lib/tenant';
 import { obtenerSaldoAFavorPorCliente } from '@/lib/cobranzas/saldo-favor';
 import { getMockCartera } from '@/lib/mock/cartera-mock';
 
@@ -173,7 +174,10 @@ export async function GET(request: NextRequest) {
       no_contactar: number;
       pausa_hasta: string | null;
       notas_cobros: string | null;
-    }>('SELECT codigo_cliente, email, whatsapp, contacto_cobros, canal_preferido, no_contactar, pausa_hasta, notas_cobros FROM cobranza_clientes_enriquecidos');
+    }>(
+      'SELECT codigo_cliente, email, whatsapp, contacto_cobros, canal_preferido, no_contactar, pausa_hasta, notas_cobros FROM cobranza_clientes_enriquecidos WHERE empresa_id = ?',
+      [empresaIdDeSesion(session)]
+    );
 
     const enriqMap = new Map(enriquecidos.map(e => [e.codigo_cliente.trim(), e]));
 
@@ -271,9 +275,10 @@ export async function PUT(request: NextRequest) {
     }
 
     // Upsert en cobranza_clientes_enriquecidos
+    const empresaId = empresaIdDeSesion(session);
     const existente = await cobranzasQuery<{ id: number }>(
-      'SELECT id FROM cobranza_clientes_enriquecidos WHERE codigo_cliente = ? LIMIT 1',
-      [codigo_cliente]
+      'SELECT id FROM cobranza_clientes_enriquecidos WHERE codigo_cliente = ? AND empresa_id = ? LIMIT 1',
+      [codigo_cliente, empresaId]
     );
 
     if (existente.length > 0) {
@@ -282,22 +287,22 @@ export async function PUT(request: NextRequest) {
           email = ?, whatsapp = ?, contacto_cobros = ?,
           canal_preferido = ?, no_contactar = ?, motivo_no_contactar = ?,
           pausa_hasta = ?, notas_cobros = ?, actualizado_por = ?
-        WHERE codigo_cliente = ?`,
+        WHERE codigo_cliente = ? AND empresa_id = ?`,
         [
           email || null, whatsapp || null, contacto_cobros || null,
           canal_preferido || 'WHATSAPP', no_contactar ? 1 : 0, motivo_no_contactar || null,
           pausa_hasta ? new Date(pausa_hasta) : null, notas_cobros || null,
-          session.email, codigo_cliente,
+          session.email, codigo_cliente, empresaId,
         ]
       );
     } else {
       await cobranzasExecute(
         `INSERT INTO cobranza_clientes_enriquecidos
-          (codigo_cliente, email, whatsapp, contacto_cobros, canal_preferido,
+          (empresa_id, codigo_cliente, email, whatsapp, contacto_cobros, canal_preferido,
            no_contactar, motivo_no_contactar, pausa_hasta, notas_cobros, actualizado_por)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
-          codigo_cliente, email || null, whatsapp || null, contacto_cobros || null,
+          empresaId, codigo_cliente, email || null, whatsapp || null, contacto_cobros || null,
           canal_preferido || 'WHATSAPP', no_contactar ? 1 : 0, motivo_no_contactar || null,
           pausa_hasta ? new Date(pausa_hasta) : null, notas_cobros || null, session.email,
         ]

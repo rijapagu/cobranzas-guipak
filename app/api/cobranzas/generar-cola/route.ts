@@ -60,7 +60,8 @@ export async function POST() {
     // Excluir clientes pausados o marcados no_contactar (un cliente con
     // no_contactar=1 se excluye aunque no tenga pausa_hasta).
     const pausados = await cobranzasQuery<{ codigo_cliente: string }>(
-      'SELECT codigo_cliente FROM cobranza_clientes_enriquecidos WHERE no_contactar = 1 OR pausa_hasta >= CURDATE()'
+      'SELECT codigo_cliente FROM cobranza_clientes_enriquecidos WHERE empresa_id = ? AND (no_contactar = 1 OR pausa_hasta >= CURDATE())',
+      [empresaId]
     );
     const pausadoIds = new Set(pausados.map((p) => p.codigo_cliente.trim()));
     facturas = facturas.filter((f) => !pausadoIds.has(f.codigo_cliente.trim()));

@@ -298,6 +298,7 @@ export async function ejecutarInteligenciaClientes(): Promise<{
   const previosRaw = await cobranzasQuery<IntelRecord>(`
     SELECT codigo_cliente, risk_score, saldo_anterior, score_anterior
     FROM cobranza_cliente_inteligencia
+    WHERE empresa_id = 1
   `);
   const previosMap = new Map<string, IntelRecord>(
     previosRaw.map((p) => [p.codigo_cliente.trim(), p])
@@ -340,7 +341,7 @@ export async function ejecutarInteligenciaClientes(): Promise<{
 
       await cobranzasExecute(`
         INSERT INTO cobranza_cliente_inteligencia (
-          codigo_cliente, nombre_cliente,
+          empresa_id, codigo_cliente, nombre_cliente,
           risk_score, risk_level,
           saldo_pendiente, saldo_neto, saldo_a_favor, total_facturas,
           dias_mora_promedio, factura_mas_antigua_dias,
@@ -351,7 +352,7 @@ export async function ejecutarInteligenciaClientes(): Promise<{
           razones, resumen,
           calculado_at, calculado_por
         ) VALUES (
-          ?, ?,
+          1, ?, ?,
           ?, ?,
           ?, ?, ?, ?,
           ?, ?,

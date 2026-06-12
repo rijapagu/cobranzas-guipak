@@ -25,41 +25,42 @@ export interface ContactoCliente {
 
 export async function obtenerContactos(
   codigoCliente: string,
+  empresaId: number,
   tipo?: TipoContacto
 ): Promise<ContactoCliente[]> {
-  const params: (string | number | boolean | Date | null)[] = [codigoCliente];
+  const params: (string | number | boolean | Date | null)[] = [codigoCliente, empresaId];
   const tipoFilter = tipo ? ' AND tipo = ?' : '';
   if (tipo) params.push(tipo);
 
   return cobranzasQuery<ContactoCliente>(
     `SELECT id, tipo, valor, nombre_contacto, es_principal, notas, origen
      FROM cobranza_contactos_cliente
-     WHERE codigo_cliente = ? AND activo = 1${tipoFilter}
+     WHERE codigo_cliente = ? AND empresa_id = ? AND activo = 1${tipoFilter}
      ORDER BY es_principal DESC, created_at ASC`,
     params
   );
 }
 
 /** Devuelve el email preferido de nuestra BD (no consulta Softec). */
-export async function resolverEmailPropio(codigoCliente: string): Promise<string | null> {
-  const contactos = await obtenerContactos(codigoCliente, 'EMAIL');
+export async function resolverEmailPropio(codigoCliente: string, empresaId: number): Promise<string | null> {
+  const contactos = await obtenerContactos(codigoCliente, empresaId, 'EMAIL');
   if (contactos.length > 0) return contactos[0].valor;
 
   const enr = await cobranzasQuery<{ email: string | null }>(
-    'SELECT email FROM cobranza_clientes_enriquecidos WHERE codigo_cliente = ?',
-    [codigoCliente]
+    'SELECT email FROM cobranza_clientes_enriquecidos WHERE codigo_cliente = ? AND empresa_id = ?',
+    [codigoCliente, empresaId]
   );
   return enr[0]?.email?.trim() || null;
 }
 
 /** Devuelve el WhatsApp preferido de nuestra BD (no consulta Softec). */
-export async function resolverWhatsAppPropio(codigoCliente: string): Promise<string | null> {
-  const contactos = await obtenerContactos(codigoCliente, 'WHATSAPP');
+export async function resolverWhatsAppPropio(codigoCliente: string, empresaId: number): Promise<string | null> {
+  const contactos = await obtenerContactos(codigoCliente, empresaId, 'WHATSAPP');
   if (contactos.length > 0) return contactos[0].valor;
 
   const enr = await cobranzasQuery<{ whatsapp: string | null }>(
-    'SELECT whatsapp FROM cobranza_clientes_enriquecidos WHERE codigo_cliente = ?',
-    [codigoCliente]
+    'SELECT whatsapp FROM cobranza_clientes_enriquecidos WHERE codigo_cliente = ? AND empresa_id = ?',
+    [codigoCliente, empresaId]
   );
   return enr[0]?.whatsapp?.trim() || null;
 }
@@ -81,6 +82,7 @@ export async function guardarContacto(
   codigoCliente: string,
   tipo: TipoContacto,
   valor: string,
+  empresaId: number,
   opciones?: OpcionesGuardarContacto
 ): Promise<void> {
   const v = valor.trim();
@@ -88,15 +90,15 @@ export async function guardarContacto(
 
   if (opciones?.es_principal) {
     await cobranzasExecute(
-      'UPDATE cobranza_contactos_cliente SET es_principal=0 WHERE codigo_cliente=? AND tipo=?',
-      [codigoCliente, tipo]
+      'UPDATE cobranza_contactos_cliente SET es_principal=0 WHERE codigo_cliente=? AND tipo=? AND empresa_id=?',
+      [codigoCliente, tipo, empresaId]
     );
   }
 
   // Upsert: si ya existe el mismo valor (aunque inactivo), reactiva; si no, inserta
   const existing = await cobranzasQuery<{ id: number }>(
-    'SELECT id FROM cobranza_contactos_cliente WHERE codigo_cliente=? AND tipo=? AND valor=? LIMIT 1',
-    [codigoCliente, tipo, v]
+    'SELECT id FROM cobranza_contactos_cliente WHERE codigo_cliente=? AND tipo=? AND valor=? AND empresa_id=? LIMIT 1',
+    [codigoCliente, tipo, v, empresaId]
   );
 
   if (existing.length > 0) {
@@ -116,9 +118,10 @@ export async function guardarContacto(
   } else {
     await cobranzasExecute(
       `INSERT INTO cobranza_contactos_cliente
-       (codigo_cliente, tipo, valor, nombre_contacto, es_principal, origen, creado_por, notas)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+       (empresa_id, codigo_cliente, tipo, valor, nombre_contacto, es_principal, origen, creado_por, notas)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
+        empresaId,
         codigoCliente,
         tipo,
         v,

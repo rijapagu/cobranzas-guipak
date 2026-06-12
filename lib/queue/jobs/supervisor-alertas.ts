@@ -157,7 +157,7 @@ export async function ejecutarSupervisorAlertas(): Promise<SupervisorAlertasStat
             score_anterior, saldo_neto, total_facturas, dias_mora_promedio,
             tasa_cumplimiento_promesas, tendencia, accion_cobranza, razones
      FROM cobranza_cliente_inteligencia
-     WHERE saldo_neto > 0
+     WHERE empresa_id = 1 AND saldo_neto > 0
      ORDER BY saldo_neto DESC
      LIMIT ${topN}`
   );

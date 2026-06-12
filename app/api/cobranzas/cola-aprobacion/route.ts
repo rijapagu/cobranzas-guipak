@@ -42,8 +42,8 @@ export async function GET(request: NextRequest) {
       params.push(canal);
     }
     if (busqueda) {
-      sql += ' AND (g.codigo_cliente LIKE ? OR g.codigo_cliente IN (SELECT IC_CODE FROM cobranza_clientes_enriquecidos WHERE contacto_cobros LIKE ?))';
-      params.push(`%${busqueda}%`, `%${busqueda}%`);
+      sql += ' AND (g.codigo_cliente LIKE ? OR g.codigo_cliente IN (SELECT IC_CODE FROM cobranza_clientes_enriquecidos WHERE empresa_id = ? AND contacto_cobros LIKE ?))';
+      params.push(`%${busqueda}%`, empresaId, `%${busqueda}%`);
     }
 
     // Paginación con default generoso (no rompe la UI actual, acota el peor caso)

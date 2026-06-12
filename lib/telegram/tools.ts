@@ -6,6 +6,7 @@ import {
   ajustarSaldoCliente,
 } from '@/lib/cobranzas/saldo-favor';
 import { obtenerContactos, resolverEmailPropio, resolverWhatsAppPropio } from '@/lib/cobranzas/contactos';
+import { EMPRESA_GUIPAK } from '@/lib/tenant';
 import { proponerCorreoCliente } from './draft-correo';
 import { proponerWhatsAppCliente } from './draft-whatsapp';
 import { guardarMemoriaEquipo } from './historial';
@@ -835,7 +836,7 @@ async function consultarSaldoCliente(
     accion_cobranza: string;
     resumen: string | null;
   }>(
-    'SELECT risk_score, risk_level, tendencia, accion_credito, accion_ventas, accion_cobranza, resumen FROM cobranza_cliente_inteligencia WHERE codigo_cliente = ?',
+    'SELECT risk_score, risk_level, tendencia, accion_credito, accion_ventas, accion_cobranza, resumen FROM cobranza_cliente_inteligencia WHERE empresa_id = 1 AND codigo_cliente = ?',
     [codigo]
   );
   const perfil = perfilRows[0] ?? null;
@@ -1317,12 +1318,12 @@ async function obtenerContactosCliente(termino: string): Promise<{
   const cod = String(codigo).trim();
 
   // Emails de nuestra BD
-  const contactosEmail = await obtenerContactos(cod, 'EMAIL');
-  const emailPropio = await resolverEmailPropio(cod);
+  const contactosEmail = await obtenerContactos(cod, EMPRESA_GUIPAK, 'EMAIL');
+  const emailPropio = await resolverEmailPropio(cod, EMPRESA_GUIPAK);
 
   // Teléfonos de nuestra BD
-  const contactosWa = await obtenerContactos(cod, 'WHATSAPP');
-  const waPropio = await resolverWhatsAppPropio(cod);
+  const contactosWa = await obtenerContactos(cod, EMPRESA_GUIPAK, 'WHATSAPP');
+  const waPropio = await resolverWhatsAppPropio(cod, EMPRESA_GUIPAK);
 
   const emails: { valor: string; fuente: string; es_principal: boolean }[] = [];
   const telefonos: { valor: string; fuente: string }[] = [];
@@ -1376,19 +1377,19 @@ async function guardarDatoCliente(
   }
 
   const existente = await cobranzasQuery<{ id: number }>(
-    'SELECT id FROM cobranza_clientes_enriquecidos WHERE codigo_cliente = ? LIMIT 1',
+    'SELECT id FROM cobranza_clientes_enriquecidos WHERE empresa_id = 1 AND codigo_cliente = ? LIMIT 1',
     [codigo]
   );
 
   if (existente.length > 0) {
     await cobranzasExecute(
-      `UPDATE cobranza_clientes_enriquecidos SET \`${campo}\` = ?, actualizado_por = ? WHERE codigo_cliente = ?`,
+      `UPDATE cobranza_clientes_enriquecidos SET \`${campo}\` = ?, actualizado_por = ? WHERE empresa_id = 1 AND codigo_cliente = ?`,
       [valorTrimmed, ctx?.userEmail || `telegram:${ctx?.userId}`, codigo]
     );
   } else {
     await cobranzasExecute(
-      `INSERT INTO cobranza_clientes_enriquecidos (codigo_cliente, \`${campo}\`, canal_preferido, actualizado_por)
-       VALUES (?, ?, 'EMAIL', ?)`,
+      `INSERT INTO cobranza_clientes_enriquecidos (empresa_id, codigo_cliente, \`${campo}\`, canal_preferido, actualizado_por)
+       VALUES (1, ?, ?, 'EMAIL', ?)`,
       [codigo, valorTrimmed, ctx?.userEmail || `telegram:${ctx?.userId}`]
     );
   }
@@ -1452,7 +1453,7 @@ async function listarClientesSinDatos(
   }>(
     `SELECT codigo_cliente, email, whatsapp
      FROM cobranza_clientes_enriquecidos
-     WHERE codigo_cliente IN (${codigos.map(() => '?').join(',')})`,
+     WHERE empresa_id = 1 AND codigo_cliente IN (${codigos.map(() => '?').join(',')})`,
     codigos
   );
   const enriqMap = new Map(enriqRows.map((r) => [String(r.codigo_cliente).trim(), r]));
@@ -1758,7 +1759,7 @@ async function obtenerPerfilRiesgoCliente(codigoCliente: string): Promise<Result
             accion_credito, accion_ventas, accion_cobranza,
             razones, resumen, calculado_at
      FROM cobranza_cliente_inteligencia
-     WHERE codigo_cliente = ?`,
+     WHERE empresa_id = 1 AND codigo_cliente = ?`,
     [codigo]
   );
 
@@ -1817,6 +1818,7 @@ async function analizarRiesgoCartera(limiteCriticos: number): Promise<ResultadoT
   }>(
     `SELECT risk_level, COUNT(*) AS cantidad, SUM(saldo_neto) AS saldo_neto_total
      FROM cobranza_cliente_inteligencia
+     WHERE empresa_id = 1
      GROUP BY risk_level
      ORDER BY FIELD(risk_level, 'CRITICO','ROJO','AMARILLO','VERDE')`
   );
@@ -1835,7 +1837,7 @@ async function analizarRiesgoCartera(limiteCriticos: number): Promise<ResultadoT
     `SELECT codigo_cliente, nombre_cliente, risk_score, risk_level, saldo_neto,
             accion_credito, accion_ventas, tendencia
      FROM cobranza_cliente_inteligencia
-     WHERE risk_level IN ('CRITICO','ROJO')
+     WHERE empresa_id = 1 AND risk_level IN ('CRITICO','ROJO')
      ORDER BY risk_score DESC, saldo_neto DESC
      LIMIT ?`,
     [limiteCriticos]
@@ -1850,7 +1852,7 @@ async function analizarRiesgoCartera(limiteCriticos: number): Promise<ResultadoT
   }>(
     `SELECT codigo_cliente, nombre_cliente, risk_level, saldo_neto
      FROM cobranza_cliente_inteligencia
-     WHERE tendencia = 'EMPEORANDO'
+     WHERE empresa_id = 1 AND tendencia = 'EMPEORANDO'
      ORDER BY saldo_neto DESC
      LIMIT 10`
   );
@@ -1864,14 +1866,14 @@ async function analizarRiesgoCartera(limiteCriticos: number): Promise<ResultadoT
   }>(
     `SELECT codigo_cliente, nombre_cliente, accion_ventas, risk_level
      FROM cobranza_cliente_inteligencia
-     WHERE accion_ventas IN ('NO_VENDER','REQUIERE_ABONO')
+     WHERE empresa_id = 1 AND accion_ventas IN ('NO_VENDER','REQUIERE_ABONO')
      ORDER BY FIELD(accion_ventas,'NO_VENDER','REQUIERE_ABONO'), risk_score DESC
      LIMIT 15`
   );
 
   // Total de clientes en tabla
   const totalRows = await cobranzasQuery<{ total: number; calculado_at: string }>(
-    `SELECT COUNT(*) AS total, MAX(calculado_at) AS calculado_at FROM cobranza_cliente_inteligencia`
+    `SELECT COUNT(*) AS total, MAX(calculado_at) AS calculado_at FROM cobranza_cliente_inteligencia WHERE empresa_id = 1`
   );
 
   return {

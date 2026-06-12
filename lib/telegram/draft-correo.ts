@@ -13,6 +13,7 @@ import { cobranzasQuery, cobranzasExecute } from '@/lib/db/cobranzas';
 import { softecQuery, testSoftecConnection } from '@/lib/db/softec';
 import { obtenerSaldoAFavorPorCliente } from '@/lib/cobranzas/saldo-favor';
 import { resolverEmailPropio } from '@/lib/cobranzas/contactos';
+import { EMPRESA_GUIPAK } from '@/lib/tenant';
 import { seleccionarPlantilla, seleccionarPlantillaById } from '@/lib/templates/seleccionar';
 import { renderPlantilla } from '@/lib/templates/render';
 import type { SegmentoRiesgo } from '@/lib/types/cartera';
@@ -149,7 +150,7 @@ export async function proponerCorreoCliente(
 
   // 2. Verificar pausa
   const pausa = await cobranzasQuery<{ pausa_hasta: string | null; no_contactar: number }>(
-    'SELECT pausa_hasta, no_contactar FROM cobranza_clientes_enriquecidos WHERE codigo_cliente = ?',
+    'SELECT pausa_hasta, no_contactar FROM cobranza_clientes_enriquecidos WHERE empresa_id = 1 AND codigo_cliente = ?',
     [codigoCliente]
   );
   if (pausa[0]) {
@@ -189,7 +190,7 @@ export async function proponerCorreoCliente(
   }
 
   // 5. Buscar email — prioridad: override explícito > nuestra BD > Softec IC_ARCONTC
-  const emailEnBD = await resolverEmailPropio(codigoCliente);
+  const emailEnBD = await resolverEmailPropio(codigoCliente, EMPRESA_GUIPAK);
   const emailEnSoftec = (masUrgente.email || '').trim();
   const emailParamLimpio = (emailDestinoParam || '').trim();
 
@@ -219,8 +220,8 @@ export async function proponerCorreoCliente(
   if (emailParamLimpio && !yaEstabaGuardado) {
     try {
       await cobranzasExecute(
-        `INSERT INTO cobranza_clientes_enriquecidos (codigo_cliente, email, canal_preferido, actualizado_por)
-         VALUES (?, ?, 'EMAIL', 'bot-auto-correo')
+        `INSERT INTO cobranza_clientes_enriquecidos (empresa_id, codigo_cliente, email, canal_preferido, actualizado_por)
+         VALUES (1, ?, ?, 'EMAIL', 'bot-auto-correo')
          ON DUPLICATE KEY UPDATE email = VALUES(email), actualizado_por = VALUES(actualizado_por)`,
         [codigoCliente, emailParamLimpio]
       );

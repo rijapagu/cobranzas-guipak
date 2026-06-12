@@ -156,7 +156,7 @@ export async function ejecutarRespuestaCliente(): Promise<StatsRespuestaCliente>
   }>(
     `SELECT DISTINCT codigo_cliente, nombre_cliente
      FROM cobranza_cliente_inteligencia
-     WHERE codigo_cliente IN (${placeholdersDef})`,
+     WHERE empresa_id = 1 AND codigo_cliente IN (${placeholdersDef})`,
     codigosDefinitivos
   );
   const nombreMap = new Map<string, string>();

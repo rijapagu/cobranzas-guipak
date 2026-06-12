@@ -10,6 +10,7 @@ import { cobranzasQuery, cobranzasExecute } from '@/lib/db/cobranzas';
 import { softecQuery, testSoftecConnection } from '@/lib/db/softec';
 import { obtenerSaldoAFavorPorCliente } from '@/lib/cobranzas/saldo-favor';
 import { resolverWhatsAppPropio } from '@/lib/cobranzas/contactos';
+import { EMPRESA_GUIPAK } from '@/lib/tenant';
 import { getPdfUrl } from '@/lib/drive/client';
 import Anthropic from '@anthropic-ai/sdk';
 
@@ -112,7 +113,7 @@ export async function proponerWhatsAppCliente(
 
   // Pausa o no contactar
   const pausa = await cobranzasQuery<{ pausa_hasta: string | null; no_contactar: number }>(
-    'SELECT pausa_hasta, no_contactar FROM cobranza_clientes_enriquecidos WHERE codigo_cliente = ?',
+    'SELECT pausa_hasta, no_contactar FROM cobranza_clientes_enriquecidos WHERE empresa_id = 1 AND codigo_cliente = ?',
     [codigoCliente]
   );
   if (pausa[0]) {
@@ -160,7 +161,7 @@ export async function proponerWhatsAppCliente(
   }
 
   // Número de WhatsApp: nuestra BD primero, fallback Softec IC_PHONE
-  const waPropio = await resolverWhatsAppPropio(codigoCliente);
+  const waPropio = await resolverWhatsAppPropio(codigoCliente, EMPRESA_GUIPAK);
   const telefonoDestino = waPropio || (f.telefono ? String(f.telefono).trim() : '');
 
   // PDF disponible en Drive?

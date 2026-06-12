@@ -91,7 +91,7 @@ export async function ejecutarSupervisorLote(): Promise<SupervisorLoteStats> {
   const cohorte = await cobranzasQuery<CohorteRow>(
     `SELECT codigo_cliente, nombre_cliente, risk_level, saldo_neto, dias_mora_promedio
      FROM cobranza_cliente_inteligencia
-     WHERE risk_level IN ('ROJO','CRITICO')
+     WHERE empresa_id = 1 AND risk_level IN ('ROJO','CRITICO')
        AND tendencia = 'EMPEORANDO'
        AND saldo_neto >= ?
      ORDER BY saldo_neto DESC

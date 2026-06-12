@@ -172,7 +172,7 @@ export async function POST(
     // ═══════════════════════════════════════════
     // Obtener datos de contacto del cliente
     // ═══════════════════════════════════════════
-    const contacto = await obtenerContactoCliente(g.codigo_cliente);
+    const contacto = await obtenerContactoCliente(g.codigo_cliente, empresaId);
     const mensajeWa = g.mensaje_final_wa || g.mensaje_propuesto_wa;
     const mensajeEmail = g.mensaje_final_email || g.mensaje_propuesto_email;
     const asuntoEmail = g.asunto_email || 'Cobros Guipak';
@@ -270,10 +270,10 @@ export async function POST(
  * Obtiene teléfono y email del cliente.
  * Prioridad: nuestra BD (contactos + enriquecidos) → Softec IC_ARCONTC → Softec IC_PHONE.
  */
-async function obtenerContactoCliente(codigoCliente: string): Promise<ClienteContacto> {
+async function obtenerContactoCliente(codigoCliente: string, empresaId: number): Promise<ClienteContacto> {
   // Nuestra BD primero (contactos múltiples + enriquecidos legacy)
-  const emailPropio = await resolverEmailPropio(codigoCliente);
-  const waPropio = await resolverWhatsAppPropio(codigoCliente);
+  const emailPropio = await resolverEmailPropio(codigoCliente, empresaId);
+  const waPropio = await resolverWhatsAppPropio(codigoCliente, empresaId);
   if (emailPropio || waPropio) {
     return { email: emailPropio, telefono: waPropio };
   }
