@@ -856,3 +856,32 @@ portal con un cliente cubierto. Detalle completo en
   guards `!== EMPRESA_GUIPAK` de las rutas Softec por el adaptador.
 - Desactivar usuario de prueba cuando ya no haga falta:
   `UPDATE usuarios SET activo=0 WHERE empresa_id=2;`
+
+## Sesión 12-Junio-2026 (sesión 2) — Fase 3 Etapa 2: adaptador CSV funcionando
+
+### Hecho (commit a8501a9 + migración 033 aplicada)
+- **Staging de cartera importada**: `erp_cartera_facturas` + `erp_cartera_clientes`
+  (UNIQUE compuestos por empresa, collation 0900_ai_ci para evitar el mix).
+- **csvAdapter** (`lib/erp/csv.ts`): sirve el snapshot importado en el modelo
+  canónico. CP-06 degradado: `saldoFactura` = último saldo importado.
+- **adaptadorParaEmpresa** ahora es async: lee `empresas.erp_tipo` (cache 60s,
+  fail-safe Guipak→Softec) y `invalidarCacheErp()` tras importar.
+- **POST /api/erp/importar-cartera**: multipart (facturas CSV + clientes CSV
+  opcional), parser con comillas/BOM/;, fechas YYYY-MM-DD o DD/MM/YYYY,
+  validación fila a fila, rechaza >20% filas malas, reemplaza el snapshot.
+- **lib/erp/compat.ts**: canónico → `FacturaVencida` (CP-03 disputas incluido)
+  para que las empresas CSV usen las mismas páginas sin tocar frontend.
+- **Rutas migradas al adaptador** (Guipak/Softec intacto): cartera-vencida,
+  resumen-segmentos, clientes, dashboard. CP-15 y DSO siguen solo-Softec.
+- **Test E2E**: `scripts/test-importar-cartera-empresa2.mjs` → FLUJO CSV OK
+  (14/14: importación, segmentación ROJO/AMARILLO/VERDE, cruce de contactos,
+  agregados de clientes y dashboard).
+
+### Pendiente Etapa 2 (próximas sesiones)
+- Rutas restantes para modo CSV: estado-cuenta x2, reportes excel x2,
+  generar-cola (hoy devuelven vacío/409 vía guard `EMPRESA_GUIPAK`).
+- Mover las ~83 queries `softecQuery` de rutas/jobs Guipak detrás del
+  softecAdapter (mecánico; los jobs pueden esperar a la Etapa 4).
+- Frontend: dejar de usar nombres `IJ_*` (migrar tipos al modelo canónico).
+- UI de importación de cartera (página /configuracion o /cartera para subir
+  el CSV; hoy solo API).
