@@ -6,6 +6,7 @@ import { obtenerSaldoAFavorPorCliente } from '@/lib/cobranzas/saldo-favor';
 import { getMockCartera } from '@/lib/mock/cartera-mock';
 import { getRedis } from '@/lib/redis/client';
 import { empresaIdDeSesion, EMPRESA_GUIPAK } from '@/lib/tenant';
+import { carteraCompatParaEmpresa } from '@/lib/erp/compat';
 
 // Cache del dashboard en Redis: ~10 queries (varias agregando toda la
 // cartera del ERP) por cada carga de página no escalan sin esto.
@@ -66,21 +67,6 @@ export async function GET(request: NextRequest) {
   // Cache (TTL 2 min). El botón "Actualizar" puede forzar con ?refresh=1.
   const empresaId = empresaIdDeSesion(session);
 
-  // El ERP Softec es de Guipak (empresa 1). Otras empresas ven KPIs en cero
-  // hasta que la Etapa 2 enchufe adaptadorParaEmpresa (lib/erp).
-  if (empresaId !== EMPRESA_GUIPAK) {
-    const vacio: DashboardKPIs = {
-      cartera_total: 0, cartera_total_a_favor: 0, cartera_total_neta: 0,
-      total_facturas: 0, total_clientes: 0, dso: 0, segmentos: [],
-      gestiones_hoy: 0, pendientes_aprobacion: 0, enviadas_hoy: 0,
-      acuerdos_pendientes: 0, acuerdos_cumplidos_mes: 0, acuerdos_incumplidos_mes: 0,
-      wa_enviados_mes: 0, wa_respondidos_mes: 0, email_enviados_mes: 0, email_respondidos_mes: 0,
-      top_clientes: [], promesas_vencidas: 0, facturas_sin_gestion_30d: 0,
-      clientes_sin_contacto: 0, modo: 'live',
-    };
-    return NextResponse.json(vacio);
-  }
-
   const cacheKey = cacheKeyDashboard(empresaId);
   const forzar = request.nextUrl.searchParams.get('refresh') === '1';
   if (!forzar) {
@@ -95,7 +81,11 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const softecOk = await testSoftecConnection();
+    // Guipak (empresa 1) sigue en Softec en vivo; las demás empresas leen su
+    // cartera importada via adaptador ERP (lib/erp). CP-15 y DSO son
+    // dimensiones Softec — en modo CSV: neto == bruto, DSO 0.
+    const esGuipak = empresaId === EMPRESA_GUIPAK;
+    const softecOk = esGuipak && (await testSoftecConnection());
     const kpis: DashboardKPIs = {
       cartera_total: 0,
       cartera_total_a_favor: 0,
@@ -118,11 +108,50 @@ export async function GET(request: NextRequest) {
       promesas_vencidas: 0,
       facturas_sin_gestion_30d: 0,
       clientes_sin_contacto: 0,
-      modo: softecOk ? 'live' : 'mock',
+      modo: esGuipak && !softecOk ? 'mock' : 'live',
     };
 
-    // --- Datos de Softec o Mock ---
-    if (softecOk) {
+    // --- Datos de cartera: adaptador ERP (no-Guipak), Softec o Mock ---
+    if (!esGuipak) {
+      const cartera = await carteraCompatParaEmpresa(empresaId, { incluirPorVencerDias: 36500 });
+      const segMap: Record<string, { facturas: number; clientes: Set<string>; saldo: number }> = {};
+      const clienteMap: Record<string, { nombre: string; saldo: number; facturas: number }> = {};
+      for (const f of cartera) {
+        const seg = f.segmento_riesgo;
+        if (!segMap[seg]) segMap[seg] = { facturas: 0, clientes: new Set(), saldo: 0 };
+        segMap[seg].facturas++;
+        segMap[seg].clientes.add(f.codigo_cliente);
+        segMap[seg].saldo += f.saldo_pendiente;
+        if (!clienteMap[f.codigo_cliente]) {
+          clienteMap[f.codigo_cliente] = { nombre: f.nombre_cliente, saldo: 0, facturas: 0 };
+        }
+        clienteMap[f.codigo_cliente].saldo += f.saldo_pendiente;
+        clienteMap[f.codigo_cliente].facturas++;
+      }
+      kpis.segmentos = Object.entries(segMap).map(([seg, d]) => ({
+        segmento: seg,
+        facturas: d.facturas,
+        clientes: d.clientes.size,
+        saldo: Math.round(d.saldo * 100) / 100,
+      }));
+      kpis.total_facturas = cartera.length;
+      kpis.total_clientes = new Set(cartera.map((f) => f.codigo_cliente)).size;
+      kpis.cartera_total = Math.round(cartera.reduce((s, f) => s + f.saldo_pendiente, 0) * 100) / 100;
+      kpis.cartera_total_a_favor = 0;
+      kpis.cartera_total_neta = kpis.cartera_total;
+      kpis.top_clientes = Object.entries(clienteMap)
+        .sort(([, a], [, b]) => b.saldo - a.saldo)
+        .slice(0, 10)
+        .map(([codigo, d]) => ({
+          codigo,
+          ...d,
+          saldo_a_favor: 0,
+          saldo_neto: d.saldo,
+        }));
+      kpis.clientes_sin_contacto = cartera
+        .filter((f) => !f.email?.trim() && !f.telefono?.trim())
+        .reduce((set, f) => set.add(f.codigo_cliente), new Set<string>()).size;
+    } else if (softecOk) {
       // Resumen por segmento
       const segmentos = await softecQuery<{
         segmento: string;

@@ -4,7 +4,8 @@ import { obtenerSaldoAFavorPorCliente } from '@/lib/cobranzas/saldo-favor';
 import { getMockResumen } from '@/lib/mock/cartera-mock';
 import { getSession } from '@/lib/auth/session';
 import { empresaIdDeSesion, EMPRESA_GUIPAK } from '@/lib/tenant';
-import type { ResumenSegmento, ResumenResponse } from '@/lib/types/cartera';
+import { carteraCompatParaEmpresa } from '@/lib/erp/compat';
+import type { ResumenSegmento, ResumenResponse, SegmentoRiesgo } from '@/lib/types/cartera';
 
 /**
  * GET /api/softec/resumen-segmentos
@@ -22,17 +23,40 @@ export async function GET() {
       return NextResponse.json({ error: 'No autenticado' }, { status: 401 });
     }
 
-    // El ERP Softec es de Guipak (empresa 1). Otras empresas ven cero
-    // hasta que la Etapa 2 enchufe adaptadorParaEmpresa (lib/erp).
-    if (empresaIdDeSesion(session) !== EMPRESA_GUIPAK) {
+    // Guipak (empresa 1) agrega en Softec; las demás empresas agregan su
+    // cartera importada via adaptador ERP (solo facturas YA vencidas, igual
+    // que la query Softec). CP-15 no aplica fuera de Softec.
+    const empresaId = empresaIdDeSesion(session);
+    const esGuipak = empresaId === EMPRESA_GUIPAK;
+    if (!esGuipak) {
+      const cartera = (await carteraCompatParaEmpresa(empresaId, { incluirPorVencerDias: 0 }))
+        .filter((f) => f.dias_vencido > 0);
+      const porSegmento = new Map<SegmentoRiesgo, { facturas: number; clientes: Set<string>; saldo: number }>();
+      for (const f of cartera) {
+        const s = porSegmento.get(f.segmento_riesgo) ?? { facturas: 0, clientes: new Set<string>(), saldo: 0 };
+        s.facturas++;
+        s.clientes.add(f.codigo_cliente);
+        s.saldo += Number(f.saldo_pendiente) || 0;
+        porSegmento.set(f.segmento_riesgo, s);
+      }
+      const orden: SegmentoRiesgo[] = ['ROJO', 'NARANJA', 'AMARILLO', 'VERDE'];
+      const segmentosCsv: ResumenSegmento[] = orden
+        .filter((seg) => porSegmento.has(seg))
+        .map((seg) => ({
+          segmento: seg,
+          num_facturas: porSegmento.get(seg)!.facturas,
+          num_clientes: porSegmento.get(seg)!.clientes.size,
+          saldo_total: Math.round(porSegmento.get(seg)!.saldo * 100) / 100,
+        }));
+      const totalCarteraCsv = segmentosCsv.reduce((s, x) => s + x.saldo_total, 0);
       return NextResponse.json({
-        segmentos: [],
-        total_cartera: 0,
-        total_facturas: 0,
-        total_clientes: 0,
+        segmentos: segmentosCsv,
+        total_cartera: Math.round(totalCarteraCsv * 100) / 100,
+        total_facturas: segmentosCsv.reduce((s, x) => s + x.num_facturas, 0),
+        total_clientes: new Set(cartera.map((f) => f.codigo_cliente)).size,
         modo: 'live',
         total_a_favor: 0,
-        total_neto: 0,
+        total_neto: Math.round(totalCarteraCsv * 100) / 100,
       } satisfies ResumenResponse);
     }
 

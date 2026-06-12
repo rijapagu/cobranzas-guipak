@@ -5,6 +5,7 @@ import { ajustarSaldoClientes } from '@/lib/cobranzas/saldo-favor';
 import { getMockCartera } from '@/lib/mock/cartera-mock';
 import { getSession } from '@/lib/auth/session';
 import { empresaIdDeSesion, EMPRESA_GUIPAK } from '@/lib/tenant';
+import { carteraCompatParaEmpresa } from '@/lib/erp/compat';
 import type { FacturaVencida, CarteraResponse, SegmentoRiesgo } from '@/lib/types/cartera';
 
 /**
@@ -21,17 +22,6 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'No autenticado' }, { status: 401 });
     }
 
-    // El ERP Softec es de Guipak (empresa 1). Otras empresas no tienen cartera
-    // hasta que la Etapa 2 enchufe adaptadorParaEmpresa (lib/erp).
-    if (empresaIdDeSesion(session) !== EMPRESA_GUIPAK) {
-      return NextResponse.json({
-        facturas: [],
-        total: 0,
-        modo: 'live',
-        ultima_consulta: new Date().toISOString(),
-      } satisfies CarteraResponse);
-    }
-
     const { searchParams } = request.nextUrl;
     const segmentos = searchParams.get('segmentos')?.split(',') as SegmentoRiesgo[] | undefined;
     const busqueda = searchParams.get('busqueda')?.trim();
@@ -45,13 +35,19 @@ export async function GET(request: NextRequest) {
     const limit = Math.min(Number(searchParams.get('limit')) || 5000, 5000);
     const offset = Math.max(Number(searchParams.get('offset')) || 0, 0);
 
-    const softecOk = await testSoftecConnection();
+    // Guipak (empresa 1) sigue en Softec en vivo; las demás empresas leen su
+    // cartera importada via adaptador ERP (lib/erp). CP-15 (saldo a favor)
+    // solo aplica a Softec — el snapshot CSV no trae recibos sin aplicar.
+    const empresaId = empresaIdDeSesion(session);
+    const esGuipak = empresaId === EMPRESA_GUIPAK;
+    let softecOk = false;
     let facturas: FacturaVencida[];
 
-    if (softecOk) {
-      facturas = await queryCarteraReal();
+    if (esGuipak) {
+      softecOk = await testSoftecConnection();
+      facturas = softecOk ? await queryCarteraReal() : getMockCartera();
     } else {
-      facturas = getMockCartera();
+      facturas = await carteraCompatParaEmpresa(empresaId);
     }
 
     // Aplicar filtros
@@ -136,7 +132,7 @@ export async function GET(request: NextRequest) {
     const response: CarteraResponse = {
       facturas,
       total: totalFiltradas,
-      modo: softecOk ? 'live' : 'mock',
+      modo: esGuipak && !softecOk ? 'mock' : 'live',
       ultima_consulta: new Date().toISOString(),
       saldos_clientes: saldosClientes,
       total_a_favor: saldosClientes ? totalAFavor : undefined,

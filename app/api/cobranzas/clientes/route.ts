@@ -3,6 +3,7 @@ import { getSession } from '@/lib/auth/session';
 import { cobranzasQuery, cobranzasExecute, logAccion } from '@/lib/db/cobranzas';
 import { softecQuery, testSoftecConnection } from '@/lib/db/softec';
 import { empresaIdDeSesion, EMPRESA_GUIPAK } from '@/lib/tenant';
+import { adaptadorParaEmpresa } from '@/lib/erp';
 import { obtenerSaldoAFavorPorCliente } from '@/lib/cobranzas/saldo-favor';
 import { getMockCartera } from '@/lib/mock/cartera-mock';
 
@@ -48,22 +49,61 @@ export async function GET(request: NextRequest) {
   const busqueda = request.nextUrl.searchParams.get('busqueda')?.trim();
   const filtro = request.nextUrl.searchParams.get('filtro'); // sin_email, sin_whatsapp, sin_contacto, pausados
 
-  // El ERP Softec es de Guipak (empresa 1). Otras empresas no tienen cartera
-  // hasta que la Etapa 2 enchufe adaptadorParaEmpresa (lib/erp).
-  if (empresaIdDeSesion(session) !== EMPRESA_GUIPAK) {
-    return NextResponse.json({
-      clientes: [],
-      total: 0,
-      estadisticas: { totalClientes: 0, sinEmail: 0, sinWhatsapp: 0, sinContacto: 0 },
-      modo: 'live',
-    });
-  }
-
   try {
-    const softecOk = await testSoftecConnection();
+    // Guipak (empresa 1) sigue en Softec en vivo; las demás empresas leen su
+    // cartera importada via adaptador ERP (lib/erp).
+    const empresaIdRuta = empresaIdDeSesion(session);
+    const esGuipak = empresaIdRuta === EMPRESA_GUIPAK;
+    let softecOk = false;
     let clientesBase: ClienteEnriquecido[];
 
-    if (softecOk) {
+    if (!esGuipak) {
+      const adapter = await adaptadorParaEmpresa(empresaIdRuta);
+      const [cartera, clientesErp] = await Promise.all([
+        // 36500 días por vencer = toda factura con saldo, vencida o no
+        // (la query Softec equivalente tampoco filtra por fecha).
+        adapter.carteraPendiente({ incluirPorVencerDias: 36500, limite: 5000 }),
+        adapter.clientes(),
+      ]);
+      const cliMap = new Map(clientesErp.map((c) => [c.codigo, c]));
+      const agregado = new Map<string, { facturas: number; saldo: number }>();
+      for (const f of cartera) {
+        const a = agregado.get(f.codigoCliente) ?? { facturas: 0, saldo: 0 };
+        a.facturas++;
+        a.saldo += f.saldoPendiente;
+        agregado.set(f.codigoCliente, a);
+      }
+      clientesBase = [...agregado.entries()]
+        .map(([codigo, a]) => {
+          const cli = cliMap.get(codigo);
+          return {
+            codigo_cliente: codigo,
+            nombre_cliente: cli?.nombre ?? codigo,
+            rnc: cli?.rnc ?? '',
+            email_softec: cli?.email ?? null,
+            telefono_softec: cli?.telefono ?? null,
+            telefono2_softec: cli?.telefono2 ?? null,
+            contacto_cobros_softec: cli?.contactoCobros ?? null,
+            vendedor: cli?.vendedor ?? '',
+            email_enriq: null,
+            whatsapp_enriq: null,
+            contacto_cobros_enriq: null,
+            canal_preferido: null,
+            no_contactar: false,
+            pausa_hasta: null,
+            notas_cobros: null,
+            tiene_email: !!cli?.email?.trim(),
+            tiene_whatsapp: !!cli?.telefono?.trim(),
+            total_facturas_pendientes: a.facturas,
+            saldo_total: Math.round(a.saldo * 100) / 100,
+            saldo_a_favor: 0,
+            saldo_neto: Math.round(a.saldo * 100) / 100,
+            cubierto_por_anticipo: false,
+          };
+        })
+        .sort((x, y) => y.saldo_total - x.saldo_total);
+    } else if (await testSoftecConnection()) {
+      softecOk = true;
       // Query clientes con facturas pendientes desde Softec
       const rows = await softecQuery<{
         codigo_cliente: string;
@@ -248,7 +288,7 @@ export async function GET(request: NextRequest) {
       clientes: clientesBase,
       total: totalClientes,
       estadisticas: { totalClientes, sinEmail, sinWhatsapp, sinContacto },
-      modo: softecOk ? 'live' : 'mock',
+      modo: esGuipak && !softecOk ? 'mock' : 'live',
     });
   } catch (error) {
     console.error('[CLIENTES] Error:', error);

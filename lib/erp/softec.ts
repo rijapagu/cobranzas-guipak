@@ -34,6 +34,7 @@ export const softecAdapter: ErpAdapter = {
       nombre_cliente: string;
       total: number;
       saldo: number;
+      fecha_emision: string | Date | null;
       fecha_vencimiento: string | Date;
       dias_vencida: number;
     }>(
@@ -44,6 +45,7 @@ export const softecAdapter: ErpAdapter = {
          c.IC_NAME    AS nombre_cliente,
          f.IJ_TOT     AS total,
          (f.IJ_TOT - f.IJ_TOTAPPL) AS saldo,
+         f.IJ_DATE    AS fecha_emision,
          f.IJ_DUEDATE AS fecha_vencimiento,
          DATEDIFF(CURDATE(), f.IJ_DUEDATE) AS dias_vencida
        FROM v_cobr_ijnl f
@@ -65,7 +67,9 @@ export const softecAdapter: ErpAdapter = {
       nombreCliente: String(r.nombre_cliente).trim(),
       total: Number(r.total) || 0,
       saldoPendiente: Number(r.saldo) || 0,
+      totalPagado: (Number(r.total) || 0) - (Number(r.saldo) || 0),
       moneda: 'DOP',
+      fechaEmision: r.fecha_emision ? toYmd(r.fecha_emision) : null,
       fechaVencimiento: toYmd(r.fecha_vencimiento),
       diasVencida: Number(r.dias_vencida) || 0,
     }));
@@ -109,6 +113,34 @@ export const softecAdapter: ErpAdapter = {
       contactoCobros: r.contacto ? String(r.contacto).trim() : null,
       vendedor: r.vendedor ? String(r.vendedor).trim() : null,
     };
+  },
+
+  async clientes(): Promise<ClienteCartera[]> {
+    const rows = await softecQuery<{
+      codigo: string;
+      nombre: string;
+      rnc: string | null;
+      email: string | null;
+      telefono: string | null;
+      telefono2: string | null;
+      contacto: string | null;
+      vendedor: string | null;
+    }>(
+      `SELECT IC_CODE AS codigo, IC_NAME AS nombre, IC_RNC AS rnc,
+              IC_EMAIL AS email, IC_PHONE AS telefono, IC_PHONE2 AS telefono2,
+              IC_ARCONTC AS contacto, IC_SLSCODE AS vendedor
+       FROM v_cobr_icust WHERE IC_STATUS = 'A'`
+    );
+    return rows.map((r) => ({
+      codigo: String(r.codigo).trim(),
+      nombre: String(r.nombre).trim(),
+      rnc: r.rnc ? String(r.rnc).trim() : null,
+      email: r.email ? String(r.email).trim() : null,
+      telefono: r.telefono ? String(r.telefono).trim() : null,
+      telefono2: r.telefono2 ? String(r.telefono2).trim() : null,
+      contactoCobros: r.contacto ? String(r.contacto).trim() : null,
+      vendedor: r.vendedor ? String(r.vendedor).trim() : null,
+    }));
   },
 
   async recibosEnRango(desde: string, hasta: string): Promise<PagoRecibo[]> {

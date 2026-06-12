@@ -26,7 +26,11 @@ export interface FacturaPendiente {
   nombreCliente: string;
   total: number;
   saldoPendiente: number;
+  /** total - saldoPendiente cuando el origen no lo trae explícito. */
+  totalPagado?: number;
   moneda: string;
+  /** YYYY-MM-DD (null si el origen no lo trae, ej. CSV mínimo). */
+  fechaEmision?: string | null;
   /** YYYY-MM-DD */
   fechaVencimiento: string;
   /** Negativo = por vencer (VERDE preventivo). */
@@ -70,6 +74,9 @@ export interface ErpAdapter {
 
   /** Datos de contacto de un cliente. */
   cliente(codigo: string): Promise<ClienteCartera | null>;
+
+  /** Todos los clientes del origen (batch — evita N+1 en listados). */
+  clientes(): Promise<ClienteCartera[]>;
 
   /** Recibos de pago en un rango de fechas (conciliación bancaria). */
   recibosEnRango(desde: string, hasta: string): Promise<PagoRecibo[]>;
