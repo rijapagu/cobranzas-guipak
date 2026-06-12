@@ -76,6 +76,8 @@ export interface StatsCadencias {
   aplicadas: number;
   fastForward: number;
   omitidas: number;
+  /** Errores por factura (visible solo para el operador via cron interno). */
+  errores: string[];
 }
 
 function calcularSegmento(dias: number): string {
@@ -90,7 +92,7 @@ function calcularSegmento(dias: number): string {
  * Un fallo en una empresa no detiene a las demás.
  */
 export async function ejecutarCadenciasHorarias(): Promise<StatsCadencias> {
-  const total: StatsCadencias = { empresas: 0, evaluadas: 0, aplicadas: 0, fastForward: 0, omitidas: 0 };
+  const total: StatsCadencias = { empresas: 0, evaluadas: 0, aplicadas: 0, fastForward: 0, omitidas: 0, errores: [] };
 
   const empresas = await cobranzasQuery<{ id: number }>(
     'SELECT id FROM empresas WHERE activa = 1 ORDER BY id'
@@ -105,8 +107,10 @@ export async function ejecutarCadenciasHorarias(): Promise<StatsCadencias> {
       total.aplicadas += stats.aplicadas;
       total.fastForward += stats.fastForward;
       total.omitidas += stats.omitidas;
+      total.errores.push(...stats.errores);
     } catch (err) {
       console.error(`[cadencias] Error en empresa ${empresaId}:`, err);
+      total.errores.push(`empresa ${empresaId}: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
@@ -119,7 +123,7 @@ export async function ejecutarCadenciasHorarias(): Promise<StatsCadencias> {
 async function ejecutarCadenciasEmpresa(
   empresaId: number
 ): Promise<Omit<StatsCadencias, 'empresas'> | null> {
-  const stats = { evaluadas: 0, aplicadas: 0, fastForward: 0, omitidas: 0 };
+  const stats: Omit<StatsCadencias, 'empresas'> = { evaluadas: 0, aplicadas: 0, fastForward: 0, omitidas: 0, errores: [] };
 
   const adapter = await adaptadorParaEmpresa(empresaId);
   if (!(await adapter.disponible())) return null;
@@ -288,6 +292,9 @@ async function ejecutarCadenciasEmpresa(
       stats.aplicadas++;
     } catch (err) {
       console.error(`[cadencias] Empresa ${empresaId}, error en factura ${ij}:`, err);
+      stats.errores.push(
+        `empresa ${empresaId}, factura ${ij}: ${err instanceof Error ? err.message : String(err)}`
+      );
     }
   }
 
@@ -300,7 +307,14 @@ async function ejecutarCadenciasEmpresa(
     'CADENCIAS_HORARIAS',
     'sistema',
     'run',
-    { ...stats, timestamp: new Date().toISOString() },
+    {
+      evaluadas: stats.evaluadas,
+      aplicadas: stats.aplicadas,
+      fastForward: stats.fastForward,
+      omitidas: stats.omitidas,
+      errores: stats.errores.length,
+      timestamp: new Date().toISOString(),
+    },
     undefined,
     empresaId
   );
