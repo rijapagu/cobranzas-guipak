@@ -49,7 +49,7 @@ export async function POST(request: NextRequest) {
 
     // Verificar si ya existe un documento para esta factura
     const existentes = await cobranzasQuery<{ id: number }>(
-      'SELECT id FROM cobranza_facturas_documentos WHERE ij_inum = ? LIMIT 1',
+      'SELECT id FROM cobranza_facturas_documentos WHERE empresa_id = 1 AND ij_inum = ? LIMIT 1',
       [ij_inum]
     );
 
@@ -69,8 +69,8 @@ export async function POST(request: NextRequest) {
       // Insertar nuevo documento
       const result = await cobranzasExecute(
         `INSERT INTO cobranza_facturas_documentos
-         (ij_local, ij_inum, codigo_cliente, google_drive_id, url_pdf, nombre_archivo, fecha_escaneo, origen)
-         VALUES ('001', ?, ?, ?, ?, ?, ?, 'CRM_WEBHOOK')`,
+         (empresa_id, ij_local, ij_inum, codigo_cliente, google_drive_id, url_pdf, nombre_archivo, fecha_escaneo, origen)
+         VALUES (1, '001', ?, ?, ?, ?, ?, ?, 'CRM_WEBHOOK')`,
         [ij_inum, codigo_cliente, google_drive_id, pdfUrl, nombreArchivo, fechaEscaneo]
       );
 

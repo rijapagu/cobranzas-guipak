@@ -121,7 +121,7 @@ export async function enviarGestion(gestionId: number): Promise<ResultadoEnvio> 
 
   // Intentar adjuntar PDF de Drive si existe
   const docRows = await cobranzasQuery<{ google_drive_id: string; nombre_archivo: string | null }>(
-    'SELECT google_drive_id, nombre_archivo FROM cobranza_facturas_documentos WHERE ij_inum = ? LIMIT 1',
+    'SELECT google_drive_id, nombre_archivo FROM cobranza_facturas_documentos WHERE empresa_id = 1 AND ij_inum = ? LIMIT 1',
     [gestion.ij_inum]
   );
   const docRow = docRows[0] || null;

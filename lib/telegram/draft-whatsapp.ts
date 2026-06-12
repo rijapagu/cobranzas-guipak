@@ -166,7 +166,7 @@ export async function proponerWhatsAppCliente(
 
   // PDF disponible en Drive?
   const docRows = await cobranzasQuery<{ google_drive_id: string }>(
-    'SELECT google_drive_id FROM cobranza_facturas_documentos WHERE ij_inum = ? LIMIT 1',
+    'SELECT google_drive_id FROM cobranza_facturas_documentos WHERE empresa_id = 1 AND ij_inum = ? LIMIT 1',
     [f.ij_inum]
   );
   const googleDriveId = docRows[0]?.google_drive_id || null;

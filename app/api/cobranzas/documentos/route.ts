@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth/session';
 import { cobranzasQuery, cobranzasExecute, logAccion } from '@/lib/db/cobranzas';
+import { empresaIdDeSesion } from '@/lib/tenant';
 
 /**
  * GET /api/cobranzas/documentos
@@ -21,8 +22,8 @@ export async function GET(request: NextRequest) {
 
   try {
     // Obtener documentos registrados
-    let where = 'WHERE 1=1';
-    const params: (string | number)[] = [];
+    let where = 'WHERE empresa_id = ?';
+    const params: (string | number)[] = [empresaIdDeSesion(session)];
 
     if (busqueda) {
       where += ' AND (ij_inum LIKE ? OR codigo_cliente LIKE ? OR nombre_archivo LIKE ?)';
@@ -74,7 +75,8 @@ export async function GET(request: NextRequest) {
         SUM(CASE WHEN origen = 'CRM_WEBHOOK' THEN 1 ELSE 0 END) as crm_webhook,
         SUM(CASE WHEN origen = 'MANUAL' THEN 1 ELSE 0 END) as manual
       FROM cobranza_facturas_documentos
-    `);
+      WHERE empresa_id = ?
+    `, [empresaIdDeSesion(session)]);
 
     return NextResponse.json({
       documentos: docs,
@@ -112,9 +114,10 @@ export async function POST(request: NextRequest) {
     const pdfUrl = url_pdf || `https://drive.google.com/file/d/${google_drive_id}/view`;
 
     // Verificar duplicado
+    const empresaId = empresaIdDeSesion(session);
     const existente = await cobranzasQuery<{ id: number }>(
-      'SELECT id FROM cobranza_facturas_documentos WHERE ij_inum = ? LIMIT 1',
-      [ij_inum]
+      'SELECT id FROM cobranza_facturas_documentos WHERE ij_inum = ? AND empresa_id = ? LIMIT 1',
+      [ij_inum, empresaId]
     );
 
     if (existente.length > 0) {
@@ -134,9 +137,9 @@ export async function POST(request: NextRequest) {
 
     const result = await cobranzasExecute(
       `INSERT INTO cobranza_facturas_documentos
-       (ij_local, ij_inum, codigo_cliente, google_drive_id, url_pdf, nombre_archivo, fecha_escaneo, subido_por, origen)
-       VALUES ('001', ?, ?, ?, ?, ?, NOW(), ?, 'MANUAL')`,
-      [ij_inum, codigo_cliente, google_drive_id, pdfUrl, nombre_archivo || `factura-${ij_inum}.pdf`, session.email]
+       (empresa_id, ij_local, ij_inum, codigo_cliente, google_drive_id, url_pdf, nombre_archivo, fecha_escaneo, subido_por, origen)
+       VALUES (?, '001', ?, ?, ?, ?, ?, NOW(), ?, 'MANUAL')`,
+      [empresaId, ij_inum, codigo_cliente, google_drive_id, pdfUrl, nombre_archivo || `factura-${ij_inum}.pdf`, session.email]
     );
 
     await logAccion(session.email, 'DOCUMENTO_SUBIDO_MANUAL', 'factura_documento', result.insertId.toString(), {

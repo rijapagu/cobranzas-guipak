@@ -188,7 +188,7 @@ export async function ejecutarCadenciasHorarias(): Promise<{
   // Cargar PDFs disponibles (de webhook CRM o vinculación manual)
   const pdfRows = await cobranzasQuery<{ ij_inum: number; url_pdf: string; google_drive_id: string }>(
     `SELECT ij_inum, url_pdf, google_drive_id FROM cobranza_facturas_documentos
-     WHERE ij_inum IN (${inums.map(() => '?').join(',')})`,
+     WHERE empresa_id = 1 AND ij_inum IN (${inums.map(() => '?').join(',')})`,
     inums.map(String)
   );
   const pdfMap = new Map(pdfRows.map((r) => [Number(r.ij_inum), { url_pdf: r.url_pdf, google_drive_id: r.google_drive_id }]));

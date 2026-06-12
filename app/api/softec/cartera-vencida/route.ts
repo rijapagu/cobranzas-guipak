@@ -228,7 +228,7 @@ async function queryCarteraReal(): Promise<FacturaVencida[]> {
 
   // Enriquecer con datos de documentos
   const docs = await cobranzasQuery<{ ij_inum: number; url_pdf: string }>(
-    'SELECT ij_inum, url_pdf FROM cobranza_facturas_documentos'
+    'SELECT ij_inum, url_pdf FROM cobranza_facturas_documentos WHERE empresa_id = 1'
   );
   const docsMap = new Map(docs.map((d) => [d.ij_inum, d.url_pdf]));
 

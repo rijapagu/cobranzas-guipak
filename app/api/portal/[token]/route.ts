@@ -126,8 +126,8 @@ export async function GET(
       ij_inum: number;
       url_pdf: string;
     }>(
-      'SELECT ij_inum, url_pdf FROM cobranza_facturas_documentos WHERE codigo_cliente = ?',
-      [codigoCliente]
+      'SELECT ij_inum, url_pdf FROM cobranza_facturas_documentos WHERE empresa_id = ? AND codigo_cliente = ?',
+      [portalToken.empresa_id, codigoCliente]
     );
     const docMap = new Map(docs.map(d => [Number(d.ij_inum), d.url_pdf]));
 

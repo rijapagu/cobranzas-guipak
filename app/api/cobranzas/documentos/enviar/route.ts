@@ -5,6 +5,7 @@ import { softecQuery } from '@/lib/db/softec';
 import { enviarEmail } from '@/lib/email/sender';
 import { enviarWhatsApp } from '@/lib/evolution/client';
 import { downloadPdfBuffer } from '@/lib/drive/client';
+import { empresaIdDeSesion } from '@/lib/tenant';
 
 /**
  * POST /api/cobranzas/documentos/enviar
@@ -38,8 +39,8 @@ export async function POST(request: NextRequest) {
       nombre_archivo: string | null;
       url_pdf: string;
     }>(
-      'SELECT id, ij_inum, codigo_cliente, google_drive_id, nombre_archivo, url_pdf FROM cobranza_facturas_documentos WHERE id = ? LIMIT 1',
-      [documento_id]
+      'SELECT id, ij_inum, codigo_cliente, google_drive_id, nombre_archivo, url_pdf FROM cobranza_facturas_documentos WHERE id = ? AND empresa_id = ? LIMIT 1',
+      [documento_id, empresaIdDeSesion(session)]
     );
 
     if (docs.length === 0) {

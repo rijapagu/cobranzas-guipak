@@ -33,7 +33,7 @@ async function scanDriveFacturas() {
   }
 
   const existentes = await cobranzasQuery<{ google_drive_id: string }>(
-    'SELECT google_drive_id FROM cobranza_facturas_documentos WHERE google_drive_id IS NOT NULL'
+    'SELECT google_drive_id FROM cobranza_facturas_documentos WHERE empresa_id = 1 AND google_drive_id IS NOT NULL'
   );
   const yaRegistrados = new Set(existentes.map((e) => e.google_drive_id));
 
@@ -63,8 +63,8 @@ async function scanDriveFacturas() {
 
     await cobranzasExecute(
       `INSERT INTO cobranza_facturas_documentos
-         (ij_local, ij_inum, codigo_cliente, google_drive_id, url_pdf, nombre_archivo, fecha_escaneo, origen)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'SCAN_DRIVE')`,
+         (empresa_id, ij_local, ij_inum, codigo_cliente, google_drive_id, url_pdf, nombre_archivo, fecha_escaneo, origen)
+       VALUES (1, ?, ?, ?, ?, ?, ?, ?, 'SCAN_DRIVE')`,
       [
         facturas[0].IJ_LOCAL || '01',
         ij_inum,
