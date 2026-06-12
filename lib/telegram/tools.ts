@@ -1177,9 +1177,9 @@ async function crearTarea(
 
   const result = await cobranzasExecute(
     `INSERT INTO cobranza_tareas
-     (titulo, descripcion, tipo, fecha_vencimiento, hora, codigo_cliente,
+     (empresa_id, titulo, descripcion, tipo, fecha_vencimiento, hora, codigo_cliente,
       prioridad, asignada_a, creado_por, origen)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'MANUAL')`,
+     VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'MANUAL')`,
     [
       titulo,
       descripcion,
@@ -1218,7 +1218,7 @@ async function listarTareas(args: Record<string, unknown>): Promise<ResultadoToo
   const rango = String(args.rango || 'hoy');
   const codigoCliente = args.codigo_cliente ? normalizarCodigoCliente(String(args.codigo_cliente)) : null;
 
-  let where = "estado IN ('PENDIENTE','EN_PROGRESO')";
+  let where = "empresa_id = 1 AND estado IN ('PENDIENTE','EN_PROGRESO')";
   const params: (string | number)[] = [];
 
   if (rango === 'hoy') {
@@ -1702,7 +1702,7 @@ async function marcarTareaHecha(
   if (!Number.isFinite(id) || id <= 0) return { ok: false, error: 'tarea_id inválido' };
 
   const existentes = await cobranzasQuery<{ id: number; titulo: string; estado: string }>(
-    'SELECT id, titulo, estado FROM cobranza_tareas WHERE id = ?',
+    'SELECT id, titulo, estado FROM cobranza_tareas WHERE id = ? AND empresa_id = 1',
     [id]
   );
   if (existentes.length === 0) return { ok: false, error: 'Tarea no encontrada' };
@@ -1922,7 +1922,7 @@ async function estadoConciliacion(): Promise<ResultadoTool> {
   }>(
     `SELECT id, tipo, estado, titulo, created_at
      FROM cobranza_tareas
-     WHERE origen = 'CONCILIACION' AND estado IN ('PENDIENTE', 'EN_PROGRESO')
+     WHERE empresa_id = 1 AND origen = 'CONCILIACION' AND estado IN ('PENDIENTE', 'EN_PROGRESO')
      ORDER BY created_at DESC LIMIT 20`
   );
 

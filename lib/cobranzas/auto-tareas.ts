@@ -5,6 +5,7 @@ import { cobranzasExecute, cobranzasQuery } from '@/lib/db/cobranzas';
  * prometida en un acuerdo de pago. Idempotente por (origen, origen_ref).
  */
 export async function crearTareaSeguimientoAcuerdo(opts: {
+  empresaId: number;
   acuerdoId: number;
   codigoCliente: string;
   ijInum: number | null;
@@ -14,8 +15,8 @@ export async function crearTareaSeguimientoAcuerdo(opts: {
   const ref = String(opts.acuerdoId);
 
   const existentes = await cobranzasQuery<{ id: number }>(
-    "SELECT id FROM cobranza_tareas WHERE origen='ACUERDO_PAGO' AND origen_ref = ? LIMIT 1",
-    [ref]
+    "SELECT id FROM cobranza_tareas WHERE origen='ACUERDO_PAGO' AND origen_ref = ? AND empresa_id = ? LIMIT 1",
+    [ref, opts.empresaId]
   );
   if (existentes.length > 0) return existentes[0].id;
 
@@ -31,10 +32,11 @@ export async function crearTareaSeguimientoAcuerdo(opts: {
 
   const result = await cobranzasExecute(
     `INSERT INTO cobranza_tareas
-     (titulo, descripcion, tipo, fecha_vencimiento, codigo_cliente, ij_inum,
+     (empresa_id, titulo, descripcion, tipo, fecha_vencimiento, codigo_cliente, ij_inum,
       prioridad, creado_por, asignada_a, origen, origen_ref)
-     VALUES (?, ?, 'SEGUIMIENTO', ?, ?, ?, 'MEDIA', ?, ?, 'ACUERDO_PAGO', ?)`,
+     VALUES (?, ?, ?, 'SEGUIMIENTO', ?, ?, ?, 'MEDIA', ?, ?, 'ACUERDO_PAGO', ?)`,
     [
+      opts.empresaId,
       titulo,
       descripcion,
       fechaIso,

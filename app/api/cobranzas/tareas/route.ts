@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { getSession } from '@/lib/auth/session';
 import { cobranzasQuery, cobranzasExecute, logAccion } from '@/lib/db/cobranzas';
+import { empresaIdDeSesion } from '@/lib/tenant';
 
 const TipoEnum = z.enum(['LLAMAR', 'DEPOSITAR_CHEQUE', 'SEGUIMIENTO', 'DOCUMENTO', 'REUNION', 'OTRO']);
 const EstadoEnum = z.enum(['PENDIENTE', 'EN_PROGRESO', 'HECHA', 'CANCELADA']);
@@ -45,8 +46,8 @@ export async function GET(req: NextRequest) {
   const origen = searchParams.get('origen');
   const incluirCompletadas = searchParams.get('incluir_completadas') === '1';
 
-  const where: string[] = [];
-  const params: (string | number)[] = [];
+  const where: string[] = ['empresa_id = ?'];
+  const params: (string | number)[] = [empresaIdDeSesion(session)];
 
   if (desde) {
     where.push('fecha_vencimiento >= ?');
@@ -110,10 +111,11 @@ export async function POST(req: NextRequest) {
 
   const result = await cobranzasExecute(
     `INSERT INTO cobranza_tareas
-     (titulo, descripcion, tipo, fecha_vencimiento, hora, codigo_cliente, ij_inum,
+     (empresa_id, titulo, descripcion, tipo, fecha_vencimiento, hora, codigo_cliente, ij_inum,
       prioridad, asignada_a, creado_por, origen, origen_ref)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
+      empresaIdDeSesion(session),
       t.titulo,
       t.descripcion ?? null,
       t.tipo,

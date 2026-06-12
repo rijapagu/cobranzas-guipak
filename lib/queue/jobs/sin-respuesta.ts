@@ -147,7 +147,8 @@ export async function ejecutarSinRespuesta(): Promise<StatsSinRespuesta> {
   const tareasExistentes = await cobranzasQuery<{ origen_ref: string }>(
     `SELECT origen_ref
      FROM cobranza_tareas
-     WHERE origen='SIN_RESPUESTA'
+     WHERE empresa_id = 1
+       AND origen='SIN_RESPUESTA'
        AND origen_ref IN (${refsBuscadas.map(() => '?').join(',')})
        AND estado IN ('PENDIENTE','EN_PROGRESO')`,
     refsBuscadas
@@ -232,9 +233,9 @@ export async function ejecutarSinRespuesta(): Promise<StatsSinRespuesta> {
 
     await cobranzasExecute(
       `INSERT INTO cobranza_tareas
-         (titulo, descripcion, tipo, fecha_vencimiento, codigo_cliente, ij_inum,
+         (empresa_id, titulo, descripcion, tipo, fecha_vencimiento, codigo_cliente, ij_inum,
           prioridad, asignada_a, creado_por, origen, origen_ref)
-       VALUES (?, ?, 'SEGUIMIENTO', CURDATE(), ?, ?, ?, 'sistema',
+       VALUES (1, ?, ?, 'SEGUIMIENTO', CURDATE(), ?, ?, ?, 'sistema',
                'cron-sin-respuesta', 'SIN_RESPUESTA', ?)`,
       [titulo, descripcion, codigo, g.ij_inum, prioridad, `gestion:${g.id}`]
     );

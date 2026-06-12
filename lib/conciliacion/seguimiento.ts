@@ -45,7 +45,7 @@ export async function crearTareasConciliacion(stats: {
     for (const d of desconocidas) {
       const ref = `conc-desc-${d.id}`;
       const existe = await cobranzasQuery<{ id: number }>(
-        "SELECT id FROM cobranza_tareas WHERE origen='CONCILIACION' AND origen_ref = ? LIMIT 1",
+        "SELECT id FROM cobranza_tareas WHERE empresa_id = 1 AND origen='CONCILIACION' AND origen_ref = ? LIMIT 1",
         [ref]
       );
       if (existe.length > 0) continue;
@@ -53,8 +53,8 @@ export async function crearTareasConciliacion(stats: {
       const fmt = new Intl.NumberFormat('es-DO', { style: 'currency', currency: 'DOP', maximumFractionDigits: 0 }).format(d.monto);
       await cobranzasExecute(
         `INSERT INTO cobranza_tareas
-         (titulo, descripcion, tipo, fecha_vencimiento, prioridad, creado_por, origen, origen_ref)
-         VALUES (?, ?, 'SEGUIMIENTO', ?, 'MEDIA', 'sistema-conciliacion', 'CONCILIACION', ?)`,
+         (empresa_id, titulo, descripcion, tipo, fecha_vencimiento, prioridad, creado_por, origen, origen_ref)
+         VALUES (1, ?, ?, 'SEGUIMIENTO', ?, 'MEDIA', 'sistema-conciliacion', 'CONCILIACION', ?)`,
         [
           `Depósito ${fmt} sin recibo en Softec`,
           `Banco: ${stats.banco}\nDescripción: ${d.descripcion}\nRef: ${d.referencia || '-'}\nCuenta: ${d.cuenta_origen || '-'}\nFecha banco: ${toYmd(d.fecha_transaccion)}\n\nVerificar si ya se registró el recibo (RC) en Softec. El sistema re-verificará automáticamente.`,
@@ -78,7 +78,7 @@ export async function crearTareasConciliacion(stats: {
     for (const ch of devueltos) {
       const ref = `conc-chdev-${ch.id}`;
       const existe = await cobranzasQuery<{ id: number }>(
-        "SELECT id FROM cobranza_tareas WHERE origen='CONCILIACION' AND origen_ref = ? LIMIT 1",
+        "SELECT id FROM cobranza_tareas WHERE empresa_id = 1 AND origen='CONCILIACION' AND origen_ref = ? LIMIT 1",
         [ref]
       );
       if (existe.length > 0) continue;
@@ -86,8 +86,8 @@ export async function crearTareasConciliacion(stats: {
       const fmt = new Intl.NumberFormat('es-DO', { style: 'currency', currency: 'DOP', maximumFractionDigits: 0 }).format(ch.monto);
       await cobranzasExecute(
         `INSERT INTO cobranza_tareas
-         (titulo, descripcion, tipo, fecha_vencimiento, prioridad, creado_por, origen, origen_ref)
-         VALUES (?, ?, 'CHEQUE_DEVUELTO', ?, 'ALTA', 'sistema-conciliacion', 'CONCILIACION', ?)`,
+         (empresa_id, titulo, descripcion, tipo, fecha_vencimiento, prioridad, creado_por, origen, origen_ref)
+         VALUES (1, ?, ?, 'CHEQUE_DEVUELTO', ?, 'ALTA', 'sistema-conciliacion', 'CONCILIACION', ?)`,
         [
           `Cheque devuelto ${fmt}`,
           `Ref: ${ch.referencia || '-'}\nDescripción: ${ch.descripcion}\nFecha: ${toYmd(ch.fecha_transaccion)}\n\nPasos:\n1. Desaplicar pago en Softec\n2. Contactar al cliente para reposición del cheque\n3. Marcar como hecha cuando se resuelva`,
@@ -209,7 +209,7 @@ export async function verificarDesconocidos(): Promise<{
         `UPDATE cobranza_tareas
          SET estado = 'HECHA', completada_at = NOW(), completada_por = 'sistema-conciliacion',
              notas_completado = 'Auto-conciliado: recibo encontrado en Softec'
-         WHERE origen = 'CONCILIACION' AND origen_ref = ? AND estado != 'HECHA'`,
+         WHERE empresa_id = 1 AND origen = 'CONCILIACION' AND origen_ref = ? AND estado != 'HECHA'`,
         [ref]
       );
 
@@ -264,7 +264,7 @@ export async function recordatorioChequesDevueltos(): Promise<number> {
   }>(
     `SELECT id, titulo, descripcion, fecha_vencimiento, created_at
      FROM cobranza_tareas
-     WHERE tipo = 'CHEQUE_DEVUELTO' AND origen = 'CONCILIACION' AND estado IN ('PENDIENTE', 'EN_PROGRESO')
+     WHERE empresa_id = 1 AND tipo = 'CHEQUE_DEVUELTO' AND origen = 'CONCILIACION' AND estado IN ('PENDIENTE', 'EN_PROGRESO')
      ORDER BY created_at`
   );
 

@@ -111,6 +111,7 @@ export async function procesarRespuestaCliente(
     );
 
     await crearTareaSeguimientoAcuerdo({
+      empresaId: EMPRESA_GUIPAK,
       acuerdoId: acuerdoResult.insertId,
       codigoCliente: cliente.codigo,
       ijInum: factura.ij_inum,

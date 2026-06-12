@@ -122,7 +122,7 @@ export async function verificarAcuerdos(): Promise<StatsVerificacionAcuerdos> {
           `UPDATE cobranza_tareas
            SET estado = 'HECHA', completada_at = NOW(), completada_por = 'sistema-acuerdos',
                notas_completado = 'Acuerdo cumplido: pago verificado en Softec'
-           WHERE origen = 'ACUERDO_PAGO' AND origen_ref = ? AND estado IN ('PENDIENTE','EN_PROGRESO')`,
+           WHERE empresa_id = 1 AND origen = 'ACUERDO_PAGO' AND origen_ref = ? AND estado IN ('PENDIENTE','EN_PROGRESO')`,
           [`acuerdo:${acuerdo.id}`]
         ).catch(() => {});
         continue;

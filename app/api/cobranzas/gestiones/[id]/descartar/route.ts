@@ -67,11 +67,12 @@ export async function POST(
       `UPDATE cobranza_tareas
        SET estado='CANCELADA', completada_at=NOW(), completada_por=?,
            notas_completado=?
-       WHERE origen='CADENCIA' AND origen_ref=? AND estado='PENDIENTE'`,
+       WHERE origen='CADENCIA' AND origen_ref=? AND estado='PENDIENTE' AND empresa_id=?`,
       [
         session.email,
         `Descartada en Cola de Aprobación: ${parsed.data.motivo}`,
         `gestion:${gestionId}`,
+        empresaId,
       ]
     );
 

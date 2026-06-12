@@ -87,13 +87,14 @@ export async function POST(
       `UPDATE cobranza_tareas
        SET estado='HECHA', completada_at=NOW(), completada_por=?,
            notas_completado=?
-       WHERE origen='CADENCIA' AND origen_ref=? AND estado='PENDIENTE'`,
+       WHERE origen='CADENCIA' AND origen_ref=? AND estado='PENDIENTE' AND empresa_id=?`,
       [
         session.email,
         fueEditado
           ? 'Aprobada con ediciones desde Cola de Aprobación'
           : 'Aprobada desde Cola de Aprobación',
         `gestion:${gestionId}`,
+        empresaId,
       ]
     );
 

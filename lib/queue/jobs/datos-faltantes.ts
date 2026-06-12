@@ -111,7 +111,8 @@ export async function ejecutarDatosFaltantes(): Promise<StatsDatosFaltantes> {
   const tareasExistentes = await cobranzasQuery<{ origen_ref: string }>(
     `SELECT origen_ref
      FROM cobranza_tareas
-     WHERE origen='DATO_FALTANTE'
+     WHERE empresa_id = 1
+       AND origen='DATO_FALTANTE'
        AND origen_ref IN (${refsBuscadas.map(() => '?').join(',')})
        AND estado IN ('PENDIENTE','EN_PROGRESO')`,
     refsBuscadas
@@ -178,9 +179,9 @@ export async function ejecutarDatosFaltantes(): Promise<StatsDatosFaltantes> {
 
     await cobranzasExecute(
       `INSERT INTO cobranza_tareas
-         (titulo, descripcion, tipo, fecha_vencimiento, codigo_cliente,
+         (empresa_id, titulo, descripcion, tipo, fecha_vencimiento, codigo_cliente,
           prioridad, asignada_a, creado_por, origen, origen_ref)
-       VALUES (?, ?, 'DOCUMENTO', CURDATE(), ?, ?, 'sistema',
+       VALUES (1, ?, ?, 'DOCUMENTO', CURDATE(), ?, ?, 'sistema',
                'cron-datos-faltantes', 'DATO_FALTANTE', ?)`,
       [
         titulo,

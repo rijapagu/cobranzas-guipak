@@ -182,7 +182,8 @@ async function obtenerTareas(): Promise<TareasResumen> {
     }>(
       `SELECT id, titulo, hora
          FROM cobranza_tareas
-        WHERE estado IN ('PENDIENTE','EN_PROGRESO')
+        WHERE empresa_id = 1
+          AND estado IN ('PENDIENTE','EN_PROGRESO')
           AND fecha_vencimiento = CURDATE()
         ORDER BY hora IS NULL, hora ASC, prioridad DESC, id ASC
         LIMIT 20`
@@ -200,7 +201,8 @@ async function obtenerTareas(): Promise<TareasResumen> {
     }>(
       `SELECT id, titulo, fecha_vencimiento
          FROM cobranza_tareas
-        WHERE estado IN ('PENDIENTE','EN_PROGRESO')
+        WHERE empresa_id = 1
+          AND estado IN ('PENDIENTE','EN_PROGRESO')
           AND fecha_vencimiento < CURDATE()
         ORDER BY fecha_vencimiento ASC, id ASC
         LIMIT 10`

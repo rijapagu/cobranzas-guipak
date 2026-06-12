@@ -106,7 +106,8 @@ export async function ejecutarRecordatoriosPromesas(): Promise<StatsRecordatorio
   const tareasExistentes = await cobranzasQuery<{ origen_ref: string }>(
     `SELECT origen_ref
      FROM cobranza_tareas
-     WHERE origen='ACUERDO_PAGO'
+     WHERE empresa_id = 1
+       AND origen='ACUERDO_PAGO'
        AND origen_ref IN (${placeholdersIds})
        AND estado IN ('PENDIENTE','EN_PROGRESO')`,
     refsBuscadas
@@ -205,9 +206,9 @@ export async function ejecutarRecordatoriosPromesas(): Promise<StatsRecordatorio
 
     await cobranzasExecute(
       `INSERT INTO cobranza_tareas
-         (titulo, descripcion, tipo, fecha_vencimiento, codigo_cliente, ij_inum,
+         (empresa_id, titulo, descripcion, tipo, fecha_vencimiento, codigo_cliente, ij_inum,
           prioridad, asignada_a, creado_por, origen, origen_ref)
-       VALUES (?, ?, 'SEGUIMIENTO', CURDATE(), ?, ?, ?, 'sistema', 'cron-recordatorios-promesas',
+       VALUES (1, ?, ?, 'SEGUIMIENTO', CURDATE(), ?, ?, ?, 'sistema', 'cron-recordatorios-promesas',
                'ACUERDO_PAGO', ?)`,
       [
         titulo,

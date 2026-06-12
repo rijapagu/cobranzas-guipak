@@ -75,6 +75,7 @@ export async function POST(
     });
 
     await crearTareaSeguimientoAcuerdo({
+      empresaId: empresa_id,
       acuerdoId: result.insertId,
       codigoCliente: codigo_cliente,
       ijInum: ij_inum,

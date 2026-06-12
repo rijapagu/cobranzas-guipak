@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { getSession } from '@/lib/auth/session';
 import { cobranzasQuery, cobranzasExecute, logAccion } from '@/lib/db/cobranzas';
+import { empresaIdDeSesion } from '@/lib/tenant';
 
 const TipoEnum = z.enum(['LLAMAR', 'DEPOSITAR_CHEQUE', 'SEGUIMIENTO', 'DOCUMENTO', 'REUNION', 'OTRO']);
 const EstadoEnum = z.enum(['PENDIENTE', 'EN_PROGRESO', 'HECHA', 'CANCELADA']);
@@ -27,8 +28,8 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 
   const { id } = await params;
   const rows = await cobranzasQuery(
-    'SELECT * FROM cobranza_tareas WHERE id = ?',
-    [Number(id)]
+    'SELECT * FROM cobranza_tareas WHERE id = ? AND empresa_id = ?',
+    [Number(id), empresaIdDeSesion(session)]
   );
   if (rows.length === 0) return NextResponse.json({ error: 'No encontrada' }, { status: 404 });
   return NextResponse.json({ tarea: rows[0] });
@@ -71,10 +72,10 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   if (updates.length === 0) {
     return NextResponse.json({ error: 'Sin cambios' }, { status: 400 });
   }
-  values.push(idNum);
+  values.push(idNum, empresaIdDeSesion(session));
 
   await cobranzasExecute(
-    `UPDATE cobranza_tareas SET ${updates.join(', ')} WHERE id = ?`,
+    `UPDATE cobranza_tareas SET ${updates.join(', ')} WHERE id = ? AND empresa_id = ?`,
     values
   );
 
@@ -103,8 +104,8 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
         SET estado = 'CANCELADA',
             completada_at = NOW(),
             completada_por = ?
-      WHERE id = ?`,
-    [session.email, Number(id)]
+      WHERE id = ? AND empresa_id = ?`,
+    [session.email, Number(id), empresaIdDeSesion(session)]
   );
 
   await logAccion(

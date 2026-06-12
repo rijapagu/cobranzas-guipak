@@ -303,8 +303,8 @@ async function aplicarPaso(
     // Crear tarea de seguimiento
     await cobranzasExecute(
       `INSERT INTO cobranza_tareas
-         (titulo, descripcion, tipo, fecha_vencimiento, codigo_cliente, prioridad, asignada_a, creado_por, origen)
-       VALUES (?, ?, 'LLAMAR', CURDATE(), ?, ?, 'sistema', 'cadencias', 'CADENCIA')`,
+         (empresa_id, titulo, descripcion, tipo, fecha_vencimiento, codigo_cliente, prioridad, asignada_a, creado_por, origen)
+       VALUES (1, ?, ?, 'LLAMAR', CURDATE(), ?, ?, 'sistema', 'cadencias', 'CADENCIA')`,
       [
         `Llamar a ${String(factura.nombre_cliente).trim()} — Factura #${factura.ij_inum}`,
         `Cadencia automática día ${paso.dia_desde_vencimiento}. Saldo: RD$${Number(factura.saldo_pendiente).toLocaleString('en-US', { minimumFractionDigits: 2 })}`,
@@ -466,9 +466,9 @@ async function aplicarPaso(
 
     await cobranzasExecute(
       `INSERT INTO cobranza_tareas
-         (titulo, descripcion, tipo, fecha_vencimiento, codigo_cliente, ij_inum,
+         (empresa_id, titulo, descripcion, tipo, fecha_vencimiento, codigo_cliente, ij_inum,
           prioridad, asignada_a, creado_por, origen, origen_ref)
-       VALUES (?, ?, 'SEGUIMIENTO', CURDATE(), ?, ?, ?, 'sistema', 'cadencias',
+       VALUES (1, ?, ?, 'SEGUIMIENTO', CURDATE(), ?, ?, ?, 'sistema', 'cadencias',
                'CADENCIA', ?)`,
       [
         titulo,

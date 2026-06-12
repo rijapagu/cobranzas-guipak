@@ -90,7 +90,8 @@ export async function ejecutarAplicarAnticipos(): Promise<StatsAnticipos> {
   const tareasExistentes = await cobranzasQuery<{ origen_ref: string }>(
     `SELECT origen_ref
      FROM cobranza_tareas
-     WHERE origen='SALDO_FAVOR'
+     WHERE empresa_id = 1
+       AND origen='SALDO_FAVOR'
        AND origen_ref IN (${placeholdersRefs})
        AND estado IN ('PENDIENTE','EN_PROGRESO')`,
     refsBuscadas
@@ -218,9 +219,9 @@ export async function ejecutarAplicarAnticipos(): Promise<StatsAnticipos> {
 
     await cobranzasExecute(
       `INSERT INTO cobranza_tareas
-         (titulo, descripcion, tipo, fecha_vencimiento, codigo_cliente,
+         (empresa_id, titulo, descripcion, tipo, fecha_vencimiento, codigo_cliente,
           prioridad, asignada_a, creado_por, origen, origen_ref)
-       VALUES (?, ?, 'DOCUMENTO', CURDATE(), ?, ?, 'sistema',
+       VALUES (1, ?, ?, 'DOCUMENTO', CURDATE(), ?, ?, 'sistema',
                'cron-aplicar-anticipos', 'SALDO_FAVOR', ?)`,
       [
         titulo,
