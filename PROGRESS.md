@@ -936,3 +936,44 @@ cola de aprobación. La regla de oro intacta: nada se envía sin aprobación.
 - Test de aislamiento actualizado: el invariante ya no es "todo vacío" sino
   "solo datos propios" (códigos CLI-* y montos < 1M). Ambos tests de
   regresión en verde contra producción.
+
+## Sesión 12-Junio-2026 (sesión 5) — Etapa 3 esencial: tenant operable + alta en un minuto
+
+### Hecho (commits 89a1008, 81e289d, 6f52a08)
+- **Config por empresa** (`lib/empresas/config.ts`, sobre `empresas.config`):
+  identidad (nombre/alias/firma), SMTP y Evolution por tenant; secretos
+  cifrados AES-256-GCM (CONFIG_CIPHER_KEY fallback JWT_SECRET); cache 60s.
+  Guipak sigue 100% en variables de entorno — cero cambio.
+- **Canales por empresa**: `enviarEmail` / `enviarWhatsApp` aceptan empresaId
+  y resuelven credenciales del tenant. Sin configurar → error claro que
+  apunta a Configuración → Mi empresa, jamás al canal de Guipak.
+- **Identidad en la IA**: prompts y mocks parametrizados; los mensajes del
+  tenant firman con SU empresa (verificado: "Demo Lunes", cero "Guipak").
+- **UI**: `/configuracion/empresa` (identidad + SMTP + WhatsApp; secretos
+  write-only con flag "configurado"). Para Guipak: modo informativo.
+- **Alta de tenant en un paso**: POST /api/internal/admin/empresas
+  (x-internal-secret) crea empresa + usuario ADMIN. GET lista empresas.
+- **E2E del onboarding**: `scripts/test-onboarding-empresa-demo.mjs` — alta →
+  login → configurar → importar → generar cola con identidad propia →
+  aprobar → enviar usa el SMTP del TENANT (dummy → FALLIDO, sin tocar el de
+  Guipak). ONBOARDING OK + regresiones (aislamiento y flujo CSV) en verde.
+
+### Bugs propios encontrados por el E2E
+| Bug | Fix |
+|---|---|
+| Cifrado tiraba 500: fallback a NEXTAUTH_SECRET pero producción usa JWT_SECRET | 81e289d |
+| Config nunca persistía: mysql2 devuelve columnas JSON parseadas y JSON.parse(objeto) lanzaba | 6f52a08 |
+
+### Playbook del alta del lunes
+1. `POST /api/internal/admin/empresas` con x-internal-secret:
+   `{nombre, slug, erp_tipo:'CSV', admin_email, admin_nombre, admin_password}`
+2. El admin entra en /login → /configuracion/empresa (identidad + SMTP +
+   WhatsApp del cliente) → /configuracion/importar-cartera (su CSV).
+3. Cartera/dashboard listos; generar cola → aprobar → enviar con SUS canales.
+(El script test-onboarding-empresa-demo.mjs es ese flujo automatizado.)
+
+### Pendiente Etapa 3 (post-lunes)
+- Branding del portal, parser de banco por empresa, Telegram por tenant,
+  dominio/subpath, quitar fallback de chat personal en supervisor-*.
+- Etapa 4 (jobs multi-tenant): cadencias automáticas para tenants — hoy el
+  tenant opera generando cola manualmente con un click.
