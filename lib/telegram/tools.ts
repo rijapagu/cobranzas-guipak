@@ -655,7 +655,7 @@ export async function ejecutarTool(
 
       case 'listar_plantillas': // alias deprecado, retirar tras 1 release
       case 'listar_plantillas_email': {
-        const plantillas = await listarPlantillasActivas();
+        const plantillas = await listarPlantillasActivas(EMPRESA_GUIPAK);
         return { ok: true, data: { total: plantillas.length, plantillas } };
       }
 
@@ -1539,7 +1539,7 @@ async function estadoCadencias(): Promise<ResultadoTool> {
     accion: string;
     requiere_aprobacion: number;
   }>(
-    'SELECT segmento, dia_desde_vencimiento, accion, requiere_aprobacion FROM cobranza_cadencias WHERE activa=1 ORDER BY dia_desde_vencimiento ASC'
+    'SELECT segmento, dia_desde_vencimiento, accion, requiere_aprobacion FROM cobranza_cadencias WHERE empresa_id = 1 AND activa=1 ORDER BY dia_desde_vencimiento ASC'
   );
 
   // Último run
@@ -1549,12 +1549,12 @@ async function estadoCadencias(): Promise<ResultadoTool> {
 
   // Facturas con estado de cadencia registrado
   const conEstado = await cobranzasQuery<{ total: number }>(
-    'SELECT COUNT(*) AS total FROM cobranza_factura_cadencia_estado'
+    'SELECT COUNT(*) AS total FROM cobranza_factura_cadencia_estado WHERE empresa_id = 1'
   );
 
   // Facturas pausadas individualmente
   const pausadas = await cobranzasQuery<{ total: number }>(
-    'SELECT COUNT(*) AS total FROM cobranza_factura_cadencia_estado WHERE pausada_hasta > NOW()'
+    'SELECT COUNT(*) AS total FROM cobranza_factura_cadencia_estado WHERE empresa_id = 1 AND pausada_hasta > NOW()'
   );
 
   // Stats del último run (extraído del JSON en detalle)

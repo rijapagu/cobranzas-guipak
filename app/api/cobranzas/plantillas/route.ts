@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { getSession } from '@/lib/auth/session';
 import { cobranzasQuery, cobranzasExecute, logAccion } from '@/lib/db/cobranzas';
+import { empresaIdDeSesion } from '@/lib/tenant';
 
 const PlantillaSchema = z.object({
   nombre: z.string().min(2).max(100),
@@ -30,11 +31,13 @@ export async function GET() {
             categoria, asunto, cuerpo, tono, requiere_aprobacion, activa, creado_por,
             created_at, updated_at
      FROM cobranza_plantillas_email
+     WHERE empresa_id = ?
      ORDER BY
        FIELD(categoria, 'SECUENCIA', 'BUEN_CLIENTE', 'PROMESA_ROTA', 'ESTADO_CUENTA'),
        FIELD(segmento, 'VERDE', 'AMARILLO', 'NARANJA', 'ROJO'),
        dia_desde_vencimiento ASC,
-       orden_secuencia ASC`
+       orden_secuencia ASC`,
+    [empresaIdDeSesion(session)]
   );
 
   return NextResponse.json({ plantillas: rows });
@@ -60,9 +63,10 @@ export async function POST(req: NextRequest) {
   const p = parsed.data;
   const result = await cobranzasExecute(
     `INSERT INTO cobranza_plantillas_email
-     (nombre, descripcion, segmento, categoria, dia_desde_vencimiento, orden_secuencia, asunto, cuerpo, tono, requiere_aprobacion, activa, creado_por)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     (empresa_id, nombre, descripcion, segmento, categoria, dia_desde_vencimiento, orden_secuencia, asunto, cuerpo, tono, requiere_aprobacion, activa, creado_por)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
+      empresaIdDeSesion(session),
       p.nombre,
       p.descripcion || null,
       p.segmento,

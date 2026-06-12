@@ -90,7 +90,7 @@ export async function ejecutarCadenciasHorarias(): Promise<{
 
   // Cargar configuración de cadencias activas
   const cadencias = await cobranzasQuery<Cadencia>(
-    'SELECT id, segmento, dia_desde_vencimiento, accion, requiere_aprobacion, plantilla_mensaje_id FROM cobranza_cadencias WHERE activa=1 ORDER BY dia_desde_vencimiento ASC'
+    'SELECT id, segmento, dia_desde_vencimiento, accion, requiere_aprobacion, plantilla_mensaje_id FROM cobranza_cadencias WHERE empresa_id = 1 AND activa=1 ORDER BY dia_desde_vencimiento ASC'
   );
   if (cadencias.length === 0) {
     console.log('[cadencias] Sin cadencias activas configuradas');
@@ -170,7 +170,7 @@ export async function ejecutarCadenciasHorarias(): Promise<{
   }>(
     `SELECT factura_id, ultimo_paso_id, ultimo_dia_aplicado, omitir_pasos_previos, pausada_hasta
      FROM cobranza_factura_cadencia_estado
-     WHERE factura_id IN (${inums.map(() => '?').join(',')})`,
+     WHERE empresa_id = 1 AND factura_id IN (${inums.map(() => '?').join(',')})`,
     inums.map(String)
   );
   const estadoMap = new Map<string, CadenciaEstado>(
@@ -278,8 +278,8 @@ async function upsertEstado(
 ): Promise<void> {
   await cobranzasExecute(
     `INSERT INTO cobranza_factura_cadencia_estado
-       (factura_id, ultimo_paso_id, fecha_ultimo_paso, ultimo_dia_aplicado, omitir_pasos_previos)
-     VALUES (?, ?, NOW(), ?, ?)
+       (empresa_id, factura_id, ultimo_paso_id, fecha_ultimo_paso, ultimo_dia_aplicado, omitir_pasos_previos)
+     VALUES (1, ?, ?, NOW(), ?, ?)
      ON DUPLICATE KEY UPDATE
        ultimo_paso_id = VALUES(ultimo_paso_id),
        fecha_ultimo_paso = VALUES(fecha_ultimo_paso),
@@ -343,7 +343,7 @@ async function aplicarPaso(
 
   if (canal === 'EMAIL') {
     try {
-      const plantilla = await seleccionarPlantilla({ segmento, diasVencido: diasVencida });
+      const plantilla = await seleccionarPlantilla({ segmento, diasVencido: diasVencida, empresaId: 1 });
       if (plantilla) {
         const contacto = factura.contacto_cobros ? String(factura.contacto_cobros).trim() : '';
         const rendered = renderPlantilla(

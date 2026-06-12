@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth/session';
 import { cobranzasQuery, cobranzasExecute, logAccion } from '@/lib/db/cobranzas';
+import { empresaIdDeSesion } from '@/lib/tenant';
 
 const ACCIONES_VALIDAS = ['EMAIL', 'WHATSAPP', 'LLAMADA_TICKET', 'RECLASIFICAR', 'ESCALAR_LEGAL'];
 const SEGMENTOS_VALIDOS = ['VERDE', 'AMARILLO', 'NARANJA', 'ROJO'];
@@ -22,7 +23,8 @@ export async function GET() {
     plantilla_mensaje_id: number | null;
     activa: number;
   }>(
-    'SELECT id, segmento, dia_desde_vencimiento, accion, requiere_aprobacion, plantilla_mensaje_id, activa FROM cobranza_cadencias ORDER BY dia_desde_vencimiento ASC, segmento ASC'
+    'SELECT id, segmento, dia_desde_vencimiento, accion, requiere_aprobacion, plantilla_mensaje_id, activa FROM cobranza_cadencias WHERE empresa_id = ? ORDER BY dia_desde_vencimiento ASC, segmento ASC',
+    [empresaIdDeSesion(session)]
   );
 
   // Estadísticas del último run
@@ -66,8 +68,8 @@ export async function POST(req: NextRequest) {
 
   try {
     const result = await cobranzasExecute(
-      'INSERT INTO cobranza_cadencias (segmento, dia_desde_vencimiento, accion, requiere_aprobacion, plantilla_mensaje_id) VALUES (?, ?, ?, ?, ?)',
-      [segmento, dia_desde_vencimiento, accion, requiere_aprobacion ? 1 : 0, plantilla_mensaje_id ?? null]
+      'INSERT INTO cobranza_cadencias (empresa_id, segmento, dia_desde_vencimiento, accion, requiere_aprobacion, plantilla_mensaje_id) VALUES (?, ?, ?, ?, ?, ?)',
+      [empresaIdDeSesion(session), segmento, dia_desde_vencimiento, accion, requiere_aprobacion ? 1 : 0, plantilla_mensaje_id ?? null]
     );
     const id = (result as { insertId?: number }).insertId;
     await logAccion(session.email, 'CADENCIA_CREADA', 'cadencia', String(id), { segmento, dia_desde_vencimiento, accion });
@@ -115,8 +117,8 @@ export async function PUT(req: NextRequest) {
 
   if (sets.length === 0) return NextResponse.json({ error: 'Nada que actualizar' }, { status: 400 });
 
-  params.push(id);
-  await cobranzasExecute(`UPDATE cobranza_cadencias SET ${sets.join(', ')} WHERE id = ?`, params);
+  params.push(id, empresaIdDeSesion(session));
+  await cobranzasExecute(`UPDATE cobranza_cadencias SET ${sets.join(', ')} WHERE id = ? AND empresa_id = ?`, params);
   await logAccion(session.email, 'CADENCIA_ACTUALIZADA', 'cadencia', String(id), body);
   return NextResponse.json({ ok: true });
 }
@@ -134,7 +136,7 @@ export async function DELETE(req: NextRequest) {
   const id = req.nextUrl.searchParams.get('id');
   if (!id) return NextResponse.json({ error: 'id requerido' }, { status: 400 });
 
-  await cobranzasExecute('DELETE FROM cobranza_cadencias WHERE id = ?', [id]);
+  await cobranzasExecute('DELETE FROM cobranza_cadencias WHERE id = ? AND empresa_id = ?', [id, empresaIdDeSesion(session)]);
   await logAccion(session.email, 'CADENCIA_ELIMINADA', 'cadencia', id, {});
   return NextResponse.json({ ok: true });
 }

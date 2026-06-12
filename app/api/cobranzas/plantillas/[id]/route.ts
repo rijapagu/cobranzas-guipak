@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { getSession } from '@/lib/auth/session';
 import { cobranzasQuery, cobranzasExecute, logAccion } from '@/lib/db/cobranzas';
+import { empresaIdDeSesion } from '@/lib/tenant';
 
 const UpdateSchema = z.object({
   nombre: z.string().min(2).max(100).optional(),
@@ -26,8 +27,8 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 
   const { id } = await params;
   const rows = await cobranzasQuery(
-    'SELECT * FROM cobranza_plantillas_email WHERE id = ?',
-    [Number(id)]
+    'SELECT * FROM cobranza_plantillas_email WHERE id = ? AND empresa_id = ?',
+    [Number(id), empresaIdDeSesion(session)]
   );
   if (rows.length === 0) return NextResponse.json({ error: 'No encontrada' }, { status: 404 });
   return NextResponse.json({ plantilla: rows[0] });
@@ -62,10 +63,10 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   if (updates.length === 0) {
     return NextResponse.json({ error: 'Sin cambios' }, { status: 400 });
   }
-  values.push(idNum);
+  values.push(idNum, empresaIdDeSesion(session));
 
   await cobranzasExecute(
-    `UPDATE cobranza_plantillas_email SET ${updates.join(', ')} WHERE id = ?`,
+    `UPDATE cobranza_plantillas_email SET ${updates.join(', ')} WHERE id = ? AND empresa_id = ?`,
     values
   );
 
@@ -93,8 +94,8 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
 
   const { id } = await params;
   await cobranzasExecute(
-    'UPDATE cobranza_plantillas_email SET activa = 0 WHERE id = ?',
-    [Number(id)]
+    'UPDATE cobranza_plantillas_email SET activa = 0 WHERE id = ? AND empresa_id = ?',
+    [Number(id), empresaIdDeSesion(session)]
   );
 
   await logAccion(

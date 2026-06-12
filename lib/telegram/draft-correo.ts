@@ -245,8 +245,8 @@ export async function proponerCorreoCliente(
   const saldoNeto = Math.max(0, saldoTotal - saldoFavor);
 
   const plantilla = plantillaId
-    ? await seleccionarPlantillaById(plantillaId)
-    : await seleccionarPlantilla({ segmento, diasVencido: diasMaxVencido });
+    ? await seleccionarPlantillaById(plantillaId, EMPRESA_GUIPAK)
+    : await seleccionarPlantilla({ segmento, diasVencido: diasMaxVencido, empresaId: EMPRESA_GUIPAK });
 
   if (!plantilla) {
     const msg = plantillaId

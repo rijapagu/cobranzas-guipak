@@ -118,6 +118,7 @@ export async function POST() {
       const plantilla = await seleccionarPlantilla({
         segmento: f.segmento_riesgo,
         diasVencido: f.dias_vencido,
+        empresaId,
       });
 
       let asuntoEmail = '';
