@@ -1,8 +1,13 @@
 /**
  * Cliente Email — Envío via SMTP/Nodemailer.
+ *
+ * Fase 3 Etapa 3: el SMTP se resuelve POR EMPRESA (lib/empresas/config).
+ * Guipak (empresa 1, default) sigue usando las variables de entorno.
  */
 
 import nodemailer from 'nodemailer';
+import { configDeEmpresa } from '@/lib/empresas/config';
+import { EMPRESA_GUIPAK } from '@/lib/tenant';
 
 interface EnvioEmailResult {
   messageId: string;
@@ -27,34 +32,34 @@ export async function enviarEmail(
   subject: string,
   body: string,
   attachments?: EmailAttachment[],
-  htmlBody?: string
+  htmlBody?: string,
+  empresaId: number = EMPRESA_GUIPAK
 ): Promise<EnvioEmailResult> {
-  const host = process.env.SMTP_HOST;
-  const port = Number(process.env.SMTP_PORT) || 587;
-  const user = process.env.SMTP_USER;
-  const pass = process.env.SMTP_PASS;
-  const from = process.env.SMTP_FROM || 'cobros@guipak.com';
+  const config = await configDeEmpresa(empresaId);
+  const smtp = config.smtp;
 
-  if (!host || !user || !pass) {
-    const faltante = [!host && 'SMTP_HOST', !user && 'SMTP_USER', !pass && 'SMTP_PASS'].filter(Boolean).join(', ');
-    console.error(`[EMAIL] Sin credenciales SMTP (${faltante}) — correo NO enviado a ${to}`);
+  if (!smtp) {
+    const origen = empresaId === EMPRESA_GUIPAK
+      ? 'Configura las variables de entorno SMTP_* en el servidor.'
+      : 'Configura el SMTP de la empresa en Configuración → Mi empresa.';
+    console.error(`[EMAIL] Empresa ${empresaId} sin SMTP configurado — correo NO enviado a ${to}`);
     return {
       messageId: '',
       status: 'failed',
-      error: `Configuración SMTP incompleta: falta ${faltante}. Configura las variables de entorno en el servidor.`,
+      error: `Configuración SMTP incompleta. ${origen}`,
     };
   }
 
   try {
     const transporter = nodemailer.createTransport({
-      host,
-      port,
-      secure: port === 465,
-      auth: { user, pass },
+      host: smtp.host,
+      port: smtp.port,
+      secure: smtp.port === 465,
+      auth: { user: smtp.user, pass: smtp.pass },
     });
 
     const info = await transporter.sendMail({
-      from: `"Cobros Guipak" <${from}>`,
+      from: `"${smtp.nombreRemitente}" <${smtp.from}>`,
       to,
       subject,
       text: body,

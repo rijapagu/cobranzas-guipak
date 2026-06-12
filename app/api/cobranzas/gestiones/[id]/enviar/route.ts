@@ -192,7 +192,7 @@ export async function POST(
     // Enviar WhatsApp
     // ═══════════════════════════════════════════
     if (['WHATSAPP', 'AMBOS'].includes(g.canal) && contacto.telefono && mensajeWa) {
-      const waResult = await enviarWhatsApp(contacto.telefono, mensajeWa);
+      const waResult = await enviarWhatsApp(contacto.telefono, mensajeWa, empresaId);
       waMessageId = waResult.messageId;
 
       // Registrar en conversaciones
@@ -211,7 +211,7 @@ export async function POST(
     // Enviar Email
     // ═══════════════════════════════════════════
     if (['EMAIL', 'AMBOS'].includes(g.canal) && contacto.email && mensajeEmail) {
-      const emailResult = await enviarEmail(contacto.email, asuntoEmail, mensajeEmail);
+      const emailResult = await enviarEmail(contacto.email, asuntoEmail, mensajeEmail, undefined, undefined, empresaId);
       emailMessageId = emailResult.messageId;
 
       await cobranzasExecute(

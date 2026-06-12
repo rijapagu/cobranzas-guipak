@@ -7,6 +7,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import type { ContextoCobranza, MensajeGenerado } from '@/lib/types/cobranzas';
 import { buildPromptCobranza, generarMensajeMock, buildPromptRespuesta, generarRespuestaMock } from './prompts';
 import type { ContextoRespuesta, RespuestaIA } from './prompts';
+import type { IdentidadEmpresa } from '@/lib/empresas/config';
 
 const MODEL = 'claude-sonnet-4-20250514';
 
@@ -15,12 +16,13 @@ const MODEL = 'claude-sonnet-4-20250514';
  * Si no hay ANTHROPIC_API_KEY, retorna mensajes mock.
  */
 export async function generarMensajeCobranza(
-  contexto: ContextoCobranza
+  contexto: ContextoCobranza,
+  identidad?: IdentidadEmpresa
 ): Promise<MensajeGenerado> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
 
   if (!apiKey) {
-    const mock = generarMensajeMock(contexto);
+    const mock = generarMensajeMock(contexto, identidad);
     return {
       mensaje_wa: mock.mensaje_wa,
       mensaje_email: mock.mensaje_email,
@@ -30,7 +32,7 @@ export async function generarMensajeCobranza(
 
   try {
     const client = new Anthropic({ apiKey });
-    const prompt = buildPromptCobranza(contexto);
+    const prompt = buildPromptCobranza(contexto, identidad);
 
     const response = await client.messages.create({
       model: MODEL,
@@ -53,11 +55,11 @@ export async function generarMensajeCobranza(
     }
 
     // Fallback si no es JSON válido
-    return generarMensajeMock(contexto);
+    return generarMensajeMock(contexto, identidad);
   } catch (error) {
     console.error('[CLAUDE] Error generando mensaje:', error);
     // Fallback a mock en caso de error
-    return generarMensajeMock(contexto);
+    return generarMensajeMock(contexto, identidad);
   }
 }
 
@@ -66,17 +68,18 @@ export async function generarMensajeCobranza(
  * CP-10: Solo retorna texto, nunca envía directamente.
  */
 export async function generarRespuestaCliente(
-  contexto: ContextoRespuesta
+  contexto: ContextoRespuesta,
+  identidad?: IdentidadEmpresa
 ): Promise<RespuestaIA> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
 
   if (!apiKey) {
-    return generarRespuestaMock(contexto);
+    return generarRespuestaMock(contexto, identidad);
   }
 
   try {
     const client = new Anthropic({ apiKey });
-    const prompt = buildPromptRespuesta(contexto);
+    const prompt = buildPromptRespuesta(contexto, identidad);
 
     const response = await client.messages.create({
       model: MODEL,
@@ -98,9 +101,9 @@ export async function generarRespuestaCliente(
       };
     }
 
-    return generarRespuestaMock(contexto);
+    return generarRespuestaMock(contexto, identidad);
   } catch (error) {
     console.error('[CLAUDE] Error generando respuesta:', error);
-    return generarRespuestaMock(contexto);
+    return generarRespuestaMock(contexto, identidad);
   }
 }

@@ -6,6 +6,7 @@ import { enviarWhatsApp } from '@/lib/evolution/client';
 import { downloadPdfBuffer } from '@/lib/drive/client';
 import { empresaIdDeSesion } from '@/lib/tenant';
 import { adaptadorParaEmpresa } from '@/lib/erp';
+import { configDeEmpresa } from '@/lib/empresas/config';
 
 /**
  * POST /api/cobranzas/documentos/enviar
@@ -49,9 +50,11 @@ export async function POST(request: NextRequest) {
 
     const doc = docs[0];
 
-    const adapter = await adaptadorParaEmpresa(empresaIdDeSesion(session));
+    const empresaId = empresaIdDeSesion(session);
+    const adapter = await adaptadorParaEmpresa(empresaId);
     const clienteErp = await adapter.cliente(doc.codigo_cliente).catch(() => null);
     const nombreCliente = clienteErp?.nombre ?? doc.codigo_cliente;
+    const { identidad } = await configDeEmpresa(empresaId);
 
     await logAccion(session.email, 'ENVIAR_FACTURA_MANUAL', 'documento', String(doc.id), {
       canal, destinatario, ij_inum: doc.ij_inum, codigo_cliente: doc.codigo_cliente,
@@ -67,14 +70,14 @@ export async function POST(request: NextRequest) {
           }]
         : undefined;
 
-      const asunto = `Factura ${doc.ij_inum} — ${nombreCliente} — Suministros Guipak`;
-      const cuerpo = `Estimado/a cliente,\n\nAdjunto encontrará la factura #${doc.ij_inum}.\n\nSi tiene alguna pregunta sobre esta factura, no dude en contactarnos.\n\nSaludos cordiales,\nDepartamento de Cobros\nSuministros Guipak, S.R.L.`;
+      const asunto = `Factura ${doc.ij_inum} — ${nombreCliente} — ${identidad.alias}`;
+      const cuerpo = `Estimado/a cliente,\n\nAdjunto encontrará la factura #${doc.ij_inum}.\n\nSi tiene alguna pregunta sobre esta factura, no dude en contactarnos.\n\nSaludos cordiales,\n${identidad.firma}`;
 
       if (!adjuntos) {
         return NextResponse.json({ error: 'No se pudo descargar el PDF desde Google Drive' }, { status: 500 });
       }
 
-      const resultadoEmail = await enviarEmail(destinatario.trim(), asunto, cuerpo, adjuntos);
+      const resultadoEmail = await enviarEmail(destinatario.trim(), asunto, cuerpo, adjuntos, undefined, empresaId);
       if (resultadoEmail.status !== 'sent') {
         return NextResponse.json(
           { error: `No se pudo enviar el email: ${resultadoEmail.error || 'error SMTP'}` },
@@ -90,9 +93,9 @@ export async function POST(request: NextRequest) {
 
     // WHATSAPP
     const urlPdf = `https://drive.google.com/file/d/${doc.google_drive_id}/view`;
-    const textoWa = `Buen día, le compartimos la factura #${doc.ij_inum} de Suministros Guipak:\n\n📄 ${urlPdf}\n\nCualquier duda estamos a la orden.`;
+    const textoWa = `Buen día, le compartimos la factura #${doc.ij_inum} de ${identidad.alias}:\n\n📄 ${urlPdf}\n\nCualquier duda estamos a la orden.`;
 
-    const resultadoWa = await enviarWhatsApp(destinatario.trim(), textoWa);
+    const resultadoWa = await enviarWhatsApp(destinatario.trim(), textoWa, empresaId);
     if (resultadoWa.status !== 'sent') {
       return NextResponse.json(
         { error: `No se pudo enviar el WhatsApp: ${resultadoWa.error || 'error Evolution API'}` },

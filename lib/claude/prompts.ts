@@ -6,6 +6,15 @@
 import type { SegmentoRiesgo } from '@/lib/types/cartera';
 import type { ContextoCobranza } from '@/lib/types/cobranzas';
 import { formatMonto } from '@/lib/utils/formato';
+import type { IdentidadEmpresa } from '@/lib/empresas/config';
+
+// Identidad por defecto = Guipak (los flujos del bot y webhooks siguen siendo
+// de la empresa 1; los tenants pasan la suya desde lib/empresas/config).
+const IDENTIDAD_DEFAULT: IdentidadEmpresa = {
+  nombre: 'Suministros Guipak, S.R.L.',
+  alias: 'Guipak',
+  firma: 'Departamento de Cuentas por Cobrar\nSuministros Guipak, S.R.L.',
+};
 
 const TONOS: Record<SegmentoRiesgo, string> = {
   VERDE: `Tono: Amigable y preventivo. Es un recordatorio cordial antes del vencimiento.
@@ -26,7 +35,7 @@ Advertir que la cuenta puede pasar a gestión legal si no se resuelve.
 Mantener profesionalismo, sin amenazas, pero con firmeza.`,
 };
 
-export function buildPromptCobranza(ctx: ContextoCobranza): string {
+export function buildPromptCobranza(ctx: ContextoCobranza, identidad: IdentidadEmpresa = IDENTIDAD_DEFAULT): string {
   const montoFormateado = formatMonto(ctx.saldo_pendiente, ctx.moneda);
   const contacto = ctx.contacto_cobros || ctx.nombre_cliente;
 
@@ -35,7 +44,7 @@ export function buildPromptCobranza(ctx: ContextoCobranza): string {
     historialTexto = `\n\nHistorial de gestiones anteriores con este cliente:\n${ctx.historial_gestiones.join('\n')}`;
   }
 
-  return `Eres un asistente de cobranzas para Suministros Guipak, S.R.L., una empresa distribuidora en República Dominicana.
+  return `Eres un asistente de cobranzas para ${identidad.nombre}, una empresa en República Dominicana.
 
 Genera DOS mensajes de cobranza para el siguiente caso:
 
@@ -60,7 +69,7 @@ GENERA:
 
 1. **MENSAJE WHATSAPP**: Máximo 300 caracteres. Directo, sin saludo formal largo. Incluir monto y número de factura. Si hay PDF, mencionar que puede solicitar copia.
 
-2. **MENSAJE EMAIL**: Formato profesional con saludo y despedida. Incluir todos los datos de la factura. Firmar como "Departamento de Cuentas por Cobrar - Suministros Guipak, S.R.L."
+2. **MENSAJE EMAIL**: Formato profesional con saludo y despedida. Incluir todos los datos de la factura. Firmar como "${identidad.firma.replace(/\n/g, ' - ')}"
 
 3. **ASUNTO EMAIL**: Máximo 60 caracteres. Incluir número de factura y acción requerida.
 
@@ -77,7 +86,7 @@ Solo responde el JSON, sin texto adicional.`;
 /**
  * Genera mensajes mock cuando no hay API key de Claude.
  */
-export function generarMensajeMock(ctx: ContextoCobranza): {
+export function generarMensajeMock(ctx: ContextoCobranza, identidad: IdentidadEmpresa = IDENTIDAD_DEFAULT): {
   mensaje_wa: string;
   mensaje_email: string;
   asunto_email: string;
@@ -87,23 +96,23 @@ export function generarMensajeMock(ctx: ContextoCobranza): {
 
   const mensajesPorSegmento: Record<SegmentoRiesgo, { wa: string; email: string; asunto: string }> = {
     VERDE: {
-      wa: `Hola ${contacto}. Le recordamos que la factura #${ctx.numero_factura} por ${monto} vence el ${ctx.fecha_vencimiento}. Quedamos atentos. - Guipak`,
-      email: `Estimado/a ${contacto},\n\nLe recordamos cordialmente que la factura #${ctx.numero_factura} por un monto de ${monto} tiene fecha de vencimiento el ${ctx.fecha_vencimiento}.\n\nLe agradecemos gestionar el pago oportunamente para mantener su cuenta al día.\n\nQuedamos a su disposición para cualquier consulta.\n\nSaludos cordiales,\nDepartamento de Cuentas por Cobrar\nSuministros Guipak, S.R.L.`,
+      wa: `Hola ${contacto}. Le recordamos que la factura #${ctx.numero_factura} por ${monto} vence el ${ctx.fecha_vencimiento}. Quedamos atentos. - ${identidad.alias}`,
+      email: `Estimado/a ${contacto},\n\nLe recordamos cordialmente que la factura #${ctx.numero_factura} por un monto de ${monto} tiene fecha de vencimiento el ${ctx.fecha_vencimiento}.\n\nLe agradecemos gestionar el pago oportunamente para mantener su cuenta al día.\n\nQuedamos a su disposición para cualquier consulta.\n\nSaludos cordiales,\n${identidad.firma}`,
       asunto: `Recordatorio: Factura #${ctx.numero_factura} próxima a vencer`,
     },
     AMARILLO: {
-      wa: `Buenos días ${contacto}. La factura #${ctx.numero_factura} por ${monto} venció hace ${ctx.dias_vencido} días. ¿Podría indicarnos cuándo realizará el pago? Gracias. - Guipak`,
-      email: `Estimado/a ${contacto},\n\nLe informamos que la factura #${ctx.numero_factura} (NCF: ${ctx.ncf_fiscal}) por un monto de ${monto} se encuentra vencida desde hace ${ctx.dias_vencido} días.\n\nLe solicitamos amablemente gestionar el pago a la brevedad posible o indicarnos una fecha tentativa de pago.\n\nQuedamos atentos a su respuesta.\n\nSaludos cordiales,\nDepartamento de Cuentas por Cobrar\nSuministros Guipak, S.R.L.`,
+      wa: `Buenos días ${contacto}. La factura #${ctx.numero_factura} por ${monto} venció hace ${ctx.dias_vencido} días. ¿Podría indicarnos cuándo realizará el pago? Gracias. - ${identidad.alias}`,
+      email: `Estimado/a ${contacto},\n\nLe informamos que la factura #${ctx.numero_factura} (NCF: ${ctx.ncf_fiscal}) por un monto de ${monto} se encuentra vencida desde hace ${ctx.dias_vencido} días.\n\nLe solicitamos amablemente gestionar el pago a la brevedad posible o indicarnos una fecha tentativa de pago.\n\nQuedamos atentos a su respuesta.\n\nSaludos cordiales,\n${identidad.firma}`,
       asunto: `Aviso: Factura #${ctx.numero_factura} vencida - Pago pendiente`,
     },
     NARANJA: {
-      wa: `${contacto}, la factura #${ctx.numero_factura} por ${monto} tiene ${ctx.dias_vencido} días vencida. Necesitamos coordinar el pago de forma urgente. Favor contactarnos. - Guipak Cobros`,
-      email: `Estimado/a ${contacto},\n\nNos dirigimos a usted en referencia a la factura #${ctx.numero_factura} (NCF: ${ctx.ncf_fiscal}) por ${monto}, la cual se encuentra vencida desde hace ${ctx.dias_vencido} días.\n\nEsta cuenta se encuentra en gestión activa de cobranza. Le solicitamos realizar el pago inmediato o comunicarse con nuestro departamento para establecer un acuerdo de pago.\n\nDe no recibir respuesta, nos veremos en la necesidad de escalar esta gestión.\n\nAtentamente,\nDepartamento de Cuentas por Cobrar\nSuministros Guipak, S.R.L.`,
+      wa: `${contacto}, la factura #${ctx.numero_factura} por ${monto} tiene ${ctx.dias_vencido} días vencida. Necesitamos coordinar el pago de forma urgente. Favor contactarnos. - ${identidad.alias} Cobros`,
+      email: `Estimado/a ${contacto},\n\nNos dirigimos a usted en referencia a la factura #${ctx.numero_factura} (NCF: ${ctx.ncf_fiscal}) por ${monto}, la cual se encuentra vencida desde hace ${ctx.dias_vencido} días.\n\nEsta cuenta se encuentra en gestión activa de cobranza. Le solicitamos realizar el pago inmediato o comunicarse con nuestro departamento para establecer un acuerdo de pago.\n\nDe no recibir respuesta, nos veremos en la necesidad de escalar esta gestión.\n\nAtentamente,\n${identidad.firma}`,
       asunto: `URGENTE: Factura #${ctx.numero_factura} - ${ctx.dias_vencido} días vencida`,
     },
     ROJO: {
-      wa: `AVISO IMPORTANTE - ${contacto}: La factura #${ctx.numero_factura} por ${monto} tiene ${ctx.dias_vencido} días de mora. Se requiere pago inmediato. Contacte a Cobros Guipak.`,
-      email: `Estimado/a ${contacto},\n\nPor medio de la presente le notificamos que la factura #${ctx.numero_factura} (NCF: ${ctx.ncf_fiscal}) por ${monto} se encuentra con ${ctx.dias_vencido} días de mora.\n\nA pesar de nuestras comunicaciones anteriores, no hemos recibido el pago correspondiente ni una respuesta formal de su parte.\n\nLe instamos a realizar el pago inmediato o a comunicarse con nuestro departamento en las próximas 48 horas para evitar que esta cuenta sea referida a gestión legal.\n\nQuedamos en espera de su pronta respuesta.\n\nAtentamente,\nDepartamento de Cuentas por Cobrar\nSuministros Guipak, S.R.L.`,
+      wa: `AVISO IMPORTANTE - ${contacto}: La factura #${ctx.numero_factura} por ${monto} tiene ${ctx.dias_vencido} días de mora. Se requiere pago inmediato. Contacte a Cobros ${identidad.alias}.`,
+      email: `Estimado/a ${contacto},\n\nPor medio de la presente le notificamos que la factura #${ctx.numero_factura} (NCF: ${ctx.ncf_fiscal}) por ${monto} se encuentra con ${ctx.dias_vencido} días de mora.\n\nA pesar de nuestras comunicaciones anteriores, no hemos recibido el pago correspondiente ni una respuesta formal de su parte.\n\nLe instamos a realizar el pago inmediato o a comunicarse con nuestro departamento en las próximas 48 horas para evitar que esta cuenta sea referida a gestión legal.\n\nQuedamos en espera de su pronta respuesta.\n\nAtentamente,\n${identidad.firma}`,
       asunto: `ACCIÓN REQUERIDA: Factura #${ctx.numero_factura} en mora - ${ctx.dias_vencido} días`,
     },
   };
@@ -147,7 +156,7 @@ export interface RespuestaIA {
   };
 }
 
-export function buildPromptRespuesta(ctx: ContextoRespuesta): string {
+export function buildPromptRespuesta(ctx: ContextoRespuesta, identidad: IdentidadEmpresa = IDENTIDAD_DEFAULT): string {
   const monto = formatMonto(ctx.saldo_pendiente, ctx.moneda);
 
   let historial = '';
@@ -160,7 +169,7 @@ export function buildPromptRespuesta(ctx: ContextoRespuesta): string {
     acuerdos = `\nAcuerdos de pago previos:\n${ctx.acuerdos_previos.join('\n')}`;
   }
 
-  return `Eres un asistente de cobranzas para Suministros Guipak, S.R.L. Un cliente ha respondido a un mensaje de cobranza.
+  return `Eres un asistente de cobranzas para ${identidad.nombre}. Un cliente ha respondido a un mensaje de cobranza.
 
 DATOS:
 - Cliente: ${ctx.nombre_cliente} (${ctx.codigo_cliente})
@@ -194,19 +203,19 @@ Incluye "acuerdo" SOLO si detectas una promesa de pago con fecha. Incluye "dispu
 Solo responde el JSON.`;
 }
 
-export function generarRespuestaMock(ctx: ContextoRespuesta): RespuestaIA {
+export function generarRespuestaMock(ctx: ContextoRespuesta, identidad: IdentidadEmpresa = IDENTIDAD_DEFAULT): RespuestaIA {
   const msg = ctx.mensaje_cliente.toLowerCase();
 
   if (msg.includes('pago') || msg.includes('transferi') || msg.includes('deposit')) {
     return {
-      respuesta_wa: `Gracias ${ctx.nombre_cliente}. Tomamos nota de su intención de pago. Por favor confirme la fecha y el monto exacto para registrar el acuerdo. - Cobros Guipak`,
+      respuesta_wa: `Gracias ${ctx.nombre_cliente}. Tomamos nota de su intención de pago. Por favor confirme la fecha y el monto exacto para registrar el acuerdo. - Cobros ${identidad.alias}`,
       intencion: 'PROMESA_PAGO',
     };
   }
 
   if (msg.includes('error') || msg.includes('incorrecto') || msg.includes('no debo') || msg.includes('reclamo')) {
     return {
-      respuesta_wa: `Entendemos su preocupación ${ctx.nombre_cliente}. Hemos registrado su observación y nuestro equipo la revisará. Le contactaremos con una resolución. - Cobros Guipak`,
+      respuesta_wa: `Entendemos su preocupación ${ctx.nombre_cliente}. Hemos registrado su observación y nuestro equipo la revisará. Le contactaremos con una resolución. - Cobros ${identidad.alias}`,
       intencion: 'DISPUTA',
       disputa: {
         motivo: ctx.mensaje_cliente,
@@ -216,13 +225,13 @@ export function generarRespuestaMock(ctx: ContextoRespuesta): RespuestaIA {
 
   if (msg.includes('gracias') || msg.includes('recibido') || msg.includes('ok')) {
     return {
-      respuesta_wa: `Gracias por su respuesta ${ctx.nombre_cliente}. Quedamos atentos. - Cobros Guipak`,
+      respuesta_wa: `Gracias por su respuesta ${ctx.nombre_cliente}. Quedamos atentos. - Cobros ${identidad.alias}`,
       intencion: 'AGRADECIMIENTO',
     };
   }
 
   return {
-    respuesta_wa: `Gracias por comunicarse ${ctx.nombre_cliente}. Un asesor revisará su mensaje y le responderá a la brevedad. - Cobros Guipak`,
+    respuesta_wa: `Gracias por comunicarse ${ctx.nombre_cliente}. Un asesor revisará su mensaje y le responderá a la brevedad. - Cobros ${identidad.alias}`,
     intencion: 'OTRO',
   };
 }

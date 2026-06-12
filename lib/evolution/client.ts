@@ -1,7 +1,13 @@
 /**
  * Cliente Evolution API — Envío de WhatsApp.
  * CP-10: Este módulo NO es importado por lib/claude/.
+ *
+ * Fase 3 Etapa 3: la instancia Evolution se resuelve POR EMPRESA
+ * (lib/empresas/config). Guipak (empresa 1, default) sigue usando envs.
  */
+
+import { configDeEmpresa } from '@/lib/empresas/config';
+import { EMPRESA_GUIPAK } from '@/lib/tenant';
 
 interface EnvioResult {
   messageId: string;
@@ -17,18 +23,21 @@ interface EnvioResult {
  */
 export async function enviarWhatsApp(
   telefono: string,
-  mensaje: string
+  mensaje: string,
+  empresaId: number = EMPRESA_GUIPAK
 ): Promise<EnvioResult> {
-  const apiUrl = process.env.EVOLUTION_API_URL;
-  const apiKey = process.env.EVOLUTION_API_KEY;
-  const instance = process.env.EVOLUTION_INSTANCE;
+  const config = await configDeEmpresa(empresaId);
+  const evolution = config.evolution;
 
-  if (!apiUrl || !apiKey || !instance) {
-    console.error('[EVOLUTION] Sin credenciales (EVOLUTION_API_URL/KEY/INSTANCE) — envío rechazado a', telefono);
+  if (!evolution) {
+    const origen = empresaId === EMPRESA_GUIPAK
+      ? 'faltan EVOLUTION_API_URL/KEY/INSTANCE en el servidor'
+      : 'configura WhatsApp en Configuración → Mi empresa';
+    console.error(`[EVOLUTION] Empresa ${empresaId} sin WhatsApp configurado — envío rechazado a`, telefono);
     return {
       messageId: '',
       status: 'failed',
-      error: 'Evolution API no configurada (faltan EVOLUTION_API_URL/KEY/INSTANCE)',
+      error: `Evolution API no configurada (${origen})`,
     };
   }
 
@@ -36,11 +45,11 @@ export async function enviarWhatsApp(
     // Limpiar número: solo dígitos, agregar código país si falta
     const numero = limpiarTelefono(telefono);
 
-    const response = await fetch(`${apiUrl}/message/sendText/${instance}`, {
+    const response = await fetch(`${evolution.url}/message/sendText/${evolution.instance}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        apikey: apiKey,
+        apikey: evolution.apikey,
       },
       body: JSON.stringify({
         number: numero,

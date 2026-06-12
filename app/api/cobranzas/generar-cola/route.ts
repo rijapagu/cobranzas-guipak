@@ -10,6 +10,7 @@ import { obtenerSaldoAFavorPorCliente } from '@/lib/cobranzas/saldo-favor';
 import { empresaIdDeSesion, EMPRESA_GUIPAK } from '@/lib/tenant';
 import { adaptadorParaEmpresa } from '@/lib/erp';
 import { carteraCompatParaEmpresa } from '@/lib/erp/compat';
+import { configDeEmpresa } from '@/lib/empresas/config';
 
 /**
  * POST /api/cobranzas/generar-cola
@@ -108,6 +109,10 @@ export async function POST() {
     const facturasAGenerar = facturas.slice(0, 20);
     let generadas = 0;
 
+    // Identidad de la empresa para los mensajes generados por IA
+    // (nombre/alias/firma — Guipak por defecto, tenants desde empresas.config).
+    const { identidad } = await configDeEmpresa(empresaId);
+
     for (const f of facturasAGenerar) {
       // Determinar canal
       const tieneWa = !!f.telefono;
@@ -162,7 +167,7 @@ export async function POST() {
             segmento_riesgo: f.segmento_riesgo,
             tiene_pdf: f.tiene_pdf || false,
             url_pdf: f.url_pdf || null,
-          });
+          }, identidad);
           mensajeWa = wa.mensaje_wa;
         }
       } else {
@@ -180,7 +185,7 @@ export async function POST() {
           segmento_riesgo: f.segmento_riesgo,
           tiene_pdf: f.tiene_pdf || false,
           url_pdf: f.url_pdf || null,
-        });
+        }, identidad);
         asuntoEmail = mensajes.asunto_email;
         mensajeEmail = mensajes.mensaje_email;
         mensajeWa = mensajes.mensaje_wa;
