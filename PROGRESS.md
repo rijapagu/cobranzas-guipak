@@ -977,3 +977,38 @@ cola de aprobación. La regla de oro intacta: nada se envía sin aprobación.
   dominio/subpath, quitar fallback de chat personal en supervisor-*.
 - Etapa 4 (jobs multi-tenant): cadencias automáticas para tenants — hoy el
   tenant opera generando cola manualmente con un click.
+
+## Sesión 12-Junio-2026 (sesión 6) — Etapa 4 núcleo: automatización multi-tenant
+
+### Hecho (commits 4a3ab24, 81f0813, 2588778)
+- **Jobs de cobranza en loop sobre empresas activas** (un fallo por empresa
+  no detiene a las demás; sin ERP disponible o sin config → skip):
+  - **cadencias**: cartera via adaptador ERP, cadencias/plantillas/identidad
+    propias de cada empresa, estados/gestiones/tareas espejo por empresa_id.
+    Verificado en producción: el cron creó una gestión EMAIL PENDIENTE para
+    el tenant demo (segmento AMARILLO, mensaje IA sin "Guipak", tarea espejo).
+    Reporta errores por factura en stats para el operador del cron.
+  - **verificar-acuerdos**: saldo y recibos via adaptador (CSV: regla 1 con
+    el último snapshot; sin recibos no aplica la regla 2).
+  - **recordatorios-promesas** y **sin-respuesta**: queries/INSERTs por
+    empresa; nombres via adapter.clientes().
+- **Fix de ventana**: el adaptador ordena por mora DESC; con LIMIT 500 las
+  facturas tempranas de Guipak quedaban fuera → límite 5000 (cartera
+  completa; el trabajo por corrida lo acota MAX_PASOS_POR_RUN=30).
+  Efecto esperado: el primer run hizo backfill de fast-forwards y el equipo
+  Guipak verá algunos drafts más en cola (rango medio que la ventana vieja
+  no cubría) — todos PENDIENTES, regla de oro intacta.
+- **Etapa 3 cerrada**: fallback del chat personal eliminado en supervisor-*
+  (TELEGRAM_USER_RICARDO requerida; sin ella warn+skip) y portal con
+  branding del tenant (empresa.nombre desde la config, fallback Guipak).
+
+### Lo que queda (no programable o post-MVP, decisión de negocio)
+- Etapa 4 resto: respuesta-cliente/webhooks WhatsApp por instancia de tenant
+  (requiere mapping instancia→empresa cuando un tenant tenga su Evolution),
+  inteligencia/supervisor/telegram por tenant, colas con prioridad por plan.
+- Etapa 5 (DB dedicada): cuando un cliente premium la pague.
+- Etapa 6 (producto): facturación de planes, onboarding self-service, roles
+  superadmin — requieren decisiones de precio/pasarela.
+- Deuda menor: jobs Guipak-only (aplicar-anticipos, datos-faltantes,
+  inteligencia, empuje, supervisor, reporte-diario, bot Telegram) siguen
+  con softecQuery/empresa 1 explícito — greppeables, sin impacto multi-tenant.
