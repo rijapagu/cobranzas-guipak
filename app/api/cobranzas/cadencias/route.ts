@@ -29,7 +29,8 @@ export async function GET() {
 
   // Estadísticas del último run
   const ultimoRun = await cobranzasQuery<{ detalle: string; created_at: string }>(
-    "SELECT detalle, created_at FROM cobranza_logs WHERE accion='CADENCIAS_HORARIAS' ORDER BY created_at DESC LIMIT 1"
+    "SELECT detalle, created_at FROM cobranza_logs WHERE empresa_id = ? AND accion='CADENCIAS_HORARIAS' ORDER BY created_at DESC LIMIT 1",
+    [empresaIdDeSesion(session)]
   );
 
   return NextResponse.json({

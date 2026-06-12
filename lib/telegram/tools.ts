@@ -1544,7 +1544,7 @@ async function estadoCadencias(): Promise<ResultadoTool> {
 
   // Último run
   const ultimoRun = await cobranzasQuery<{ detalle: string; created_at: string }>(
-    "SELECT detalle, created_at FROM cobranza_logs WHERE accion='CADENCIAS_HORARIAS' ORDER BY created_at DESC LIMIT 1"
+    "SELECT detalle, created_at FROM cobranza_logs WHERE empresa_id = 1 AND accion='CADENCIAS_HORARIAS' ORDER BY created_at DESC LIMIT 1"
   );
 
   // Facturas con estado de cadencia registrado
@@ -1607,7 +1607,7 @@ async function consultarMemoriaCliente(codigoCliente: string): Promise<Resultado
     notas_daria: string | null;
     updated_at: string;
   }>(
-    'SELECT patron_pago, canal_efectivo, contacto_real, mejor_momento, notas_daria, updated_at FROM cobranza_memoria_cliente WHERE codigo_cliente = ?',
+    'SELECT patron_pago, canal_efectivo, contacto_real, mejor_momento, notas_daria, updated_at FROM cobranza_memoria_cliente WHERE empresa_id = 1 AND codigo_cliente = ?',
     [codigo]
   );
 
@@ -1649,21 +1649,21 @@ async function guardarMemoriaCliente(
   campos.actualizado_por = actualizadoPor;
 
   const existente = await cobranzasQuery<{ id: number }>(
-    'SELECT id FROM cobranza_memoria_cliente WHERE codigo_cliente = ?',
+    'SELECT id FROM cobranza_memoria_cliente WHERE empresa_id = 1 AND codigo_cliente = ?',
     [codigo]
   );
 
   if (existente.length > 0) {
     const sets = Object.keys(campos).map((k) => `\`${k}\` = ?`).join(', ');
     await cobranzasExecute(
-      `UPDATE cobranza_memoria_cliente SET ${sets} WHERE codigo_cliente = ?`,
+      `UPDATE cobranza_memoria_cliente SET ${sets} WHERE empresa_id = 1 AND codigo_cliente = ?`,
       [...Object.values(campos), codigo]
     );
   } else {
     const colsExtra = Object.keys(campos).map((k) => `\`${k}\``).join(', ');
     const vals = Object.values(campos);
     await cobranzasExecute(
-      `INSERT INTO cobranza_memoria_cliente (codigo_cliente, ${colsExtra}) VALUES (?, ${vals.map(() => '?').join(', ')})`,
+      `INSERT INTO cobranza_memoria_cliente (empresa_id, codigo_cliente, ${colsExtra}) VALUES (1, ?, ${vals.map(() => '?').join(', ')})`,
       [codigo, ...vals]
     );
   }

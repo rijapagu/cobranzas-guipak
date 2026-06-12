@@ -17,7 +17,7 @@ export async function resolverUsuarioTelegram(
   telegramUserId: number
 ): Promise<TelegramUserAuth | null> {
   const rows = await cobranzasQuery<TelegramUserAuth>(
-    'SELECT id, telegram_user_id, telegram_username, usuario_id, rol, activo FROM cobranza_telegram_usuarios WHERE telegram_user_id = ? AND activo = 1 LIMIT 1',
+    'SELECT id, telegram_user_id, telegram_username, usuario_id, rol, activo FROM cobranza_telegram_usuarios WHERE empresa_id = 1 AND telegram_user_id = ? AND activo = 1 LIMIT 1',
     [telegramUserId]
   );
   return rows[0] || null;

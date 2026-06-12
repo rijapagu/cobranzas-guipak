@@ -185,7 +185,8 @@ export async function ejecutarSupervisorAlertas(): Promise<SupervisorAlertasStat
   const recientes = await cobranzasQuery<{ codigo_cliente: string; last_score: number }>(
     `SELECT codigo_cliente, MAX(score_nuevo) AS last_score
      FROM cobranza_supervisor_alertas
-     WHERE tipo = 'TOP10_CRUZA_UMBRAL'
+     WHERE empresa_id = 1
+       AND tipo = 'TOP10_CRUZA_UMBRAL'
        AND created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)
        AND codigo_cliente IN (${placeholders})
      GROUP BY codigo_cliente`,
@@ -271,13 +272,13 @@ export async function ejecutarSupervisorAlertas(): Promise<SupervisorAlertasStat
       // Auditoría
       await cobranzasExecute(
         `INSERT INTO cobranza_supervisor_alertas (
-           tipo, origen_ref, codigo_cliente, nombre_cliente,
+           empresa_id, tipo, origen_ref, codigo_cliente, nombre_cliente,
            risk_level, score_anterior, score_nuevo, saldo_neto,
            descripcion, recomendacion, modelo_response,
            model_used, latency_ms, cost_usd,
            telegram_message_id, notified_at
          ) VALUES (
-           'TOP10_CRUZA_UMBRAL', ?, ?, ?,
+           1, 'TOP10_CRUZA_UMBRAL', ?, ?, ?,
            ?, ?, ?, ?,
            ?, ?, ?,
            ?, ?, 0,

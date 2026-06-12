@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth/session';
 import { cobranzasQuery, cobranzasExecute, logAccion } from '@/lib/db/cobranzas';
+import { empresaIdDeSesion } from '@/lib/tenant';
 import crypto from 'crypto';
 
 /**
@@ -32,16 +33,17 @@ export async function POST(request: NextRequest) {
     expiracion.setDate(expiracion.getDate() + 30);
 
     // Desactivar tokens previos del mismo cliente
+    const empresaId = empresaIdDeSesion(session);
     await cobranzasExecute(
-      'UPDATE cobranza_portal_tokens SET activo = 0 WHERE codigo_cliente = ? AND activo = 1',
-      [codigo_cliente]
+      'UPDATE cobranza_portal_tokens SET activo = 0 WHERE codigo_cliente = ? AND empresa_id = ? AND activo = 1',
+      [codigo_cliente, empresaId]
     );
 
     // Insertar nuevo token
     const result = await cobranzasExecute(
-      `INSERT INTO cobranza_portal_tokens (codigo_cliente, token, fecha_expiracion, activo)
-       VALUES (?, ?, ?, 1)`,
-      [codigo_cliente, token, expiracion]
+      `INSERT INTO cobranza_portal_tokens (empresa_id, codigo_cliente, token, fecha_expiracion, activo)
+       VALUES (?, ?, ?, ?, 1)`,
+      [empresaId, codigo_cliente, token, expiracion]
     );
 
     const baseUrl = process.env.NEXTAUTH_URL || 'https://cobros.sguipak.com';
@@ -87,10 +89,10 @@ export async function GET(request: NextRequest) {
   }>(
     `SELECT id, token, fecha_expiracion, activo, ultimo_acceso, created_at
      FROM cobranza_portal_tokens
-     WHERE codigo_cliente = ?
+     WHERE codigo_cliente = ? AND empresa_id = ?
      ORDER BY created_at DESC
      LIMIT 5`,
-    [codigo]
+    [codigo, empresaIdDeSesion(session)]
   );
 
   return NextResponse.json({ tokens });

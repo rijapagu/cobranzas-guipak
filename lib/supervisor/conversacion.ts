@@ -131,6 +131,7 @@ async function construirContexto(pregunta: string): Promise<string> {
   const alertas = await cobranzasQuery<AlertaRow>(
     `SELECT tipo, nombre_cliente, risk_level, LEFT(recomendacion, 220) AS reco, created_at
      FROM cobranza_supervisor_alertas
+     WHERE empresa_id = 1
      ORDER BY created_at DESC
      LIMIT 5`
   );

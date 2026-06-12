@@ -193,13 +193,13 @@ export async function ejecutarSupervisorLote(): Promise<SupervisorLoteStats> {
     try {
       await cobranzasExecute(
         `INSERT INTO cobranza_supervisor_alertas (
-           tipo, origen_ref, codigo_cliente, nombre_cliente,
+           empresa_id, tipo, origen_ref, codigo_cliente, nombre_cliente,
            risk_level, score_anterior, score_nuevo, saldo_neto,
            descripcion, recomendacion, modelo_response,
            model_used, latency_ms, cost_usd,
            telegram_message_id, notified_at
          ) VALUES (
-           'LOTE_COBRANZA_DIRIGIDO', ?, ?, ?,
+           1, 'LOTE_COBRANZA_DIRIGIDO', ?, ?, ?,
            ?, NULL, 0, ?,
            ?, ?, NULL,
            ?, ?, 0,

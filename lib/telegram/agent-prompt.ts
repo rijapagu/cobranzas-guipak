@@ -11,6 +11,7 @@
  */
 
 import { getConfig } from '@/lib/db/configuracion';
+import { EMPRESA_GUIPAK } from '@/lib/tenant';
 import type { SesionChat } from './session';
 
 export const MAX_TURNS = 8;
@@ -243,7 +244,7 @@ export async function buildSystemPrompt(
   try {
     const custom = getCustomPrompt
       ? await getCustomPrompt()
-      : await getConfig('prompt_agente');
+      : await getConfig('prompt_agente', EMPRESA_GUIPAK);
     if (custom && custom.trim().length > 10) {
       promptPersonalizable = custom.trim();
     }

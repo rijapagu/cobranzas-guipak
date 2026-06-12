@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth/session';
 import { getConfig, setConfig } from '@/lib/db/configuracion';
 import { logAccion } from '@/lib/db/cobranzas';
+import { empresaIdDeSesion } from '@/lib/tenant';
 
 const CLAVE = 'prompt_agente';
 
@@ -12,7 +13,7 @@ export async function GET() {
   }
 
   try {
-    const prompt = await getConfig(CLAVE);
+    const prompt = await getConfig(CLAVE, empresaIdDeSesion(session));
     return NextResponse.json({ prompt });
   } catch {
     return NextResponse.json({ prompt: null });
@@ -31,7 +32,7 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: 'El prompt debe tener al menos 10 caracteres' }, { status: 400 });
     }
 
-    await setConfig(CLAVE, prompt.trim(), 'Prompt del agente IA (system prompt)', session.email);
+    await setConfig(CLAVE, prompt.trim(), 'Prompt del agente IA (system prompt)', session.email, empresaIdDeSesion(session));
     await logAccion(session.email, 'PROMPT_AGENTE_ACTUALIZADO', 'config', CLAVE, {
       longitud: prompt.trim().length,
     });

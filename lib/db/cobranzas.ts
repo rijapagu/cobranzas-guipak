@@ -58,11 +58,13 @@ export async function logAccion(
   entidad: string,
   entidadId: string,
   detalle: Record<string, unknown>,
-  ip?: string
+  ip?: string,
+  empresaId?: number
 ): Promise<void> {
+  // empresaId opcional: los flujos legacy y Guipak caen al DEFAULT 1 de la columna.
   await pool.execute(
-    'INSERT INTO cobranza_logs (usuario_id, accion, entidad, entidad_id, detalle, ip) VALUES (?, ?, ?, ?, ?, ?)',
-    [usuarioId, accion, entidad, entidadId, JSON.stringify(detalle), ip || null]
+    'INSERT INTO cobranza_logs (empresa_id, usuario_id, accion, entidad, entidad_id, detalle, ip) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    [empresaId ?? 1, usuarioId, accion, entidad, entidadId, JSON.stringify(detalle), ip || null]
   );
 }
 

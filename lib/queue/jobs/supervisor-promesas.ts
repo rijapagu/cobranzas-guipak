@@ -156,7 +156,8 @@ export async function ejecutarSupervisorPromesas(): Promise<SupervisorPromesasSt
   const yaAlertadas = await cobranzasQuery<{ origen_ref: string }>(
     `SELECT origen_ref
      FROM cobranza_supervisor_alertas
-     WHERE tipo = 'PROMESA_GRANDE_INCUMPLIDA'
+     WHERE empresa_id = 1
+       AND tipo = 'PROMESA_GRANDE_INCUMPLIDA'
        AND created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)
        AND origen_ref IN (${placeholders})`,
     [cooldownDays, ...refs]
@@ -232,13 +233,13 @@ export async function ejecutarSupervisorPromesas(): Promise<SupervisorPromesasSt
 
       await cobranzasExecute(
         `INSERT INTO cobranza_supervisor_alertas (
-           tipo, origen_ref, codigo_cliente, nombre_cliente,
+           empresa_id, tipo, origen_ref, codigo_cliente, nombre_cliente,
            risk_level, score_anterior, score_nuevo, saldo_neto,
            descripcion, recomendacion, modelo_response,
            model_used, latency_ms, cost_usd,
            telegram_message_id, notified_at
          ) VALUES (
-           'PROMESA_GRANDE_INCUMPLIDA', ?, ?, ?,
+           1, 'PROMESA_GRANDE_INCUMPLIDA', ?, ?, ?,
            ?, NULL, ?, ?,
            ?, ?, ?,
            ?, ?, 0,

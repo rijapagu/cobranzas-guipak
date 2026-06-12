@@ -233,7 +233,7 @@ export async function proponerCorreoCliente(
 
   // 6. Contacto para saludo (memoria si existe, luego Softec IC_CONTACT, luego nombre empresa)
   const memoriaRows = await cobranzasQuery<{ contacto_real: string | null }>(
-    'SELECT contacto_real FROM cobranza_memoria_cliente WHERE codigo_cliente = ?',
+    'SELECT contacto_real FROM cobranza_memoria_cliente WHERE empresa_id = 1 AND codigo_cliente = ?',
     [codigoCliente]
   );
   const contactoNombre =

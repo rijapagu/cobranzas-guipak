@@ -12,7 +12,7 @@ export async function guardarMensaje(
   contenido: string
 ): Promise<void> {
   await cobranzasExecute(
-    'INSERT INTO cobranza_telegram_historial (chat_id, telegram_user_id, rol, contenido) VALUES (?, ?, ?, ?)',
+    'INSERT INTO cobranza_telegram_historial (empresa_id, chat_id, telegram_user_id, rol, contenido) VALUES (1, ?, ?, ?, ?)',
     [chatId, telegramUserId, rol, contenido]
   );
 }
@@ -23,7 +23,7 @@ export async function cargarHistorial(chatId: number, limite = 30): Promise<Mens
     `SELECT rol, contenido FROM (
        SELECT rol, contenido, created_at
          FROM cobranza_telegram_historial
-        WHERE chat_id = ?
+        WHERE empresa_id = 1 AND chat_id = ?
         ORDER BY created_at DESC
         LIMIT ?
      ) sub ORDER BY created_at ASC`,
@@ -39,7 +39,7 @@ export async function cargarMemoriaEquipo(
   telegramUserId: number
 ): Promise<{ clave: string; valor: string }[]> {
   return cobranzasQuery<{ clave: string; valor: string }>(
-    'SELECT clave, valor FROM cobranza_telegram_memoria_equipo WHERE telegram_user_id = ? ORDER BY updated_at DESC',
+    'SELECT clave, valor FROM cobranza_telegram_memoria_equipo WHERE empresa_id = 1 AND telegram_user_id = ? ORDER BY updated_at DESC',
     [telegramUserId]
   );
 }
@@ -50,8 +50,8 @@ export async function guardarMemoriaEquipo(
   valor: string
 ): Promise<void> {
   await cobranzasExecute(
-    `INSERT INTO cobranza_telegram_memoria_equipo (telegram_user_id, clave, valor)
-     VALUES (?, ?, ?)
+    `INSERT INTO cobranza_telegram_memoria_equipo (empresa_id, telegram_user_id, clave, valor)
+     VALUES (1, ?, ?, ?)
      ON DUPLICATE KEY UPDATE valor = VALUES(valor), updated_at = NOW()`,
     [telegramUserId, clave, valor]
   );
