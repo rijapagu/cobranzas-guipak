@@ -6,7 +6,8 @@
  * — cero cambio de comportamiento para el sistema actual.
  *
  * Los secretos (password SMTP, apikey Evolution) se cifran con AES-256-GCM
- * antes de persistir. Clave: CONFIG_CIPHER_KEY (fallback NEXTAUTH_SECRET).
+ * antes de persistir. Clave: CONFIG_CIPHER_KEY (fallback JWT_SECRET, que es
+ * el secreto que la app ya exige en producción).
  */
 
 import crypto from 'crypto';
@@ -52,8 +53,8 @@ export interface EmpresaConfig {
 const PREFIJO_CIFRADO = 'enc:v1:';
 
 function claveCifrado(): Buffer {
-  const secreto = process.env.CONFIG_CIPHER_KEY || process.env.NEXTAUTH_SECRET;
-  if (!secreto) throw new Error('Falta CONFIG_CIPHER_KEY / NEXTAUTH_SECRET para cifrar config');
+  const secreto = process.env.CONFIG_CIPHER_KEY || process.env.JWT_SECRET;
+  if (!secreto) throw new Error('Falta CONFIG_CIPHER_KEY / JWT_SECRET para cifrar config');
   return crypto.createHash('sha256').update(secreto).digest();
 }
 
