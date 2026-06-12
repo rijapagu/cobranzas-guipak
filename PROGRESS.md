@@ -910,3 +910,29 @@ cola de aprobación. La regla de oro intacta: nada se envía sin aprobación.
 - Link de navegación a importar-cartera (hoy solo por URL; encaja con la
   Etapa 3 cuando haya configuración por empresa visible en la UI).
 - Envío real para tenants CSV depende de Etapa 3 (SMTP/WhatsApp por empresa).
+
+## Sesión 12-Junio-2026 (sesión 4) — Etapa 2: refactor adaptador ERP completado
+
+### Hecho (commit 1af6a93, -99 líneas netas)
+- **Toda la superficie multi-tenant de sesión consume lib/erp**: la query de
+  cartera Softec (duplicada en 4 rutas) ahora vive SOLO en
+  softecAdapter.carteraPendiente (campos completos + último pago opcional);
+  Guipak pasa por el mismo camino compat que los tenants CSV.
+- Adaptador ampliado: `factura()` (incluye pagadas — disputas), `pagosFactura()`,
+  `clientes()` con email general vs email CxP separados, opciones
+  `soloVencidas` / `codigoCliente` / `incluirUltimoPago`.
+- Rutas migradas: cartera-vencida, generar-cola, resumen-segmentos, dashboard,
+  clientes, estado-cuenta x2, reportes excel x2, portal (ahora sirve a tenants
+  CSV), disputas x2, documentos/enviar, gestiones/enviar (CP-06 via
+  saldoFactura), alertas (sin-gestión ahora también CSV), verificar-depositos.
+- **Frontend sin IJ_/IC_**: disputas/page.tsx + su API al modelo canónico
+  (era el único archivo de frontend con nombres Softec).
+- Quedan documentadas 2 queries especializadas solo-Guipak en dashboard
+  (DSO y conteo exacto de sin-contacto) y el cron scan-drive (Etapa 4).
+  Los jobs/bot (lib/) siguen en softecQuery a propósito hasta la Etapa 4.
+- Cambios de comportamiento conscientes: la página de cartera de tenants CSV
+  muestra solo vencidas (paridad Guipak); el saludo de generar-cola usa el
+  nombre del contacto (IC_CONTACT) en vez del email CxP (IC_ARCONTC).
+- Test de aislamiento actualizado: el invariante ya no es "todo vacío" sino
+  "solo datos propios" (códigos CLI-* y montos < 1M). Ambos tests de
+  regresión en verde contra producción.

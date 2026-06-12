@@ -1,11 +1,14 @@
 /**
- * Test de aislamiento multi-tenant (Fase 3 Etapa 1).
+ * Test de aislamiento multi-tenant (Fase 3).
  *
  * Hace login con el usuario de la empresa 2 de prueba (migración 032) y
- * verifica que los endpoints principales devuelven CERO datos de Guipak.
+ * verifica que los endpoints solo muestran DATOS PROPIOS de la empresa 2:
+ * sus clientes de prueba usan códigos CLI-* (cartera CSV importada por
+ * scripts/test-importar-cartera-empresa2.mjs) — cualquier código distinto
+ * o un monto del tamaño de la cartera Guipak es una fuga.
  *
- * Uso: node scripts/test-aislamiento-empresa2.mjs [base_url]
- *      (password del usuario de prueba via env TEST_EMPRESA2_PASS)
+ * Uso: TEST_EMPRESA2_PASS=<pass> node scripts/test-aislamiento-empresa2.mjs [base_url]
+ * Ojo: rate limit de login 10 intentos / 15 min por IP.
  */
 
 const BASE = process.argv[2] || 'https://cobros.sguipak.com';
@@ -17,6 +20,9 @@ if (!PASS) {
   process.exit(1);
 }
 
+// Los datos de prueba de la empresa 2 usan este prefijo de cliente.
+const esPropio = (codigo) => typeof codigo === 'string' && codigo.startsWith('CLI-');
+
 const login = await fetch(`${BASE}/api/auth/login`, {
   method: 'POST',
   headers: { 'content-type': 'application/json' },
@@ -27,64 +33,62 @@ if (!login.ok) {
   process.exit(1);
 }
 const cookie = login.headers.get('set-cookie')?.split(';')[0];
-console.log('login OK como', EMAIL, '→ cookie', cookie?.split('=')[0]);
+console.log('login OK como', EMAIL);
 
-// endpoint → función que extrae los registros visibles de la respuesta
+// endpoint → { extraer filas, campo con el código de cliente }
 const CHECKS = {
-  '/api/cobranzas/tareas': (j) => j.tareas,
-  '/api/cobranzas/cola-aprobacion': (j) => j.gestiones,
-  '/api/cobranzas/conversaciones': (j) => j.conversaciones ?? j.mensajes ?? j.items,
-  '/api/cobranzas/disputas': (j) => j.disputas,
-  '/api/cobranzas/documentos': (j) => j.documentos,
-  '/api/cobranzas/plantillas': (j) => j.plantillas,
-  '/api/cobranzas/cadencias': (j) => j.cadencias,
-  '/api/cobranzas/clientes': (j) => j.clientes,
-  '/api/conciliacion/resultados': (j) => j.entradas,
-  '/api/softec/cartera-vencida': (j) => j.facturas,
-  '/api/softec/resumen-segmentos': (j) => j.segmentos,
-  '/api/cobranzas/alertas': (j) => j.alertas,
+  '/api/cobranzas/tareas': { rows: (j) => j.tareas, codigo: 'codigo_cliente' },
+  '/api/cobranzas/cola-aprobacion': { rows: (j) => j.gestiones, codigo: 'codigo_cliente' },
+  '/api/cobranzas/conversaciones': { rows: (j) => j.conversaciones, codigo: 'codigo_cliente' },
+  '/api/cobranzas/disputas': { rows: (j) => j.disputas, codigo: 'codigo_cliente' },
+  '/api/cobranzas/documentos': { rows: (j) => j.documentos, codigo: 'codigo_cliente' },
+  '/api/cobranzas/plantillas': { rows: (j) => j.plantillas, codigo: null },
+  '/api/cobranzas/cadencias': { rows: (j) => j.cadencias, codigo: null },
+  '/api/cobranzas/clientes': { rows: (j) => j.clientes, codigo: 'codigo_cliente' },
+  '/api/conciliacion/resultados': { rows: (j) => j.entradas, codigo: 'codigo_cliente' },
+  '/api/softec/cartera-vencida': { rows: (j) => j.facturas, codigo: 'codigo_cliente' },
+  '/api/cobranzas/alertas': { rows: (j) => j.alertas, codigo: 'codigo_cliente' },
 };
 
-// El dashboard no devuelve lista: verificar que los KPIs estén en cero.
-async function checkDashboard(cookie) {
-  const r = await fetch(`${BASE}/api/cobranzas/dashboard`, { headers: { cookie } });
-  const j = await r.json();
-  const sospechosos = ['cartera_total', 'total_facturas', 'total_clientes', 'gestiones_hoy'];
-  const conDatos = sospechosos.filter((k) => Number(j[k]) > 0);
-  if (conDatos.length === 0) {
-    console.log('OK    /api/cobranzas/dashboard → KPIs en cero');
-    return 0;
-  }
-  console.log(`LEAK  /api/cobranzas/dashboard → KPIs con datos Guipak: ${conDatos.join(', ')}`);
-  return 1;
-}
-
 let fallos = 0;
-for (const [path, extraer] of Object.entries(CHECKS)) {
+const check = (cond, msg) => {
+  console.log(cond ? `OK    ${msg}` : `FALLO ${msg}`);
+  if (!cond) fallos++;
+};
+
+for (const [path, cfg] of Object.entries(CHECKS)) {
   try {
     const r = await fetch(`${BASE}${path}`, { headers: { cookie } });
-    if (r.status === 404) {
-      console.log(`SKIP  ${path} (404 — ruta no existe con ese nombre)`);
+    const j = await r.json().catch(() => ({}));
+    const rows = cfg.rows(j);
+    if (!Array.isArray(rows)) {
+      console.log(`WARN  ${path} → status ${r.status}, sin lista reconocible:`, JSON.stringify(j).slice(0, 150));
+      fallos++;
       continue;
     }
-    const j = await r.json().catch(() => ({}));
-    const rows = extraer(j);
-    const n = Array.isArray(rows) ? rows.length : null;
-    if (n === 0) {
-      console.log(`OK    ${path} → 0 registros`);
-    } else if (n === null) {
-      console.log(`WARN  ${path} → status ${r.status}, sin lista reconocible:`, JSON.stringify(j).slice(0, 200));
-    } else {
-      console.log(`LEAK  ${path} → ${n} registros visibles para empresa 2 !!`);
-      fallos++;
-    }
+    const ajenos = cfg.codigo
+      ? rows.filter((x) => x[cfg.codigo] != null && !esPropio(String(x[cfg.codigo]).trim()))
+      : [];
+    check(
+      ajenos.length === 0,
+      `${path} → ${rows.length} registro(s), ${ajenos.length} ajeno(s)${ajenos[0] ? ` (ej: ${ajenos[0][cfg.codigo]})` : ''}`
+    );
   } catch (e) {
     console.log(`ERROR ${path}:`, e.message);
     fallos++;
   }
 }
 
-fallos += await checkDashboard(cookie);
+// Resumen de segmentos: el total debe ser el de la cartera de prueba (~miles),
+// jamás del orden de la cartera Guipak (decenas de millones).
+const seg = await (await fetch(`${BASE}/api/softec/resumen-segmentos`, { headers: { cookie } })).json();
+check(Number(seg.total_cartera) < 1_000_000, `segmentos: total_cartera ${seg.total_cartera} es de la empresa 2 (< 1M)`);
+
+// Dashboard: KPIs del tamaño de la cartera de prueba + top clientes propios.
+const dash = await (await fetch(`${BASE}/api/cobranzas/dashboard?refresh=1`, { headers: { cookie } })).json();
+check(Number(dash.cartera_total) < 1_000_000, `dashboard: cartera_total ${dash.cartera_total} es de la empresa 2 (< 1M)`);
+const topAjenos = (dash.top_clientes || []).filter((c) => !esPropio(String(c.codigo)));
+check(topAjenos.length === 0, `dashboard: top_clientes sin códigos ajenos (${topAjenos.length})`);
 
 console.log(fallos === 0 ? '\nAISLAMIENTO OK' : `\n${fallos} FUGAS DETECTADAS`);
 process.exit(fallos === 0 ? 0 : 1);
