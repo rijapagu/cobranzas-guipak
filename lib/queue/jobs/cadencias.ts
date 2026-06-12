@@ -136,10 +136,13 @@ async function ejecutarCadenciasEmpresa(
   if (cadencias.length === 0) return null;
 
   // Cartera pendiente desde el adaptador ERP (incluye preventivo VERDE),
-  // en orden ascendente de mora como el flujo original.
+  // en orden ascendente de mora como el flujo original. Límite amplio: el
+  // adaptador ordena por mora DESC y un límite corto dejaría fuera a las
+  // facturas tempranas (VERDE/AMARILLO); el trabajo real por corrida lo
+  // acota MAX_PASOS_POR_RUN.
   const cartera = await adapter.carteraPendiente({
     incluirPorVencerDias: DIAS_PREVENTIVO,
-    limite: 500,
+    limite: 5000,
   });
   const facturas: FacturaVencida[] = cartera
     .map((f) => ({
