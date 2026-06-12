@@ -1,13 +1,14 @@
 /**
  * Verificación de acuerdos de pago — resuelve PENDIENTE → CUMPLIDO/INCUMPLIDO.
- *
- * Hasta ahora ningún código escribía estos estados: los KPIs de acuerdos
- * siempre daban 0 y el scoring asumía 100% de cumplimiento de promesas.
+ * Multi-tenant desde Fase 3 Etapa 4: corre por cada empresa activa con ERP
+ * disponible, usando su adaptador (Softec en vivo o snapshot CSV).
  *
  * Reglas (por acuerdo PENDIENTE con fecha_prometida <= hoy):
- *   1. Si la factura del acuerdo ya no tiene saldo en Softec → CUMPLIDO.
+ *   1. Si la factura del acuerdo ya no tiene saldo en el ERP → CUMPLIDO.
  *   2. Si los recibos (RC) del cliente entre la fecha del acuerdo y
  *      fecha_prometida + GRACIA suman >= monto_prometido → CUMPLIDO.
+ *      (En modo CSV no hay recibos: aplica solo la regla 1 — el saldo del
+ *      último snapshot importado.)
  *   3. Si ya pasó fecha_prometida + GRACIA días sin pago → INCUMPLIDO.
  *   4. Dentro del período de gracia → sigue PENDIENTE (se reevalúa mañana).
  *
@@ -17,7 +18,7 @@
  */
 
 import { cobranzasQuery, cobranzasExecute, logAccion } from '@/lib/db/cobranzas';
-import { softecQuery, testSoftecConnection } from '@/lib/db/softec';
+import { adaptadorParaEmpresa } from '@/lib/erp';
 import { toYmd, addDiasYmd } from '@/lib/utils/fechas';
 
 const DIAS_GRACIA = 3;
@@ -32,6 +33,7 @@ interface AcuerdoPendiente {
 }
 
 export interface StatsVerificacionAcuerdos {
+  empresas: number;
   evaluados: number;
   cumplidos: number;
   incumplidos: number;
@@ -40,7 +42,8 @@ export interface StatsVerificacionAcuerdos {
 }
 
 export async function verificarAcuerdos(): Promise<StatsVerificacionAcuerdos> {
-  const stats: StatsVerificacionAcuerdos = {
+  const total: StatsVerificacionAcuerdos = {
+    empresas: 0,
     evaluados: 0,
     cumplidos: 0,
     incumplidos: 0,
@@ -48,20 +51,52 @@ export async function verificarAcuerdos(): Promise<StatsVerificacionAcuerdos> {
     errores: 0,
   };
 
-  const softecOk = await testSoftecConnection();
-  if (!softecOk) {
-    console.warn('[verificar-acuerdos] Softec no disponible — se pospone la verificación');
-    return stats;
+  const empresas = await cobranzasQuery<{ id: number }>(
+    'SELECT id FROM empresas WHERE activa = 1 ORDER BY id'
+  );
+
+  for (const { id: empresaId } of empresas) {
+    try {
+      const stats = await verificarAcuerdosEmpresa(empresaId);
+      if (stats === null) continue;
+      total.empresas++;
+      total.evaluados += stats.evaluados;
+      total.cumplidos += stats.cumplidos;
+      total.incumplidos += stats.incumplidos;
+      total.en_gracia += stats.en_gracia;
+      total.errores += stats.errores;
+    } catch (err) {
+      console.error(`[verificar-acuerdos] Error en empresa ${empresaId}:`, err);
+    }
   }
+
+  console.log(
+    `[verificar-acuerdos] ${total.empresas} empresas | ${total.evaluados} evaluados — ${total.cumplidos} cumplidos, ${total.incumplidos} incumplidos, ${total.en_gracia} en gracia`
+  );
+
+  return total;
+}
+
+async function verificarAcuerdosEmpresa(
+  empresaId: number
+): Promise<Omit<StatsVerificacionAcuerdos, 'empresas'> | null> {
+  const stats = { evaluados: 0, cumplidos: 0, incumplidos: 0, en_gracia: 0, errores: 0 };
 
   const acuerdos = await cobranzasQuery<AcuerdoPendiente>(
     `SELECT id, codigo_cliente, ij_inum, monto_prometido, fecha_prometida, created_at
      FROM cobranza_acuerdos
-     WHERE empresa_id = 1 AND estado = 'PENDIENTE' AND fecha_prometida <= CURDATE()`
+     WHERE empresa_id = ? AND estado = 'PENDIENTE' AND fecha_prometida <= CURDATE()`,
+    [empresaId]
   );
 
   stats.evaluados = acuerdos.length;
   if (acuerdos.length === 0) return stats;
+
+  const adapter = await adaptadorParaEmpresa(empresaId);
+  if (!(await adapter.disponible())) {
+    console.warn(`[verificar-acuerdos] Empresa ${empresaId}: ERP no disponible — se pospone`);
+    return null;
+  }
 
   const hoy = toYmd(new Date());
 
@@ -73,37 +108,32 @@ export async function verificarAcuerdos(): Promise<StatsVerificacionAcuerdos> {
       const finGracia = addDiasYmd(fechaPrometida, DIAS_GRACIA);
       const montoPrometido = Number(acuerdo.monto_prometido) || 0;
 
-      // 1. ¿La factura del acuerdo ya quedó saldada?
+      // 1. ¿La factura del acuerdo ya quedó saldada en el ERP?
       let cumplido = false;
       let fechaPago: string | null = null;
       let montoPagado: number | null = null;
 
       if (acuerdo.ij_inum > 0) {
-        const factura = await softecQuery<{ saldo: number }>(
-          `SELECT (IJ_TOT - IJ_TOTAPPL) AS saldo FROM v_cobr_ijnl
-           WHERE IJ_INUM = ? AND IJ_TYPEDOC = 'IN' AND IJ_INVTORF = 'T' LIMIT 1`,
-          [acuerdo.ij_inum]
-        );
-        if (factura.length > 0 && Number(factura[0].saldo) <= 0) {
+        const saldo = await adapter.saldoFactura(acuerdo.ij_inum);
+        if (saldo !== null && saldo <= 0) {
           cumplido = true;
         }
       }
 
       // 2. ¿Los recibos del cliente en la ventana cubren lo prometido?
+      // (recibosEnRango devuelve [] en orígenes sin historial de pagos.)
       if (!cumplido && montoPrometido > 0) {
-        const recibos = await softecQuery<{ total: number; ultima_fecha: string | Date }>(
-          `SELECT SUM(IJ_TOT) AS total, MAX(IJ_DATE) AS ultima_fecha
-           FROM v_cobr_ijnl_pay
-           WHERE IJ_SINORIN = 'RC'
-             AND TRIM(IJ_CCODE) = ?
-             AND IJ_DATE BETWEEN ? AND ?`,
-          [codigo, fechaAcuerdo, finGracia]
-        );
-        const totalPagado = Number(recibos[0]?.total) || 0;
+        const recibos = (await adapter.recibosEnRango(fechaAcuerdo, finGracia))
+          .filter((r) => r.codigoCliente === codigo);
+        const totalPagado = recibos.reduce((s, r) => s + r.monto, 0);
         // Tolerancia de RD$1 por redondeos
         if (totalPagado >= montoPrometido - 1) {
           cumplido = true;
-          fechaPago = recibos[0]?.ultima_fecha ? toYmd(recibos[0].ultima_fecha) : null;
+          const ultima = recibos.reduce<string | null>(
+            (max, r) => (max === null || r.fecha > max ? r.fecha : max),
+            null
+          );
+          fechaPago = ultima;
           montoPagado = totalPagado;
         }
       }
@@ -121,9 +151,9 @@ export async function verificarAcuerdos(): Promise<StatsVerificacionAcuerdos> {
         await cobranzasExecute(
           `UPDATE cobranza_tareas
            SET estado = 'HECHA', completada_at = NOW(), completada_por = 'sistema-acuerdos',
-               notas_completado = 'Acuerdo cumplido: pago verificado en Softec'
-           WHERE empresa_id = 1 AND origen = 'ACUERDO_PAGO' AND origen_ref = ? AND estado IN ('PENDIENTE','EN_PROGRESO')`,
-          [`acuerdo:${acuerdo.id}`]
+               notas_completado = 'Acuerdo cumplido: pago verificado en el ERP'
+           WHERE empresa_id = ? AND origen = 'ACUERDO_PAGO' AND origen_ref = ? AND estado IN ('PENDIENTE','EN_PROGRESO')`,
+          [empresaId, `acuerdo:${acuerdo.id}`]
         ).catch(() => {});
         continue;
       }
@@ -143,7 +173,7 @@ export async function verificarAcuerdos(): Promise<StatsVerificacionAcuerdos> {
       stats.en_gracia++;
     } catch (err) {
       stats.errores++;
-      console.error(`[verificar-acuerdos] Error en acuerdo ${acuerdo.id}:`, err);
+      console.error(`[verificar-acuerdos] Empresa ${empresaId}, error en acuerdo ${acuerdo.id}:`, err);
     }
   }
 
@@ -154,11 +184,11 @@ export async function verificarAcuerdos(): Promise<StatsVerificacionAcuerdos> {
       incumplidos: stats.incumplidos,
       en_gracia: stats.en_gracia,
       errores: stats.errores,
-    }).catch(() => {});
+    }, undefined, empresaId).catch(() => {});
   }
 
   console.log(
-    `[verificar-acuerdos] ${stats.evaluados} evaluados — ${stats.cumplidos} cumplidos, ${stats.incumplidos} incumplidos, ${stats.en_gracia} en gracia`
+    `[verificar-acuerdos] Empresa ${empresaId}: ${stats.evaluados} evaluados — ${stats.cumplidos} cumplidos, ${stats.incumplidos} incumplidos, ${stats.en_gracia} en gracia`
   );
 
   return stats;

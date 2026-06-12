@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { cobranzasQuery, cobranzasExecute } from '@/lib/db/cobranzas';
 import { EMPRESA_GUIPAK } from '@/lib/tenant';
 import { adaptadorParaEmpresa } from '@/lib/erp';
+import { configDeEmpresa } from '@/lib/empresas/config';
 import { obtenerSaldoAFavorPorCliente, ajustarSaldoCliente } from '@/lib/cobranzas/saldo-favor';
 import { getMockCartera } from '@/lib/mock/cartera-mock';
 import { rateLimit, ipDeRequest } from '@/lib/auth/rate-limit';
@@ -180,7 +181,13 @@ export async function GET(
         `Tu saldo neto a pagar es RD$${ajuste.saldo_neto.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}.`;
     }
 
+    // Branding del portal: el nombre de la empresa dueña del token.
+    const { identidad } = await configDeEmpresa(empresaPortal);
+
     return NextResponse.json({
+      empresa: {
+        nombre: identidad.nombre,
+      },
       cliente: {
         codigo: codigoCliente,
         nombre: nombreCliente,

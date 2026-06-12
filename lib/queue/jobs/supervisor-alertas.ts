@@ -21,7 +21,7 @@
  *   SUPERVISOR_DELTA_SCORE   default 15.    Salto de score que cuenta como "cruce".
  *   SUPERVISOR_COOLDOWN_DAYS default 7.     No re-alertar mismo cliente/tipo en N días...
  *   SUPERVISOR_SALDO_MIN     default 50000. ...salvo que el saldo justifique igual.
- *   TELEGRAM_USER_RICARDO    default '7281538057'. Chat privado del CEO.
+ *   TELEGRAM_USER_RICARDO    REQUERIDA. Chat privado del CEO (sin fallback hardcodeado).
  */
 
 import { cobranzasQuery, cobranzasExecute, logAccion } from '@/lib/db/cobranzas';
@@ -149,7 +149,11 @@ export async function ejecutarSupervisorAlertas(): Promise<SupervisorAlertasStat
   const deltaScore = Number(process.env.SUPERVISOR_DELTA_SCORE) || 15;
   const cooldownDays = Number(process.env.SUPERVISOR_COOLDOWN_DAYS) || 7;
   const saldoMin = Number(process.env.SUPERVISOR_SALDO_MIN) || 50000;
-  const chatId = process.env.TELEGRAM_USER_RICARDO || '7281538057';
+  const chatId = process.env.TELEGRAM_USER_RICARDO;
+  if (!chatId) {
+    console.warn('[supervisor-alertas] TELEGRAM_USER_RICARDO no configurado — alertas omitidas');
+    return stats;
+  }
 
   // 1. Top-N clientes por exposición (saldo neto). topN está saneado a entero.
   const top = await cobranzasQuery<IntelRow>(

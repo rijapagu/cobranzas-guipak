@@ -22,7 +22,7 @@
  *   SUPERVISOR_PROMESA_DIAS    default 2.      Días de gracia tras vencer.
  *   SUPERVISOR_PROMESA_MAX     default 15.     Tope de alertas por corrida.
  *   SUPERVISOR_COOLDOWN_DAYS   default 7.      No re-alertar mismo acuerdo en N días.
- *   TELEGRAM_USER_RICARDO      default '7281538057'.
+ *   TELEGRAM_USER_RICARDO      REQUERIDA (sin fallback hardcodeado).
  */
 
 import { cobranzasQuery, cobranzasExecute, logAccion } from '@/lib/db/cobranzas';
@@ -108,7 +108,11 @@ export async function ejecutarSupervisorPromesas(): Promise<SupervisorPromesasSt
   const diasGracia = Math.max(0, Number(process.env.SUPERVISOR_PROMESA_DIAS) || 2);
   const maxAlertas = Math.max(1, Math.min(50, Number(process.env.SUPERVISOR_PROMESA_MAX) || 15));
   const cooldownDays = Number(process.env.SUPERVISOR_COOLDOWN_DAYS) || 7;
-  const chatId = process.env.TELEGRAM_USER_RICARDO || '7281538057';
+  const chatId = process.env.TELEGRAM_USER_RICARDO;
+  if (!chatId) {
+    console.warn('[supervisor-promesas] TELEGRAM_USER_RICARDO no configurado — alertas omitidas');
+    return stats;
+  }
 
   // 1. Promesas grandes vencidas y sin pagar, enriquecidas con riesgo del cliente.
   //    diasGracia se inyecta saneado a entero (no es input de usuario externo).

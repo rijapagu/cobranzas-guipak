@@ -22,7 +22,7 @@
  *   SUPERVISOR_LOTE_TOP_N        default 10.    Tamaño máximo de la cohorte.
  *   SUPERVISOR_LOTE_SALDO_MIN    default 50000. Exposición mínima para entrar.
  *   SUPERVISOR_LOTE_PLANTILLA_ID opcional.      Plantilla específica del lote.
- *   TELEGRAM_USER_RICARDO        default '7281538057'.
+ *   TELEGRAM_USER_RICARDO        REQUERIDA (sin fallback hardcodeado).
  */
 
 import { cobranzasQuery, cobranzasExecute, logAccion } from '@/lib/db/cobranzas';
@@ -85,7 +85,11 @@ export async function ejecutarSupervisorLote(): Promise<SupervisorLoteStats> {
   const plantillaId = process.env.SUPERVISOR_LOTE_PLANTILLA_ID
     ? Number(process.env.SUPERVISOR_LOTE_PLANTILLA_ID)
     : undefined;
-  const chatId = process.env.TELEGRAM_USER_RICARDO || '7281538057';
+  const chatId = process.env.TELEGRAM_USER_RICARDO;
+  if (!chatId) {
+    console.warn('[supervisor-lote] TELEGRAM_USER_RICARDO no configurado — alertas omitidas');
+    return stats;
+  }
 
   // 1. Cohorte estratégica: top por exposición, ROJO/CRÍTICO y empeorando.
   const cohorte = await cobranzasQuery<CohorteRow>(

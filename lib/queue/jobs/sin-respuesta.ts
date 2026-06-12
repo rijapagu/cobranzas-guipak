@@ -61,7 +61,27 @@ function formatearFecha(fechaIso: string): string {
   return `${d.getDate()} ${meses[d.getMonth()]} ${d.getFullYear()}`;
 }
 
+/** Loop multi-tenant (Fase 3 Etapa 4): por cada empresa activa. */
 export async function ejecutarSinRespuesta(): Promise<StatsSinRespuesta> {
+  const total: StatsSinRespuesta = {
+    gestiones_evaluadas: 0, con_respuesta: 0, con_gestion_posterior: 0,
+    candidatas_sin_respuesta: 0, tareas_creadas: 0, skip_ya_existe: 0,
+  };
+  const empresas = await cobranzasQuery<{ id: number }>(
+    'SELECT id FROM empresas WHERE activa = 1 ORDER BY id'
+  );
+  for (const { id: empresaId } of empresas) {
+    try {
+      const stats = await ejecutarSinRespuestaEmpresa(empresaId);
+      for (const k of Object.keys(total) as (keyof StatsSinRespuesta)[]) total[k] += stats[k];
+    } catch (err) {
+      console.error(`[sin-respuesta] Error en empresa ${empresaId}:`, err);
+    }
+  }
+  return total;
+}
+
+async function ejecutarSinRespuestaEmpresa(empresaId: number): Promise<StatsSinRespuesta> {
   const stats: StatsSinRespuesta = {
     gestiones_evaluadas: 0,
     con_respuesta: 0,
@@ -85,12 +105,12 @@ export async function ejecutarSinRespuesta(): Promise<StatsSinRespuesta> {
        DATE_FORMAT(g.fecha_aprobacion, '%Y-%m-%d') AS fecha_aprobacion,
        DATEDIFF(CURDATE(), g.fecha_aprobacion) AS dias_sin_respuesta
      FROM cobranza_gestiones g
-     WHERE g.empresa_id = 1 AND g.estado IN ('APROBADO','EDITADO')
+     WHERE g.empresa_id = ? AND g.estado IN ('APROBADO','EDITADO')
        AND g.canal IN ('EMAIL','WHATSAPP')
        AND DATEDIFF(CURDATE(), g.fecha_aprobacion) BETWEEN ? AND 30
      ORDER BY g.fecha_aprobacion ASC
      LIMIT ?`,
-    [UMBRAL_DIAS_SIN_RESPUESTA, MAX_GESTIONES_POR_RUN]
+    [empresaId, UMBRAL_DIAS_SIN_RESPUESTA, MAX_GESTIONES_POR_RUN]
   );
 
   stats.gestiones_evaluadas = candidatas.length;
@@ -108,11 +128,11 @@ export async function ejecutarSinRespuesta(): Promise<StatsSinRespuesta> {
   }>(
     `SELECT codigo_cliente, MAX(created_at) AS ultima_respuesta
      FROM cobranza_conversaciones
-     WHERE empresa_id = 1 AND codigo_cliente IN (${codigosPlaceholders})
+     WHERE empresa_id = ? AND codigo_cliente IN (${codigosPlaceholders})
        AND direccion='RECIBIDO'
        AND created_at >= (CURDATE() - INTERVAL 30 DAY)
      GROUP BY codigo_cliente`,
-    codigosUnicos
+    [empresaId, ...codigosUnicos]
   );
   const ultimaRespuestaMap = new Map(
     respuestasRows.map((r) => [
@@ -129,11 +149,11 @@ export async function ejecutarSinRespuesta(): Promise<StatsSinRespuesta> {
   }>(
     `SELECT codigo_cliente, MAX(fecha_aprobacion) AS ultima_gestion
      FROM cobranza_gestiones
-     WHERE empresa_id = 1 AND codigo_cliente IN (${codigosPlaceholders})
+     WHERE empresa_id = ? AND codigo_cliente IN (${codigosPlaceholders})
        AND estado IN ('APROBADO','EDITADO')
        AND fecha_aprobacion >= (CURDATE() - INTERVAL 30 DAY)
      GROUP BY codigo_cliente`,
-    codigosUnicos
+    [empresaId, ...codigosUnicos]
   );
   const ultimaGestionMap = new Map(
     gestionesPosterioresRows.map((r) => [
@@ -147,11 +167,11 @@ export async function ejecutarSinRespuesta(): Promise<StatsSinRespuesta> {
   const tareasExistentes = await cobranzasQuery<{ origen_ref: string }>(
     `SELECT origen_ref
      FROM cobranza_tareas
-     WHERE empresa_id = 1
+     WHERE empresa_id = ?
        AND origen='SIN_RESPUESTA'
        AND origen_ref IN (${refsBuscadas.map(() => '?').join(',')})
        AND estado IN ('PENDIENTE','EN_PROGRESO')`,
-    refsBuscadas
+    [empresaId, ...refsBuscadas]
   );
   const yaConTarea = new Set(tareasExistentes.map((t) => t.origen_ref));
 
@@ -202,8 +222,8 @@ export async function ejecutarSinRespuesta(): Promise<StatsSinRespuesta> {
   }>(
     `SELECT DISTINCT codigo_cliente, nombre_cliente
      FROM cobranza_cliente_inteligencia
-     WHERE empresa_id = 1 AND codigo_cliente IN (${placeholdersDef})`,
-    codigosDefinitivos
+     WHERE empresa_id = ? AND codigo_cliente IN (${placeholdersDef})`,
+    [empresaId, ...codigosDefinitivos]
   );
   const nombreMap = new Map<string, string>();
   for (const r of nombresRows) {
@@ -235,9 +255,9 @@ export async function ejecutarSinRespuesta(): Promise<StatsSinRespuesta> {
       `INSERT INTO cobranza_tareas
          (empresa_id, titulo, descripcion, tipo, fecha_vencimiento, codigo_cliente, ij_inum,
           prioridad, asignada_a, creado_por, origen, origen_ref)
-       VALUES (1, ?, ?, 'SEGUIMIENTO', CURDATE(), ?, ?, ?, 'sistema',
+       VALUES (?, ?, ?, 'SEGUIMIENTO', CURDATE(), ?, ?, ?, 'sistema',
                'cron-sin-respuesta', 'SIN_RESPUESTA', ?)`,
-      [titulo, descripcion, codigo, g.ij_inum, prioridad, `gestion:${g.id}`]
+      [empresaId, titulo, descripcion, codigo, g.ij_inum, prioridad, `gestion:${g.id}`]
     );
     stats.tareas_creadas++;
   }

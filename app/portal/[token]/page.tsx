@@ -52,6 +52,7 @@ interface AcuerdoPago {
 }
 
 interface PortalData {
+  empresa?: { nombre: string };
   cliente: { codigo: string; nombre: string };
   facturas: FacturaPortal[];
   acuerdos: AcuerdoPago[];
@@ -229,7 +230,7 @@ export default function PortalClientePage() {
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 16 }}>
             <div>
               <Title level={4} style={{ margin: 0 }}>
-                Suministros Guipak, S.R.L.
+                {data.empresa?.nombre ?? "Suministros Guipak, S.R.L."}
               </Title>
               <Text type="secondary">Estado de Cuenta</Text>
             </div>
@@ -391,7 +392,7 @@ export default function PortalClientePage() {
           </Text>
           <br />
           <Text type="secondary" style={{ fontSize: 11 }}>
-            Suministros Guipak, S.R.L. — Sistema de Cobranzas
+            {data.empresa?.nombre ?? "Suministros Guipak, S.R.L."} — Sistema de Cobranzas
           </Text>
         </div>
       </div>

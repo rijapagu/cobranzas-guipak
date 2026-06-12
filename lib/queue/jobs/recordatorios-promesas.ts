@@ -18,7 +18,7 @@
  */
 
 import { cobranzasQuery, cobranzasExecute } from '@/lib/db/cobranzas';
-import { softecQuery, testSoftecConnection } from '@/lib/db/softec';
+import { adaptadorParaEmpresa } from '@/lib/erp';
 
 const PRIORIDAD_ALTA_UMBRAL_DOP = 200_000;
 
@@ -70,7 +70,29 @@ function formatearFecha(fechaIso: string): string {
   return `${d} ${meses[m - 1]} ${y}`;
 }
 
+/**
+ * Loop multi-tenant (Fase 3 Etapa 4): recordatorios por cada empresa activa.
+ */
 export async function ejecutarRecordatoriosPromesas(): Promise<StatsRecordatorios> {
+  const total: StatsRecordatorios = {
+    acuerdos_evaluados: 0, tipo_a_hoy: 0, tipo_b_verificar: 0,
+    tipo_c_incumplida: 0, skip_ya_existe: 0, skip_sin_nombre: 0,
+  };
+  const empresas = await cobranzasQuery<{ id: number }>(
+    'SELECT id FROM empresas WHERE activa = 1 ORDER BY id'
+  );
+  for (const { id: empresaId } of empresas) {
+    try {
+      const stats = await ejecutarRecordatoriosEmpresa(empresaId);
+      for (const k of Object.keys(total) as (keyof StatsRecordatorios)[]) total[k] += stats[k];
+    } catch (err) {
+      console.error(`[recordatorios-promesas] Error en empresa ${empresaId}:`, err);
+    }
+  }
+  return total;
+}
+
+async function ejecutarRecordatoriosEmpresa(empresaId: number): Promise<StatsRecordatorios> {
   const stats: StatsRecordatorios = {
     acuerdos_evaluados: 0,
     tipo_a_hoy: 0,
@@ -91,9 +113,10 @@ export async function ejecutarRecordatoriosPromesas(): Promise<StatsRecordatorio
        DATE_FORMAT(fecha_prometida, '%Y-%m-%d') AS fecha_prometida,
        DATEDIFF(CURDATE(), fecha_prometida) AS dias_diff
      FROM cobranza_acuerdos
-     WHERE empresa_id = 1 AND estado='PENDIENTE'
+     WHERE empresa_id = ? AND estado='PENDIENTE'
        AND fecha_prometida <= CURDATE()
-     ORDER BY fecha_prometida ASC`
+     ORDER BY fecha_prometida ASC`,
+    [empresaId]
   );
 
   stats.acuerdos_evaluados = acuerdos.length;
@@ -106,11 +129,11 @@ export async function ejecutarRecordatoriosPromesas(): Promise<StatsRecordatorio
   const tareasExistentes = await cobranzasQuery<{ origen_ref: string }>(
     `SELECT origen_ref
      FROM cobranza_tareas
-     WHERE empresa_id = 1
+     WHERE empresa_id = ?
        AND origen='ACUERDO_PAGO'
        AND origen_ref IN (${placeholdersIds})
        AND estado IN ('PENDIENTE','EN_PROGRESO')`,
-    refsBuscadas
+    [empresaId, ...refsBuscadas]
   );
   const yaConTarea = new Set(tareasExistentes.map((t) => t.origen_ref));
 
@@ -125,21 +148,17 @@ export async function ejecutarRecordatoriosPromesas(): Promise<StatsRecordatorio
 
   if (acuerdosNuevos.length === 0) return stats;
 
-  // Enriquecer con nombres de cliente desde softec (batch, evita N+1)
-  const softecOk = await testSoftecConnection();
-  const codigosUnicos = [...new Set(acuerdosNuevos.map((a) => String(a.codigo_cliente).trim()))];
+  // Enriquecer con nombres de cliente desde el ERP de la empresa (batch)
+  const codigosUnicos = new Set(acuerdosNuevos.map((a) => String(a.codigo_cliente).trim()));
   const nombresMap = new Map<string, string>();
-
-  if (softecOk && codigosUnicos.length > 0) {
-    const placeholdersC = codigosUnicos.map(() => '?').join(',');
-    const filasNombres = await softecQuery<{ IC_CODE: string; IC_NAME: string }>(
-      `SELECT IC_CODE, IC_NAME FROM v_cobr_icust WHERE IC_CODE IN (${placeholdersC}) AND IC_STATUS = 'A'`,
-      codigosUnicos
-    );
-    for (const f of filasNombres) {
-      nombresMap.set(String(f.IC_CODE).trim(), String(f.IC_NAME).trim());
+  try {
+    const adapter = await adaptadorParaEmpresa(empresaId);
+    if (await adapter.disponible()) {
+      for (const c of await adapter.clientes()) {
+        if (codigosUnicos.has(c.codigo)) nombresMap.set(c.codigo, c.nombre);
+      }
     }
-  }
+  } catch { /* ERP caido: skip_sin_nombre contabiliza y se reintenta luego */ }
 
   // Generar las tareas
   for (const acuerdo of acuerdosNuevos) {
@@ -208,9 +227,10 @@ export async function ejecutarRecordatoriosPromesas(): Promise<StatsRecordatorio
       `INSERT INTO cobranza_tareas
          (empresa_id, titulo, descripcion, tipo, fecha_vencimiento, codigo_cliente, ij_inum,
           prioridad, asignada_a, creado_por, origen, origen_ref)
-       VALUES (1, ?, ?, 'SEGUIMIENTO', CURDATE(), ?, ?, ?, 'sistema', 'cron-recordatorios-promesas',
+       VALUES (?, ?, ?, 'SEGUIMIENTO', CURDATE(), ?, ?, ?, 'sistema', 'cron-recordatorios-promesas',
                'ACUERDO_PAGO', ?)`,
       [
+        empresaId,
         titulo,
         descripcion,
         codigoCliente,
