@@ -885,3 +885,28 @@ portal con un cliente cubierto. Detalle completo en
 - Frontend: dejar de usar nombres `IJ_*` (migrar tipos al modelo canónico).
 - UI de importación de cartera (página /configuracion o /cartera para subir
   el CSV; hoy solo API).
+
+## Sesión 12-Junio-2026 (sesión 3) — Etapa 2: ciclo completo para empresas CSV
+
+### Hecho (commit 289f4d6)
+- **generar-cola en modo CSV**: empresas sin ERP generan gestiones con IA desde
+  su cartera importada (mismo pipeline: CP-03 disputas, gestiones activas,
+  pausados; CP-15 sigue solo-Softec). Verificado en producción: 2 gestiones
+  PENDIENTES generadas por Claude para la empresa 2 (ROJO canal AMBOS).
+- **estado-cuenta-cliente** y **reportes Excel** (cartera + estado de cuenta)
+  por adaptador ERP. `estado-cuenta/[cliente]` (pagos) conserva el guard: el
+  snapshot CSV no trae historial de pagos.
+- **UI de importación**: `/configuracion/importar-cartera` (antd) — facturas.csv
+  requerido + clientes.csv opcional, formato documentado en pantalla, detalle
+  de filas con error.
+
+### El ciclo SaaS completo ya funciona para un tenant CSV
+importar CSV → cartera/dashboard/clientes/segmentos → generar cola con IA →
+cola de aprobación. La regla de oro intacta: nada se envía sin aprobación.
+
+### Pendiente Etapa 2
+- Mover las ~83 `softecQuery` de rutas/jobs Guipak detrás del softecAdapter.
+- Frontend sin `IJ_*` (tipos canónicos).
+- Link de navegación a importar-cartera (hoy solo por URL; encaja con la
+  Etapa 3 cuando haya configuración por empresa visible en la UI).
+- Envío real para tenants CSV depende de Etapa 3 (SMTP/WhatsApp por empresa).
