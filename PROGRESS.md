@@ -817,3 +817,42 @@ portal con un cliente cubierto. Detalle completo en
 ### Pendiente
 - **SMTP email**: credenciales configuradas en Dokploy (mail.guipak.com:465, cobros@guipak.com, CobrosGuipak2022) — contraseña actualizada en cPanel, por verificar entrega real
 - **Verificar Conversaciones page** post-deploy con datos reales
+
+## Sesión 12-Junio-2026 — Fase 3 Etapa 1 COMPLETADA (scoping multi-tenant)
+
+### Lotes de scoping empresa_id (cierran los ~108 statements pendientes)
+| Lote | Commit | Contenido |
+|---|---|---|
+| tareas | 7f076d5 | rutas /tareas, tareas espejo en 7 jobs, conciliación, bot |
+| clientes | d0c0e06 | enriquecidos, contactos (empresaId param), inteligencia |
+| documentos | 9ef62ca | rutas, webhook CRM, scan-drive, portal, drafts |
+| plantillas+cadencias | 4a7229b | seleccionar.ts con empresaId param, rutas, job, estado |
+| resto | e6d36f8 | portal tokens, configuracion (param), memoria, alertas, telegram, logs |
+
+### Cierre de etapa
+- **Migración 031** (3298436): UNIQUE compuestos `(empresa_id, clave natural)` en
+  cadencias, factura_cadencia_estado (PK), cliente_inteligencia, clientes_enriquecidos,
+  memoria_cliente, telegram_memoria_equipo, facturas_documentos, cuentas_aprendizaje,
+  configuracion (PK). `portal_tokens.token` y `telegram_usuarios.telegram_user_id`
+  se quedan globales a propósito. Aplicada en producción sin errores.
+- **Migración 032** (cdedd87): empresa 2 de prueba + usuario `prueba@empresa2.test`.
+- **Guards ERP** (ad75647): rutas que leen Softec (dashboard, clientes, cartera-vencida,
+  resumen-segmentos, estado-cuenta x2, reportes excel x2, generar-cola,
+  verificar-depositos, alertas) devuelven vacío para empresa != 1 hasta Etapa 2 (lib/erp).
+- **Test de aislamiento**: `scripts/test-aislamiento-empresa2.mjs` — login empresa 2 y
+  verifica 0 registros en tareas/cola/conversaciones/disputas/documentos/plantillas/
+  cadencias/clientes/conciliación/cartera/segmentos/alertas + dashboard en cero.
+
+### Bugs de producción encontrados por el test (y corregidos en ad75647)
+| Bug | Causa | Fix |
+|---|---|---|
+| GET /api/cobranzas/documentos 500 | alias `manual` es palabra reservada en el MySQL de producción | backticks al alias |
+| GET /api/cobranzas/conversaciones (resumen) 500 desde fb1a70d | Illegal mix of collations: inteligencia (utf8mb4_unicode_ci) vs conversaciones (utf8mb4_0900_ai_ci) | COLLATE explícito en el JOIN |
+| supervisor-promesas: mismo mix de collations + join sin empresa | ídem | COLLATE + `i.empresa_id = 1` |
+| Resumen de conversaciones 500 tras la migración 031 | el UNIQUE compuesto rompió la dependencia funcional de `ci.nombre_cliente` con only_full_group_by | `MAX(ci.nombre_cliente)` (44ead33) |
+
+### Pendiente (Etapa 2)
+- Adaptador CSV + `adaptadorParaEmpresa` leyendo `empresas.erp_tipo`; reemplazar los
+  guards `!== EMPRESA_GUIPAK` de las rutas Softec por el adaptador.
+- Desactivar usuario de prueba cuando ya no haga falta:
+  `UPDATE usuarios SET activo=0 WHERE empresa_id=2;`
