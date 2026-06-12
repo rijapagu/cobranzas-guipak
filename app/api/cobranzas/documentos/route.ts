@@ -73,7 +73,7 @@ export async function GET(request: NextRequest) {
       SELECT
         COUNT(*) as total_docs,
         SUM(CASE WHEN origen = 'CRM_WEBHOOK' THEN 1 ELSE 0 END) as crm_webhook,
-        SUM(CASE WHEN origen = 'MANUAL' THEN 1 ELSE 0 END) as manual
+        SUM(CASE WHEN origen = 'MANUAL' THEN 1 ELSE 0 END) as \`manual\`
       FROM cobranza_facturas_documentos
       WHERE empresa_id = ?
     `, [empresaIdDeSesion(session)]);
@@ -87,9 +87,7 @@ export async function GET(request: NextRequest) {
     });
   } catch (error) {
     console.error('[DOCUMENTOS] Error:', error);
-    // TEMP-DEBUG aislamiento: quitar tras diagnosticar
-    const detalle = error instanceof Error ? error.message : String(error);
-    return NextResponse.json({ error: 'Error consultando documentos', detalle }, { status: 500 });
+    return NextResponse.json({ error: 'Error consultando documentos' }, { status: 500 });
   }
 }
 

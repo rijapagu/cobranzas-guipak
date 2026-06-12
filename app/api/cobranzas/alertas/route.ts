@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth/session';
-import { empresaIdDeSesion } from '@/lib/tenant';
+import { empresaIdDeSesion, EMPRESA_GUIPAK } from '@/lib/tenant';
 import { cobranzasQuery } from '@/lib/db/cobranzas';
 import { softecQuery, testSoftecConnection } from '@/lib/db/softec';
 import { obtenerSaldoAFavorPorCliente } from '@/lib/cobranzas/saldo-favor';
@@ -100,8 +100,9 @@ export async function GET() {
       });
     });
 
-    // 4. Facturas con 30+ días sin gestión (solo si Softec conectado)
-    const softecOk = await testSoftecConnection();
+    // 4. Facturas con 30+ días sin gestión (solo si Softec conectado).
+    // Softec es el ERP de Guipak: para otras empresas se omite (Etapa 2: lib/erp).
+    const softecOk = empresaIdDeSesion(session) === EMPRESA_GUIPAK && await testSoftecConnection();
     if (softecOk) {
       const sinGestion = await softecQuery<{
         codigo_cliente: string;

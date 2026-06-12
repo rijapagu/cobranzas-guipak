@@ -3,6 +3,7 @@ import { softecQuery, testSoftecConnection } from '@/lib/db/softec';
 import { obtenerSaldoAFavorPorCliente } from '@/lib/cobranzas/saldo-favor';
 import { getMockResumen } from '@/lib/mock/cartera-mock';
 import { getSession } from '@/lib/auth/session';
+import { empresaIdDeSesion, EMPRESA_GUIPAK } from '@/lib/tenant';
 import type { ResumenSegmento, ResumenResponse } from '@/lib/types/cartera';
 
 /**
@@ -19,6 +20,20 @@ export async function GET() {
     const session = await getSession();
     if (!session) {
       return NextResponse.json({ error: 'No autenticado' }, { status: 401 });
+    }
+
+    // El ERP Softec es de Guipak (empresa 1). Otras empresas ven cero
+    // hasta que la Etapa 2 enchufe adaptadorParaEmpresa (lib/erp).
+    if (empresaIdDeSesion(session) !== EMPRESA_GUIPAK) {
+      return NextResponse.json({
+        segmentos: [],
+        total_cartera: 0,
+        total_facturas: 0,
+        total_clientes: 0,
+        modo: 'live',
+        total_a_favor: 0,
+        total_neto: 0,
+      } satisfies ResumenResponse);
     }
 
     const softecOk = await testSoftecConnection();

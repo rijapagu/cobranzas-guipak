@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth/session';
 import { cobranzasQuery, cobranzasExecute, logAccion } from '@/lib/db/cobranzas';
 import { softecQuery, testSoftecConnection } from '@/lib/db/softec';
-import { empresaIdDeSesion } from '@/lib/tenant';
+import { empresaIdDeSesion, EMPRESA_GUIPAK } from '@/lib/tenant';
 import { obtenerSaldoAFavorPorCliente } from '@/lib/cobranzas/saldo-favor';
 import { getMockCartera } from '@/lib/mock/cartera-mock';
 
@@ -47,6 +47,17 @@ export async function GET(request: NextRequest) {
 
   const busqueda = request.nextUrl.searchParams.get('busqueda')?.trim();
   const filtro = request.nextUrl.searchParams.get('filtro'); // sin_email, sin_whatsapp, sin_contacto, pausados
+
+  // El ERP Softec es de Guipak (empresa 1). Otras empresas no tienen cartera
+  // hasta que la Etapa 2 enchufe adaptadorParaEmpresa (lib/erp).
+  if (empresaIdDeSesion(session) !== EMPRESA_GUIPAK) {
+    return NextResponse.json({
+      clientes: [],
+      total: 0,
+      estadisticas: { totalClientes: 0, sinEmail: 0, sinWhatsapp: 0, sinContacto: 0 },
+      modo: 'live',
+    });
+  }
 
   try {
     const softecOk = await testSoftecConnection();

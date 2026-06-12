@@ -8,7 +8,7 @@ import type { FacturaVencida } from '@/lib/types/cartera';
 import { seleccionarPlantilla } from '@/lib/templates/seleccionar';
 import { renderPlantilla } from '@/lib/templates/render';
 import { obtenerSaldoAFavorPorCliente } from '@/lib/cobranzas/saldo-favor';
-import { empresaIdDeSesion } from '@/lib/tenant';
+import { empresaIdDeSesion, EMPRESA_GUIPAK } from '@/lib/tenant';
 
 /**
  * POST /api/cobranzas/generar-cola
@@ -27,6 +27,20 @@ export async function POST() {
       return NextResponse.json({ error: 'Solo supervisores pueden generar cola' }, { status: 403 });
     }
 
+    // El ERP Softec es de Guipak (empresa 1): otras empresas no tienen cartera
+    // de la cual generar cola hasta que la Etapa 2 enchufe lib/erp.
+    const empresaId = empresaIdDeSesion(session);
+    if (empresaId !== EMPRESA_GUIPAK) {
+      return NextResponse.json({
+        message: 'Esta empresa no tiene ERP configurado todavía: 0 gestiones creadas',
+        generadas: 0,
+        total_facturas: 0,
+        clientes_excluidos_por_saldo_a_favor: 0,
+        facturas_excluidas_por_saldo_a_favor: 0,
+        modo: 'live',
+      });
+    }
+
     // Obtener facturas vencidas
     const softecOk = await testSoftecConnection();
     let facturas: FacturaVencida[];
@@ -36,8 +50,6 @@ export async function POST() {
     } else {
       facturas = getMockCartera();
     }
-
-    const empresaId = empresaIdDeSesion(session);
 
     // CP-03: Excluir facturas con disputa activa
     const disputas = await cobranzasQuery<{ ij_inum: number }>(

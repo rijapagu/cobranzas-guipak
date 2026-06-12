@@ -4,6 +4,7 @@ import { cobranzasQuery } from '@/lib/db/cobranzas';
 import { ajustarSaldoClientes } from '@/lib/cobranzas/saldo-favor';
 import { getMockCartera } from '@/lib/mock/cartera-mock';
 import { getSession } from '@/lib/auth/session';
+import { empresaIdDeSesion, EMPRESA_GUIPAK } from '@/lib/tenant';
 import type { FacturaVencida, CarteraResponse, SegmentoRiesgo } from '@/lib/types/cartera';
 
 /**
@@ -18,6 +19,17 @@ export async function GET(request: NextRequest) {
     const session = await getSession();
     if (!session) {
       return NextResponse.json({ error: 'No autenticado' }, { status: 401 });
+    }
+
+    // El ERP Softec es de Guipak (empresa 1). Otras empresas no tienen cartera
+    // hasta que la Etapa 2 enchufe adaptadorParaEmpresa (lib/erp).
+    if (empresaIdDeSesion(session) !== EMPRESA_GUIPAK) {
+      return NextResponse.json({
+        facturas: [],
+        total: 0,
+        modo: 'live',
+        ultima_consulta: new Date().toISOString(),
+      } satisfies CarteraResponse);
     }
 
     const { searchParams } = request.nextUrl;

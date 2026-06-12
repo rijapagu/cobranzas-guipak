@@ -3,6 +3,7 @@ import { getSession } from '@/lib/auth/session';
 import { softecQuery, testSoftecConnection } from '@/lib/db/softec';
 import { obtenerSaldoAFavorPorCliente, ajustarSaldoCliente } from '@/lib/cobranzas/saldo-favor';
 import { getMockCartera } from '@/lib/mock/cartera-mock';
+import { empresaIdDeSesion, EMPRESA_GUIPAK } from '@/lib/tenant';
 
 export interface FacturaEstadoCuenta {
   numero: number;
@@ -49,6 +50,22 @@ export async function GET(
   const codigo = codigoRaw?.trim();
   if (!codigo) {
     return NextResponse.json({ error: 'Código de cliente requerido' }, { status: 400 });
+  }
+
+  // El ERP Softec es de Guipak (empresa 1); otras empresas ven vacío (Etapa 2: lib/erp).
+  if (empresaIdDeSesion(session) !== EMPRESA_GUIPAK) {
+    return NextResponse.json({
+      codigo_cliente: codigo,
+      nombre_cliente: codigo,
+      facturas: [],
+      resumen: {
+        total_facturas: 0,
+        saldo_bruto: 0,
+        saldo_a_favor: 0,
+        saldo_neto: 0,
+        cubierto_por_anticipo: false,
+      },
+    });
   }
 
   try {

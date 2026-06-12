@@ -4,6 +4,7 @@ import { softecQuery, testSoftecConnection } from '@/lib/db/softec';
 import { logAccion } from '@/lib/db/cobranzas';
 import { obtenerSaldoAFavorPorCliente, ajustarSaldoCliente } from '@/lib/cobranzas/saldo-favor';
 import { getMockCartera } from '@/lib/mock/cartera-mock';
+import { empresaIdDeSesion, EMPRESA_GUIPAK } from '@/lib/tenant';
 import * as XLSX from 'xlsx';
 
 /**
@@ -30,6 +31,11 @@ export async function GET(request: NextRequest) {
   const codigoCliente = request.nextUrl.searchParams.get('cliente');
   if (!codigoCliente) {
     return NextResponse.json({ error: 'Parámetro cliente requerido' }, { status: 400 });
+  }
+
+  // El ERP Softec es de Guipak (empresa 1); sin ERP no hay estado de cuenta que exportar (Etapa 2: lib/erp).
+  if (empresaIdDeSesion(session) !== EMPRESA_GUIPAK) {
+    return NextResponse.json({ error: 'Esta empresa no tiene ERP configurado todavía' }, { status: 409 });
   }
 
   try {

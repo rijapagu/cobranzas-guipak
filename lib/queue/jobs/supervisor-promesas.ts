@@ -133,7 +133,7 @@ export async function ejecutarSupervisorPromesas(): Promise<SupervisorPromesasSt
        i.promesas_cumplidas
      FROM cobranza_acuerdos a
      LEFT JOIN cobranza_cliente_inteligencia i
-       ON i.codigo_cliente = TRIM(a.codigo_cliente)
+       ON i.codigo_cliente COLLATE utf8mb4_0900_ai_ci = TRIM(a.codigo_cliente) AND i.empresa_id = 1
      WHERE a.empresa_id = 1 AND a.monto_prometido >= ?
        AND (
          (a.estado = 'PENDIENTE' AND a.fecha_prometida < DATE_SUB(CURDATE(), INTERVAL ${diasGracia} DAY))

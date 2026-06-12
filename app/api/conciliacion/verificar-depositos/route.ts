@@ -3,7 +3,7 @@ import { getSession } from '@/lib/auth/session';
 import { softecQuery, testSoftecConnection } from '@/lib/db/softec';
 import { cobranzasQuery } from '@/lib/db/cobranzas';
 import { toYmd, addDiasYmd } from '@/lib/utils/fechas';
-import { empresaIdDeSesion } from '@/lib/tenant';
+import { empresaIdDeSesion, EMPRESA_GUIPAK } from '@/lib/tenant';
 
 /**
  * GET /api/conciliacion/verificar-depositos?dias=7
@@ -26,6 +26,19 @@ export async function GET(request: NextRequest) {
     }
 
     const dias = parseInt(request.nextUrl.searchParams.get('dias') || '7', 10);
+
+    // El ERP Softec es de Guipak (empresa 1); otras empresas no tienen recibos
+    // que verificar hasta que la Etapa 2 enchufe lib/erp.
+    if (empresaIdDeSesion(session) !== EMPRESA_GUIPAK) {
+      return NextResponse.json({
+        dias_analizados: dias,
+        total_recibos_ef_ck: 0,
+        total_depositado: 0,
+        alertas_count: 0,
+        monto_sin_depositar: 0,
+        detalle: [],
+      });
+    }
 
     const softecOk = await testSoftecConnection();
     if (!softecOk) {

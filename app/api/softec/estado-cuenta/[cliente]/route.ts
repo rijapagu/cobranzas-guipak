@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { softecQuery, testSoftecConnection } from '@/lib/db/softec';
 import { getMockPagos } from '@/lib/mock/cartera-mock';
 import { getSession } from '@/lib/auth/session';
+import { empresaIdDeSesion, EMPRESA_GUIPAK } from '@/lib/tenant';
 import type { PagoAplicado } from '@/lib/types/cartera';
 
 /**
@@ -23,6 +24,11 @@ export async function GET(
 
     if (!factura) {
       return NextResponse.json({ error: 'Parámetro factura requerido' }, { status: 400 });
+    }
+
+    // El ERP Softec es de Guipak (empresa 1); otras empresas ven vacío (Etapa 2: lib/erp).
+    if (empresaIdDeSesion(session) !== EMPRESA_GUIPAK) {
+      return NextResponse.json({ cliente, factura: Number(factura), pagos: [], modo: 'live' });
     }
 
     const softecOk = await testSoftecConnection();

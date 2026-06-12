@@ -4,6 +4,7 @@ import { softecQuery, testSoftecConnection } from '@/lib/db/softec';
 import { logAccion } from '@/lib/db/cobranzas';
 import { obtenerSaldoAFavorPorCliente } from '@/lib/cobranzas/saldo-favor';
 import { getMockCartera } from '@/lib/mock/cartera-mock';
+import { empresaIdDeSesion, EMPRESA_GUIPAK } from '@/lib/tenant';
 import * as XLSX from 'xlsx';
 
 /**
@@ -14,6 +15,11 @@ export async function GET(request: NextRequest) {
   const session = await getSession();
   if (!session) {
     return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
+  }
+
+  // El ERP Softec es de Guipak (empresa 1); sin ERP no hay cartera que exportar (Etapa 2: lib/erp).
+  if (empresaIdDeSesion(session) !== EMPRESA_GUIPAK) {
+    return NextResponse.json({ error: 'Esta empresa no tiene ERP configurado todavía' }, { status: 409 });
   }
 
   try {

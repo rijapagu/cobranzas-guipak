@@ -55,7 +55,7 @@ export async function GET(request: NextRequest) {
          ORDER BY c4.created_at DESC LIMIT 1) as ultimo_canal
       FROM cobranza_conversaciones c
       LEFT JOIN cobranza_cliente_inteligencia ci
-        ON ci.codigo_cliente = c.codigo_cliente AND ci.empresa_id = c.empresa_id
+        ON ci.codigo_cliente COLLATE utf8mb4_0900_ai_ci = c.codigo_cliente AND ci.empresa_id = c.empresa_id
       WHERE c.empresa_id = ?
       GROUP BY c.codigo_cliente
       ORDER BY MAX(c.created_at) DESC
@@ -66,8 +66,6 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ conversaciones });
   } catch (error) {
     console.error('[CONVERSACIONES] Error:', error);
-    // TEMP-DEBUG aislamiento: quitar tras diagnosticar
-    const detalle = error instanceof Error ? error.message : String(error);
-    return NextResponse.json({ error: 'Error consultando conversaciones', detalle }, { status: 500 });
+    return NextResponse.json({ error: 'Error consultando conversaciones' }, { status: 500 });
   }
 }

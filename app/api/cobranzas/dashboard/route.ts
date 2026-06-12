@@ -5,7 +5,7 @@ import { softecQuery, testSoftecConnection } from '@/lib/db/softec';
 import { obtenerSaldoAFavorPorCliente } from '@/lib/cobranzas/saldo-favor';
 import { getMockCartera } from '@/lib/mock/cartera-mock';
 import { getRedis } from '@/lib/redis/client';
-import { empresaIdDeSesion } from '@/lib/tenant';
+import { empresaIdDeSesion, EMPRESA_GUIPAK } from '@/lib/tenant';
 
 // Cache del dashboard en Redis: ~10 queries (varias agregando toda la
 // cartera del ERP) por cada carga de página no escalan sin esto.
@@ -65,6 +65,22 @@ export async function GET(request: NextRequest) {
 
   // Cache (TTL 2 min). El botón "Actualizar" puede forzar con ?refresh=1.
   const empresaId = empresaIdDeSesion(session);
+
+  // El ERP Softec es de Guipak (empresa 1). Otras empresas ven KPIs en cero
+  // hasta que la Etapa 2 enchufe adaptadorParaEmpresa (lib/erp).
+  if (empresaId !== EMPRESA_GUIPAK) {
+    const vacio: DashboardKPIs = {
+      cartera_total: 0, cartera_total_a_favor: 0, cartera_total_neta: 0,
+      total_facturas: 0, total_clientes: 0, dso: 0, segmentos: [],
+      gestiones_hoy: 0, pendientes_aprobacion: 0, enviadas_hoy: 0,
+      acuerdos_pendientes: 0, acuerdos_cumplidos_mes: 0, acuerdos_incumplidos_mes: 0,
+      wa_enviados_mes: 0, wa_respondidos_mes: 0, email_enviados_mes: 0, email_respondidos_mes: 0,
+      top_clientes: [], promesas_vencidas: 0, facturas_sin_gestion_30d: 0,
+      clientes_sin_contacto: 0, modo: 'live',
+    };
+    return NextResponse.json(vacio);
+  }
+
   const cacheKey = cacheKeyDashboard(empresaId);
   const forzar = request.nextUrl.searchParams.get('refresh') === '1';
   if (!forzar) {
