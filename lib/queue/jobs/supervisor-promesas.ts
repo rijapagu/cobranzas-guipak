@@ -91,6 +91,12 @@ function fallbackPromesa(i: SupervisorPromesaInput): string {
 
 // ── Job principal ──────────────────────────────────────────────────────────────
 
+// ALCANCE (Fase 3): exclusivo de Guipak (empresa_id = 1) A PROPÓSITO. El
+// Supervisor IA corre sobre el LLM local (GPU única) y cobranza_cliente_inteligencia
+// hoy solo se popula para Guipak; por eso todas las queries fijan empresa_id=1.
+// NO es un bug de scoping: no hay fuga cross-tenant (el filtro fijo nunca mezcla
+// empresas). Parametrizar por empresa cuando el Supervisor se ofrezca como
+// premium multi-tenant (Etapa 4 resto).
 export async function ejecutarSupervisorPromesas(): Promise<SupervisorPromesasStats> {
   const stats: SupervisorPromesasStats = {
     evaluadas: 0,

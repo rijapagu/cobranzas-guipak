@@ -130,6 +130,8 @@ function cruzoUmbral(row: IntelRow, deltaThreshold: number): boolean {
 
 // ── Job principal ──────────────────────────────────────────────────────────────
 
+// ALCANCE (Fase 3): exclusivo de Guipak (empresa_id = 1) A PROPÓSITO — ver nota
+// en supervisor-promesas.ts. Sin fuga cross-tenant; parametrizar en Etapa 4 resto.
 export async function ejecutarSupervisorAlertas(): Promise<SupervisorAlertasStats> {
   const stats: SupervisorAlertasStats = {
     evaluados: 0,

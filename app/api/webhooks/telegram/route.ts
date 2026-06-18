@@ -266,6 +266,19 @@ async function manejarCallback(
     return NextResponse.json({ ok: false });
   }
 
+  // Paridad de privilegios con el endpoint web /gestiones/[id]/aprobar (que
+  // exige ADMIN/SUPERVISOR): aprobar dispara el envío al cliente y descartar
+  // cierra la gestión, así que ambos requieren rol supervisor. El rol por
+  // defecto en cobranza_telegram_usuarios es agente_cobros (no supervisor).
+  if ((accion === 'aprobar' || accion === 'descartar') && !esSupervisor(auth)) {
+    await bot.telegram.answerCbQuery(
+      cb.id,
+      '⛔ Solo un supervisor puede aprobar o descartar gestiones.',
+      { show_alert: true }
+    );
+    return NextResponse.json({ ok: true, sin_permiso: true });
+  }
+
   switch (accion) {
     case 'aprobar': {
       // CP-02: marcar APROBADO con aprobado_por

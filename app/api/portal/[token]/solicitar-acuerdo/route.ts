@@ -1,7 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { cobranzasQuery, cobranzasExecute, logAccion } from '@/lib/db/cobranzas';
 import { crearTareaSeguimientoAcuerdo } from '@/lib/cobranzas/auto-tareas';
 import { rateLimit, ipDeRequest } from '@/lib/auth/rate-limit';
+import { adaptadorParaEmpresa } from '@/lib/erp';
+
+const SolicitudSchema = z.object({
+  ij_inum: z.number().int().positive(),
+  monto_propuesto: z.number().positive(),
+  fecha_propuesta: z.string().min(8).max(40),
+  mensaje: z.string().max(1000).optional().nullable(),
+});
 
 /**
  * POST /api/portal/[token]/solicitar-acuerdo
@@ -45,12 +54,40 @@ export async function POST(
     }
 
     const { codigo_cliente, empresa_id } = tokens[0];
-    const body = await request.json();
-    const { ij_inum, monto_propuesto, fecha_propuesta, mensaje } = body;
-
-    if (!ij_inum || !monto_propuesto || !fecha_propuesta) {
+    const body = await request.json().catch(() => null);
+    const parsed = SolicitudSchema.safeParse(body);
+    if (!parsed.success) {
       return NextResponse.json(
-        { error: 'Campos requeridos: ij_inum, monto_propuesto, fecha_propuesta' },
+        { error: 'Datos inválidos', detalle: parsed.error.issues },
+        { status: 400 }
+      );
+    }
+    const { ij_inum, monto_propuesto, fecha_propuesta, mensaje } = parsed.data;
+
+    // Fecha prometida: parseable y no en el pasado (tolerancia de 1 día por TZ).
+    const fechaProm = new Date(fecha_propuesta);
+    if (isNaN(fechaProm.getTime()) || fechaProm.getTime() < Date.now() - 24 * 3600 * 1000) {
+      return NextResponse.json(
+        { error: 'La fecha propuesta debe ser una fecha válida y futura' },
+        { status: 400 }
+      );
+    }
+
+    // IDOR a nivel de factura: la factura debe pertenecer al cliente del token
+    // (en su empresa). El adaptador filtra por empresa_id + codigo_cliente, así
+    // que un cliente no puede solicitar acuerdos sobre facturas ajenas.
+    const adapter = await adaptadorParaEmpresa(empresa_id);
+    const factura = await adapter.factura(ij_inum, codigo_cliente).catch(() => null);
+    if (!factura) {
+      return NextResponse.json(
+        { error: 'La factura indicada no pertenece a su cuenta o no existe' },
+        { status: 404 }
+      );
+    }
+    // El monto propuesto no puede exceder el saldo de la factura (tolerancia RD$1).
+    if (monto_propuesto > factura.saldoPendiente + 1) {
+      return NextResponse.json(
+        { error: 'El monto propuesto no puede exceder el saldo pendiente de la factura' },
         { status: 400 }
       );
     }
@@ -65,7 +102,7 @@ export async function POST(
         codigo_cliente,
         ij_inum,
         monto_propuesto,
-        new Date(fecha_propuesta),
+        fechaProm,
         mensaje || 'Solicitud desde portal de autogestión',
       ]
     );

@@ -32,10 +32,11 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: 'El prompt debe tener al menos 10 caracteres' }, { status: 400 });
     }
 
-    await setConfig(CLAVE, prompt.trim(), 'Prompt del agente IA (system prompt)', session.email, empresaIdDeSesion(session));
+    const empresaId = empresaIdDeSesion(session);
+    await setConfig(CLAVE, prompt.trim(), 'Prompt del agente IA (system prompt)', session.email, empresaId);
     await logAccion(session.email, 'PROMPT_AGENTE_ACTUALIZADO', 'config', CLAVE, {
       longitud: prompt.trim().length,
-    });
+    }, undefined, empresaId);
 
     return NextResponse.json({ ok: true });
   } catch (error) {

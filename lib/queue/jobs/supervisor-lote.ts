@@ -71,6 +71,8 @@ function fmtDOP(n: number): string {
   return `RD$${Math.round(n).toLocaleString('es-DO')}`;
 }
 
+// ALCANCE (Fase 3): exclusivo de Guipak (empresa_id = 1) A PROPÓSITO — ver nota
+// en supervisor-promesas.ts. Sin fuga cross-tenant; parametrizar en Etapa 4 resto.
 export async function ejecutarSupervisorLote(): Promise<SupervisorLoteStats> {
   const stats: SupervisorLoteStats = {
     cohorte: 0,

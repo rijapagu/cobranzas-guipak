@@ -137,9 +137,15 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ error: 'Debe especificar el archivo a eliminar (?archivo=nombre.csv)' }, { status: 400 });
     }
 
+    // CRÍTICO: scope por empresa. archivo_origen es input del usuario y no es
+    // único entre tenants (dos empresas pueden subir "extracto.csv"). Sin el
+    // filtro empresa_id, un supervisor del tenant A borraría la conciliación
+    // del tenant B. Cuenta, borra y audita SOLO la empresa de la sesión.
+    const empresaId = empresaIdDeSesion(session);
+
     const countResult = await cobranzasQuery<{ total: number }>(
-      'SELECT COUNT(*) as total FROM cobranza_conciliacion WHERE archivo_origen = ?',
-      [archivo]
+      'SELECT COUNT(*) as total FROM cobranza_conciliacion WHERE empresa_id = ? AND archivo_origen = ?',
+      [empresaId, archivo]
     );
     const total = countResult[0]?.total || 0;
 
@@ -147,9 +153,18 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ error: 'No se encontraron registros de ese archivo' }, { status: 404 });
     }
 
+    // Limpiar primero el detalle multi-recibo de esas conciliaciones (mismo
+    // scope de empresa) para no dejar filas huérfanas.
     await cobranzasExecute(
-      'DELETE FROM cobranza_conciliacion WHERE archivo_origen = ?',
-      [archivo]
+      `DELETE d FROM cobranza_conciliacion_detalle d
+       JOIN cobranza_conciliacion c ON c.id = d.conciliacion_id
+       WHERE c.empresa_id = ? AND c.archivo_origen = ? AND d.empresa_id = ?`,
+      [empresaId, archivo, empresaId]
+    );
+
+    await cobranzasExecute(
+      'DELETE FROM cobranza_conciliacion WHERE empresa_id = ? AND archivo_origen = ?',
+      [empresaId, archivo]
     );
 
     await logAccion(
@@ -157,7 +172,9 @@ export async function DELETE(request: NextRequest) {
       'CONCILIACION_LIMPIADA',
       'conciliacion',
       '0',
-      { archivo, registros_eliminados: total }
+      { archivo, registros_eliminados: total },
+      undefined,
+      empresaId
     );
 
     return NextResponse.json({ message: `${total} registros del archivo "${archivo}" eliminados`, total, archivo });
