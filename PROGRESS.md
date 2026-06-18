@@ -1012,3 +1012,34 @@ cola de aprobación. La regla de oro intacta: nada se envía sin aprobación.
 - Deuda menor: jobs Guipak-only (aplicar-anticipos, datos-faltantes,
   inteligencia, empuje, supervisor, reporte-diario, bot Telegram) siguen
   con softecQuery/empresa 1 explícito — greppeables, sin impacto multi-tenant.
+
+## Sesión 12-Junio-2026 (sesión 7) — Auditoría adversaria multi-tenant pre-go-live
+
+### Auditoría (workflow multi-agente, 41 agentes, 7 dimensiones)
+33 hallazgos brutos → 6 reales tras verificación adversaria (cada uno pasó por
+un verificador que intentó refutarlo). Veredicto inicial: listo-con-reservas
+con UN bloqueante. Dimensiones: rutas API, jobs/lib, secretos/config, adaptador
+ERP, regla de oro, auth/sesión/portal, SQL/collations.
+
+### Bloqueante corregido (commit d9de11a)
+- **conciliacion/resultados DELETE cross-tenant** (high): el COUNT y el DELETE
+  filtraban SOLO por `archivo_origen` (input del usuario, no único entre
+  tenants) sin `empresa_id` → un supervisor del tenant A borraba la conciliación
+  del tenant B subiendo un archivo homónimo. Fix: empresa_id en COUNT/DELETE/log
+  + limpieza del detalle multi-recibo en el mismo scope. Verificado en prod
+  (DELETE para empresa sin conciliación → 404, nunca cruza).
+
+### Hardening (mismos commit, sin ruta cross-tenant)
+- webhook Telegram aprobar/descartar ahora exige `esSupervisor` (paridad con web).
+- portal solicitar-acuerdo: Zod + ownership de factura (cierra IDOR a nivel
+  factura) + monto<=saldo + fecha futura. Verificado: factura ajena/cross-cliente
+  → 404, monto>saldo/fecha pasada → 400, solicitud propia válida → 200.
+- rate-limit: fail-DEGRADED con limitador en memoria si Redis cae (login ya no
+  fail-open). Verificado: 429 al agotar el límite por token.
+- prompt PUT: logAccion atribuye la empresa correcta.
+- supervisor-* documentados como Guipak-only por diseño (LLM local).
+
+### Veredicto final: LISTO para go-live (la única reserva quedó cerrada)
+Núcleo multi-tenant sólido: scoping por empresa_id consistente, regla de oro
+intacta en todos los canales, sin secretos expuestos ni rupturas SQL. Reportes
+de verificación: scripts/test-aislamiento-empresa2.mjs y test-onboarding-empresa-demo.mjs.
