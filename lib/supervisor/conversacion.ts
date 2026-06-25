@@ -19,6 +19,8 @@
  */
 
 import { cobranzasQuery } from '@/lib/db/cobranzas';
+import { softecQuery } from '@/lib/db/softec';
+import { ajustarSaldoClientes } from '@/lib/cobranzas/saldo-favor';
 import { generarSupervisorLocal } from '@/lib/supervisor/local-llm';
 
 interface CarteraRow {
@@ -53,7 +55,12 @@ export interface SupervisorChatResult {
 
 export const SUPERVISOR_CHAT_SYSTEM = `Eres el SUPERVISOR DE COBROS de Guipak (suministros, Rep. Dominicana), conversando por Telegram DIRECTO con el CEO (Ricardo). Eres su analista de cobranza de confianza: agudo, directo, estratégico. Tu trabajo es analizar y recomendar; NO ejecutas acciones ni mandas nada al cliente — eso lo decide el CEO y lo opera el equipo.
 
-Te paso un SNAPSHOT de datos reales de la cartera (deudores top, agregados y alertas recientes) seguido de la PREGUNTA del CEO. Responde apoyándote SOLO en esos datos y en tu criterio. NO inventes cifras que no estén en el snapshot (en particular, NO inventes margen ni ventas anuales: la "importancia" de un cliente se mide por exposición = saldo neto). Si la pregunta es sobre un cliente que no aparece en el snapshot, dilo claro y responde con lo general que puedas.
+Te paso un SNAPSHOT de datos reales de la cartera (deudores top, agregados y alertas recientes) seguido de la PREGUNTA del CEO. Responde apoyándote SOLO en esos datos y en tu criterio. NO inventes cifras que no estén en el snapshot (en particular, NO inventes margen ni ventas anuales: la "importancia" de un cliente se mide por exposición = saldo neto).
+
+REGLAS DURAS DE EXACTITUD (un error de saldo destruye la confianza):
+1. Si el snapshot trae un bloque "SALDO ACTUAL EN VIVO" para el cliente preguntado, USA ESE monto — es el de HOY. El bloque "Top deudores" es del último corrido del scoring y puede estar desactualizado; NO lo uses para el saldo puntual de un cliente.
+2. NUNCA atribuyas un saldo a un cliente que el CEO no nombró. Si la pregunta (o el follow-up) NO se ata claramente a un cliente del snapshot, NO respondas sobre otro cliente del top por tu cuenta: pide el NOMBRE EXACTO (o RNC/código). Más vale pedir precisión que inventar.
+3. Si el CEO te corrige una cifra ("¿no son X?"), revisa el SALDO EN VIVO del MISMO cliente del hilo; no cambies de cliente.
 
 Estilo: español dominicano profesional, conciso para Telegram (no más de ~180 palabras salvo que pidan detalle). Puedes usar viñetas cortas si ayudan a la claridad, pero nada de relleno ni disclaimers. Cuando recomiendes algo, sé concreto y con plazo. Si te piden una decisión que toca al cliente (plan de pagos, escalar legal), razónala (monto vs costo vs valor de la relación) pero recuérdale que la decisión y la firma son suyas.`;
 
@@ -71,10 +78,26 @@ const STOPWORDS = new Set([
   'dime', 'analiza', 'analisis', 'análisis', 'estado', 'riesgo', 'esto', 'eso',
 ]);
 
-/** Best-effort: busca clientes cuyo nombre coincida con palabras de la pregunta. */
-async function buscarClientesMencionados(pregunta: string): Promise<CarteraRow[]> {
+interface SaldoVivoRow {
+  codigo: string;
+  nombre: string;
+  saldo_pendiente: number;
+  saldo_a_favor: number;
+  saldo_neto: number;
+  total_facturas: number;
+  dias_mora_promedio: number;
+  cubierto_por_anticipo: boolean;
+}
+
+/**
+ * Saldo EN VIVO (Softec, HOY) de los clientes que menciona la pregunta. Misma fuente y
+ * fórmula que el dashboard/clientes (pendiente bruto IJ_TOT-IJ_TOTAPPL + ajuste de saldo a
+ * favor), NO la tabla materializada `cobranza_cliente_inteligencia` (que la refresca un job y
+ * puede estar stale). Así "¿cuánto debe X?" nunca da un saldo viejo.
+ */
+async function saldoEnVivoMencionados(texto: string): Promise<SaldoVivoRow[]> {
   const palabras = (
-    pregunta
+    texto
       .toLowerCase()
       .normalize('NFD')
       .replace(/\p{Diacritic}/gu, '')
@@ -84,16 +107,57 @@ async function buscarClientesMencionados(pregunta: string): Promise<CarteraRow[]
   const candidatas = [...new Set(palabras)].slice(0, 5);
   if (candidatas.length === 0) return [];
 
-  const likeClauses = candidatas.map(() => 'nombre_cliente LIKE ?').join(' OR ');
+  const likeClauses = candidatas.map(() => 'c.IC_NAME LIKE ?').join(' OR ');
   const params = candidatas.map((w) => `%${w}%`);
-  return cobranzasQuery<CarteraRow>(
-    `SELECT nombre_cliente, saldo_neto, risk_level, risk_score, dias_mora_promedio,
-            tasa_cumplimiento_promesas, tendencia
-     FROM cobranza_cliente_inteligencia
-     WHERE empresa_id = 1 AND (${likeClauses}) AND saldo_neto > 0
-     ORDER BY saldo_neto DESC
-     LIMIT 5`,
+  const aging = await softecQuery<{
+    codigo: string;
+    nombre: string;
+    saldo_pendiente: number;
+    total_facturas: number;
+    dias_mora_promedio: number;
+  }>(
+    `SELECT c.IC_CODE AS codigo, c.IC_NAME AS nombre,
+            SUM(f.IJ_TOT - f.IJ_TOTAPPL)                       AS saldo_pendiente,
+            COUNT(f.IJ_INUM)                                    AS total_facturas,
+            AVG(GREATEST(0, DATEDIFF(CURDATE(), f.IJ_DUEDATE))) AS dias_mora_promedio
+     FROM v_cobr_ijnl f
+     INNER JOIN v_cobr_icust c ON c.IC_CODE = f.IJ_CCODE AND c.IC_STATUS = 'A'
+     WHERE f.IJ_TYPEDOC = 'IN' AND f.IJ_INVTORF = 'T' AND f.IJ_PAID = 'F'
+       AND (f.IJ_TOT - f.IJ_TOTAPPL) > 0 AND (${likeClauses})
+     GROUP BY c.IC_CODE, c.IC_NAME
+     ORDER BY saldo_pendiente DESC
+     LIMIT 6`,
     params
+  );
+  if (aging.length === 0) return [];
+
+  // Resta saldo a favor (anticipos) por cliente, igual que el dashboard.
+  const ajustados = await ajustarSaldoClientes(
+    aging.map((r) => ({ codigo_cliente: String(r.codigo).trim(), saldo_pendiente: Number(r.saldo_pendiente) }))
+  );
+  const byCodigo = new Map(ajustados.map((a) => [a.codigo_cliente, a]));
+
+  return aging.map((r) => {
+    const a = byCodigo.get(String(r.codigo).trim());
+    return {
+      codigo: String(r.codigo).trim(),
+      nombre: String(r.nombre).trim(),
+      saldo_pendiente: a?.saldo_pendiente ?? Number(r.saldo_pendiente),
+      saldo_a_favor: a?.saldo_a_favor ?? 0,
+      saldo_neto: a?.saldo_neto ?? Number(r.saldo_pendiente),
+      total_facturas: Number(r.total_facturas),
+      dias_mora_promedio: Number(r.dias_mora_promedio),
+      cubierto_por_anticipo: a?.cubierto_por_anticipo ?? false,
+    };
+  });
+}
+
+function lineaSaldoVivo(c: SaldoVivoRow): string {
+  const favor = c.saldo_a_favor > 0 ? `, a favor ${fmtDOP(c.saldo_a_favor)}` : '';
+  const cubierto = c.cubierto_por_anticipo ? ' (cubierto por anticipo → neto 0)' : '';
+  return (
+    `- ${c.nombre} (${c.codigo}): ${fmtDOP(c.saldo_neto)} NETO (pendiente ${fmtDOP(c.saldo_pendiente)}${favor}), ` +
+    `${c.total_facturas} factura(s), mora prom. ${Math.round(c.dias_mora_promedio)}d${cubierto}`
   );
 }
 
@@ -107,8 +171,10 @@ function lineaCliente(c: CarteraRow): string {
   );
 }
 
-/** Arma el bloque de contexto en texto plano que precede a la pregunta. */
-async function construirContexto(pregunta: string): Promise<string> {
+/** Arma el bloque de contexto en texto plano que precede a la pregunta.
+ *  `contexto` = turnos previos del hilo (lo manda el CEO) — se usa para resolver el cliente
+ *  activo en follow-ups ("¿y ese?", "no son 50mil?") sin perder el sujeto. */
+async function construirContexto(pregunta: string, contexto = ''): Promise<string> {
   const topN = Math.max(1, Math.min(25, Number(process.env.SUPERVISOR_CHAT_TOP_N) || 8));
 
   const [agg] = await cobranzasQuery<AggRow>(
@@ -136,7 +202,8 @@ async function construirContexto(pregunta: string): Promise<string> {
      LIMIT 5`
   );
 
-  const mencionados = await buscarClientesMencionados(pregunta);
+  // Saldo EN VIVO de los clientes mencionados (en la pregunta o en el hilo previo).
+  const mencionados = await saldoEnVivoMencionados(`${pregunta}\n${contexto}`);
 
   const partes: string[] = ['=== SNAPSHOT DE CARTERA (datos reales) ==='];
 
@@ -147,15 +214,19 @@ async function construirContexto(pregunta: string): Promise<string> {
   }
 
   if (top.length > 0) {
-    partes.push(`\nTop ${top.length} deudores por exposición (saldo neto):`);
+    partes.push(
+      `\nTop ${top.length} deudores por exposición (del ÚLTIMO corrido del scoring — puede no reflejar pagos de hoy; para un cliente concreto manda el SALDO EN VIVO de abajo):`
+    );
     partes.push(...top.map(lineaCliente));
   } else {
     partes.push('\nNo hay clientes con saldo en el scoring (¿corrió el job de inteligencia?).');
   }
 
   if (mencionados.length > 0) {
-    partes.push(`\nCliente(s) que parece(s) mencionar la pregunta:`);
-    partes.push(...mencionados.map(lineaCliente));
+    partes.push(
+      `\nSALDO ACTUAL EN VIVO (Softec, HOY) del/los cliente(s) mencionado(s) — USA ESTAS CIFRAS para ese cliente, NO las del top:`
+    );
+    partes.push(...mencionados.map(lineaSaldoVivo));
   }
 
   if (alertas.length > 0) {
@@ -179,9 +250,15 @@ async function construirContexto(pregunta: string): Promise<string> {
  * Responde una pregunta estratégica del CEO con deepseek + contexto en vivo.
  * Lanza si el gateway falla (el caller decide el mensaje de error).
  */
-export async function conversarSupervisor(pregunta: string): Promise<SupervisorChatResult> {
-  const contexto = await construirContexto(pregunta);
-  const user = `${contexto}\n\n=== PREGUNTA DEL CEO ===\n${pregunta.trim()}`;
+export async function conversarSupervisor(
+  pregunta: string,
+  historial = ''
+): Promise<SupervisorChatResult> {
+  const snapshot = await construirContexto(pregunta, historial);
+  const bloqueHilo = historial
+    ? `=== CONVERSACIÓN PREVIA (para resolver referencias como "ese"/"no son 50mil?"; NO la repitas) ===\n${historial}\n\n`
+    : '';
+  const user = `${snapshot}\n\n${bloqueHilo}=== PREGUNTA DEL CEO ===\n${pregunta.trim()}`;
 
   const llm = await generarSupervisorLocal({
     system: SUPERVISOR_CHAT_SYSTEM,

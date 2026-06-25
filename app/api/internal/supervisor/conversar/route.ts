@@ -25,9 +25,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  let body: { pregunta?: string };
+  let body: { pregunta?: string; contexto?: string };
   try {
-    body = (await req.json()) as { pregunta?: string };
+    body = (await req.json()) as { pregunta?: string; contexto?: string };
   } catch {
     return NextResponse.json({ error: 'bad-json' }, { status: 400 });
   }
@@ -36,9 +36,12 @@ export async function POST(req: NextRequest) {
   if (!pregunta) {
     return NextResponse.json({ error: 'falta el campo "pregunta"' }, { status: 400 });
   }
+  // `contexto` = turnos previos del hilo que manda el CEO; sirve para resolver follow-ups
+  // ("no son 50mil?") sin perder el cliente activo. Opcional (compat hacia atrás).
+  const contexto = (body.contexto || '').trim();
 
   try {
-    const { text, model, latencyMs } = await conversarSupervisor(pregunta);
+    const { text, model, latencyMs } = await conversarSupervisor(pregunta, contexto);
     return NextResponse.json({ ok: true, area: 'cobros', text, model, latencyMs });
   } catch (err) {
     await logError('supervisor-conversar', err, { pregunta: pregunta.substring(0, 200) });
