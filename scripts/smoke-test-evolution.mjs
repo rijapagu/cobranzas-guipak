@@ -65,7 +65,11 @@ function limpiarTelefono(telefono) {
 async function evoFetch(path, init = {}) {
   const res = await fetch(`${URL}${path}`, {
     ...init,
-    headers: { 'Content-Type': 'application/json', apikey: KEY, ...(init.headers || {}) },
+    // `connection: close` evita que undici deje un socket keep-alive ocioso:
+    // ese socket dispara el assert UV_HANDLE_CLOSING de libuv al salir en
+    // Windows (exit 0xC0000409), sobre todo cuando el proceso corre como hijo
+    // del runner con stdout en pipe.
+    headers: { 'Content-Type': 'application/json', apikey: KEY, connection: 'close', ...(init.headers || {}) },
   });
   const text = await res.text();
   let json = null;

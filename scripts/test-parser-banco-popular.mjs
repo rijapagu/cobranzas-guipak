@@ -3,7 +3,8 @@
  * y muestra estadísticas + primeras transacciones.
  */
 import { readFileSync } from 'fs';
-import { join } from 'path';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
 
 // Inline the parser logic for testing (avoids TS compilation)
 function esBancoPopular(text) {
@@ -167,7 +168,10 @@ function parsearTXT(text) {
 }
 
 // --- Run tests ---
-const extractosDir = 'E:\\IA\\cobranzas-guipak\\Extractos';
+// Ruta relativa a la raíz del proyecto (antes apuntaba a un E:\ hardcodeado de
+// otra máquina). Override opcional con EXTRACTOS_DIR.
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const extractosDir = process.env.EXTRACTOS_DIR || join(__dirname, '..', 'Extractos');
 
 console.log('=== TEST PARSER BANCO POPULAR ===\n');
 
