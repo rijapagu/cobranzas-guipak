@@ -659,27 +659,36 @@ FROM (
   LEFT JOIN (
     SELECT
       r.IR_PLOCAL,
-      r.IR_PTYPDOC,
+      r.IR_PAYDOC,
       r.IR_RECNUM,
       SUM(r.IR_AMTPAID) AS aplicado
     FROM v_cobr_irjnl r
-    GROUP BY r.IR_PLOCAL, r.IR_PTYPDOC, r.IR_RECNUM
+    GROUP BY r.IR_PLOCAL, r.IR_PAYDOC, r.IR_RECNUM
   ) ap
-    ON  ap.IR_PLOCAL  = pay.IJ_LOCAL
-    AND ap.IR_PTYPDOC = pay.IJ_SINORIN
-    AND ap.IR_RECNUM  = pay.IJ_RECNUM
+    ON  ap.IR_PLOCAL = pay.IJ_LOCAL
+    AND ap.IR_PAYDOC = pay.IJ_SINORIN
+    AND ap.IR_RECNUM = pay.IJ_RECNUM
   WHERE pay.IJ_CCODE IS NOT NULL
-) recibos
+    AND pay.IJ_TYPEDOC IN ('RC', 'DC')
+
+  UNION ALL
+
+  -- Notas de crédito sin aplicar: también son saldo a favor del cliente.
+  SELECT nc.IJ_CCODE, (ABS(nc.IJ_TOT) - ABS(nc.IJ_TOTAPPL))
+  FROM v_cobr_ijnl nc
+  WHERE nc.IJ_CCODE IS NOT NULL AND nc.IJ_INVTORF = 'C' AND nc.IJ_TYPEDOC = 'CR'
+) creditos
 WHERE sin_aplicar > 0.01     -- filtrar antes de agregar por cliente
 GROUP BY codigo_cliente
 HAVING saldo_a_favor > 0.01;
 ```
 
-**Tres notas críticas del JOIN:**
+**Notas críticas del JOIN:**
 
-1. **CP-13**: el JOIN se hace por `IR_PLOCAL / IR_PTYPDOC / IR_RECNUM` (que apuntan al recibo). **No** usar `IR_F*` (factura) — en Guipak vienen vacías a nivel de pago.
-2. **CP-14**: no usar `IJ_ONLPAID` ni desglosados de `ijnl_pay`. Suma siempre `IR_AMTPAID` agregado de `irjnl`.
-3. Filtrar `sin_aplicar > 0.01` ANTES de agrupar por cliente — un recibo sobre-aplicado (raro, viene de ajustes contables) no debe restar del saldo a favor del cliente.
+1. **CP-13**: el JOIN se hace por `IR_PLOCAL / IR_PAYDOC / IR_RECNUM` (que apuntan al recibo). **No** usar `IR_F*` (factura) — en Guipak vienen vacías a nivel de pago. **Tampoco `IR_PTYPDOC`**: es el TIPO del documento, no la serie; contra `IJ_SINORIN` (una serie) los recibos de serie `DE` no matchean nunca. Corregido el 1-sep-2026 — era la causa real de los RD$5.59M de saldo a favor inflado.
+2. **CP-14**: no usar `IJ_ONLPAID` ni desglosados de `ijnl_pay`. Suma siempre `IR_AMTPAID` agregado de `irjnl`. (Excepción medida: para las notas de crédito alcanza `IJ_TOTAPPL`, verificado contra el recálculo del ERP sobre los 368 documentos de DEV con diferencia 0.00.)
+3. Filtrar `sin_aplicar > 0.01` ANTES de agrupar por cliente — un recibo sobre-aplicado (raro, viene de ajustes contables) no debe restar del saldo a favor del cliente. Esto deja un residuo conocido de ~0.02% contra el ERP, que sí los resta.
+4. Se cuentan recibos `RC` y `DC` (por TIPO, no por serie) y las notas de crédito. Es exactamente lo que netea el ERP en `VCC\icalbalance.prg`.
 
 **Tabla "Usar / No usar":**
 
@@ -689,7 +698,7 @@ HAVING saldo_a_favor > 0.01;
 | Saldo TOTAL de un cliente para presentar al usuario | `obtenerSaldoAFavorPorCliente()` + `ajustarSaldoCliente()` | `SUM(IJ_TOT - IJ_TOTAPPL)` solo |
 | Decidir si un cliente debe recibir cobranza | `ajuste.cubierto_por_anticipo === false` | comparar saldo bruto contra 0 |
 | Cartera total agregada (dashboard, reporte global) | bruto + a favor + neto (mostrar los tres) | solo bruto |
-| Cuántos pagos aplicó un recibo | `SUM(IR_AMTPAID)` con JOIN por `IR_PLOCAL/IR_PTYPDOC/IR_RECNUM` (CP-13) | `IJ_ONLPAID` (CP-14) ni `IR_F*` |
+| Cuántos pagos aplicó un recibo | `SUM(IR_AMTPAID)` con JOIN por `IR_PLOCAL/IR_PAYDOC/IR_RECNUM` (CP-13) | `IJ_ONLPAID` (CP-14), `IR_F*`, ni `IR_PTYPDOC` |
 | DSO o métricas contables externas | bruto (estándar de la disciplina) | neto |
 
 **Helper canónico:** `lib/cobranzas/saldo-favor.ts`

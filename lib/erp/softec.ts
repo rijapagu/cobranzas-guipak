@@ -125,6 +125,12 @@ const SELECT_CLIENTE = `
   IC_PHONE AS telefono, IC_PHONE2 AS telefono2,
   IC_CONTACT AS contacto, IC_SLSCODE AS vendedor, IC_CRDLMT AS limite_credito`;
 
+// Tope de filas de la cartera. El dashboard pide la cartera COMPLETA, así que si
+// este tope se alcanza los KPIs quedan subestimados — y encima el DSO calcula su
+// CxC sin tope, con lo cual las dos cifras se contradirían entre sí. Truncar en
+// silencio una cifra financiera es peor que tardar: si satura, se avisa.
+const TOPE_CARTERA = Number(process.env.CARTERA_MAX_FILAS) || 20000;
+
 export const softecAdapter: ErpAdapter = {
   tipo: 'SOFTEC',
 
@@ -133,7 +139,7 @@ export const softecAdapter: ErpAdapter = {
   },
 
   async carteraPendiente(opciones?: OpcionesCartera): Promise<FacturaPendiente[]> {
-    const limite = Math.min(opciones?.limite ?? 5000, 5000);
+    const limite = Math.min(opciones?.limite ?? TOPE_CARTERA, TOPE_CARTERA);
     // soloVencidas → DATEDIFF >= 1 (equivale al IJ_DUEDATE < CURDATE() legacy).
     const umbralDias = opciones?.soloVencidas ? 1 : -(opciones?.incluirPorVencerDias ?? 0);
     const conUltimoPago = opciones?.incluirUltimoPago === true;
@@ -204,6 +210,13 @@ export const softecAdapter: ErpAdapter = {
       LIMIT ${limite}`;
 
     const rows = await softecQuery<FilaCartera>(sqlBase, params);
+    if (rows.length >= limite) {
+      console.error(
+        `[softec.carteraPendiente] TOPE ALCANZADO: ${rows.length} filas = límite ${limite}. ` +
+          `La cartera está truncada y los totales quedan SUBESTIMADOS. ` +
+          `Subir CARTERA_MAX_FILAS.`
+      );
+    }
     return rows.map(mapFactura);
   },
 

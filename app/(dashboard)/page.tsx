@@ -252,15 +252,17 @@ export default function DashboardPage() {
       <Row gutter={[16, 16]}>
         <Col xs={24} sm={12} lg={8}>
           <Card>
+            {/* Decía "Cartera Vencida" pero la consulta trae TODA la cartera
+                abierta, vencida y por vencer (dias_vencida >= -36500). */}
             <Statistic
-              title="Cartera Vencida (bruta)"
+              title="Cartera Total (bruta)"
               value={kpis.cartera_total}
               prefix={<DollarOutlined />}
               formatter={() => formatMonto(kpis.cartera_total)}
               valueStyle={{ color: "#cf1322" }}
             />
             <Text type="secondary" style={{ fontSize: 12 }}>
-              Suma de saldos pendientes en Softec
+              Saldos abiertos en Softec (vencidos y por vencer)
             </Text>
           </Card>
         </Col>

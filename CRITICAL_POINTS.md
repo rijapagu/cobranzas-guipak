@@ -275,23 +275,34 @@ if (!auth) {
 
 ---
 
-## ⚠️ CP-13 — JOIN factura↔pago por IR_PLOCAL/IR_PTYPDOC/IR_RECNUM (no IR_F*)
+## ⚠️ CP-13 — JOIN recibo↔aplicación por IR_PLOCAL/**IR_PAYDOC**/IR_RECNUM (no IR_F*, no IR_PTYPDOC)
 
-**Descripción:** Para cruzar un recibo (`ijnl_pay`) con sus aplicaciones (`irjnl`), usar las columnas que apuntan al **recibo**: `IR_PLOCAL`, `IR_PTYPDOC`, `IR_RECNUM`. No usar las columnas `IR_F*` (que apuntan a la factura) porque en Guipak vienen vacías/inconsistentes a nivel de pago.
+**Descripción:** Para cruzar un recibo (`ijnl_pay`) con sus aplicaciones (`irjnl`), usar las columnas que apuntan al **recibo**: `IR_PLOCAL`, `IR_PAYDOC`, `IR_RECNUM`. No usar las columnas `IR_F*` (que apuntan a la factura) porque en Guipak vienen vacías/inconsistentes a nivel de pago.
+
+> **Corregido el 1-sep-2026.** Hasta esa fecha este CP decía `IR_PTYPDOC` y eso
+> estaba MAL. `IR_PAYDOC` es la **serie** del recibo (RC/DE/DC/CI) e `IR_PTYPDOC`
+> es su **tipo** (RC/DC/CR). `IJ_SINORIN` es una serie, así que sólo `IR_PAYDOC`
+> le corresponde. Con `IR_PTYPDOC` los recibos de serie `DE` (tipo `DC`) no
+> matcheaban NUNCA y se contaban como enteramente sin aplicar.
+> Medido en DEV: **1.059 de 1.059 recibos DE sin match** por PTYPDOC, contra 14
+> por PAYDOC. Esa era la verdadera causa de los RD$5.59M de saldo a favor
+> inflado que el 12-may-2026 se "arregló" excluyendo las DE del cálculo — se
+> trató el síntoma, no la causa. Con el join correcto las DE ya no inflan nada y
+> el saldo a favor concilia con el ERP.
 
 **Implementación:**
 ```sql
 LEFT JOIN v_cobr_irjnl r
-    ON  r.IR_PLOCAL  = pay.IJ_LOCAL
-    AND r.IR_PTYPDOC = pay.IJ_SINORIN
-    AND r.IR_RECNUM  = pay.IJ_RECNUM
+    ON  r.IR_PLOCAL = pay.IJ_LOCAL
+    AND r.IR_PAYDOC = pay.IJ_SINORIN   -- serie contra serie
+    AND r.IR_RECNUM = pay.IJ_RECNUM
 ```
 
 **Donde se aplica:** todo cálculo de "saldo a favor" del cliente y cualquier reporte que necesite saber cuánto de un recibo ya fue aplicado.
 
 **Documentado en:** `lib/cobranzas/saldo-favor.ts` (JSDoc del helper).
 
-**Consecuencia si se rompe:** el saldo a favor se calcula con datos inconsistentes (IR_F* a veces tiene NULL, a veces el número correcto). Resultado: aplicación parcial mal calculada, sobrecobros o subcobros aleatorios.
+**Consecuencia si se rompe:** el saldo a favor se calcula con datos inconsistentes (IR_F* a veces tiene NULL, a veces el número correcto), o —si se usa IR_PTYPDOC— recibos enteros aparecen como no aplicados. Resultado: clientes marcados como "cubiertos por anticipo" que en realidad deben, y por lo tanto sin gestión de cobro.
 
 ---
 
