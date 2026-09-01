@@ -246,10 +246,24 @@ export default function DashboardPage() {
         </Row>
       )}
 
-      {/* CP-15: tres cards de cartera — bruto / a favor / neto cobrable.
-          Si no hay anticipos, las 3 muestran el mismo número (consistencia
-          visual) y el subtítulo "a favor" queda en cero. */}
+      {/* Cartera: la cifra PRINCIPAL es la NETA, que es la que coincide con el
+          "Análisis de Antigüedad de Saldo" del ERP (la fuente de verdad).
+          Antes encabezaba la bruta y el tablero mostraba de más. */}
       <Row gutter={[16, 16]}>
+        <Col xs={24} sm={12} lg={8}>
+          <Card>
+            <Statistic
+              title="Cartera Neta (cobrable)"
+              value={carteraNeta}
+              prefix={<DollarOutlined />}
+              formatter={() => formatMonto(carteraNeta)}
+              valueStyle={{ color: "#cf1322" }}
+            />
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              Coincide con Análisis de Antigüedad del ERP
+            </Text>
+          </Card>
+        </Col>
         <Col xs={24} sm={12} lg={8}>
           <Card>
             {/* Decía "Cartera Vencida" pero la consulta trae TODA la cartera
@@ -259,10 +273,10 @@ export default function DashboardPage() {
               value={kpis.cartera_total}
               prefix={<DollarOutlined />}
               formatter={() => formatMonto(kpis.cartera_total)}
-              valueStyle={{ color: "#cf1322" }}
+              valueStyle={{ color: "#8c8c8c" }}
             />
             <Text type="secondary" style={{ fontSize: 12 }}>
-              Saldos abiertos en Softec (vencidos y por vencer)
+              Saldos abiertos, sin descontar créditos
             </Text>
           </Card>
         </Col>
@@ -276,23 +290,7 @@ export default function DashboardPage() {
               valueStyle={{ color: hayAnticipos ? "#1890ff" : "#8c8c8c" }}
             />
             <Text type="secondary" style={{ fontSize: 12 }}>
-              Recibos sin aplicar a facturas
-            </Text>
-          </Card>
-        </Col>
-        <Col xs={24} sm={12} lg={8}>
-          <Card>
-            <Statistic
-              title="Cartera Neta (cobrable)"
-              value={carteraNeta}
-              prefix={<DollarOutlined />}
-              formatter={() => formatMonto(carteraNeta)}
-              valueStyle={{ color: "#cf1322" }}
-            />
-            <Text type="secondary" style={{ fontSize: 12 }}>
-              {hayAnticipos
-                ? "Bruto menos saldo a favor"
-                : "Sin anticipos por descontar"}
+              Recibos y notas de crédito sin aplicar
             </Text>
           </Card>
         </Col>

@@ -177,18 +177,31 @@ export async function GET(request: NextRequest) {
           .sort((a, b) => b.saldo_neto - a.saldo_neto)
           .slice(0, 10);
 
-        // CP-15: cartera neta global (favor aplicado por cliente, sin
-        // transferir entre clientes).
-        const saldosFavorTodos = await obtenerSaldoAFavorPorCliente(Object.keys(clienteMap));
-        let aFavorAplicable = 0;
-        let netoAcumulado = 0;
-        for (const [codigo, d] of Object.entries(clienteMap)) {
-          const favor = saldosFavorTodos.get(codigo) ?? 0;
-          aFavorAplicable += Math.min(d.saldo, favor);
-          netoAcumulado += Math.max(0, d.saldo - favor);
+        // CP-15 (corregido 1-sep-2026): la cartera NETA global tiene que dar lo
+        // mismo que el "Análisis de Antigüedad de Saldo" del ERP, que es la
+        // fuente de verdad. Antes daba de MÁS por tres motivos, los tres
+        // empujando en la misma dirección:
+        //   1. `Math.max(0, saldo - favor)`: un cliente con más crédito que
+        //      deuda aportaba 0 en vez de un NEGATIVO. El ERP sí lo cuenta en
+        //      negativo (p.ej. TRANSFERENCIAS S/ID −45,313.74 en el impreso).
+        //   2. Sólo se pedían los créditos de los clientes CON factura abierta
+        //      (`Object.keys(clienteMap)`), así que los que sólo tienen un
+        //      recibo a cuenta no restaban nada. Medido en DEV: 111 clientes,
+        //      RD$ 309,675.46 que desaparecían.
+        //   3. `Math.min(saldo, favor)` recortaba el saldo a favor al monto de
+        //      la deuda, subestimándolo y por lo tanto inflando la neta.
+        //
+        // El tope por cliente sigue existiendo, pero sólo donde corresponde:
+        // decidir a quién NO gestionar (`ajustarSaldoCliente` /
+        // `cubierto_por_anticipo`). Para el total de cartera es incorrecto.
+        const saldosFavorTodos = await obtenerSaldoAFavorPorCliente();
+        let aFavorTotal = 0;
+        for (const favor of saldosFavorTodos.values()) {
+          aFavorTotal += favor;
         }
-        kpis.cartera_total_a_favor = Math.round(aFavorAplicable * 100) / 100;
-        kpis.cartera_total_neta = Math.round(netoAcumulado * 100) / 100;
+        kpis.cartera_total_a_favor = Math.round(aFavorTotal * 100) / 100;
+        kpis.cartera_total_neta =
+          Math.round((kpis.cartera_total - aFavorTotal) * 100) / 100;
 
         // DSO = (CxC / Ventas últimos 90 días) × 90 — requiere las ventas
         // del ERP: query especializada solo-Softec.
