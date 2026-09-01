@@ -39,7 +39,18 @@ async function main() {
   });
 
   worker.on('failed', (job, err) => {
-    console.error(`[Worker] Job fallido: ${job?.name}`, err.message);
+    // `err.message` solo NO alcanza: los errores de conexion de mysql2
+    // (ECONNREFUSED) llegan con message VACIO, asi que la linea quedaba en
+    // "Job fallido: cadencias-horarias" y nada mas. Eso escondio un dia entero
+    // de fallos del worker el 2026-09-01. Se agrega el code y, si sigue sin
+    // haber texto, el error completo.
+    const e = err as NodeJS.ErrnoException & { code?: string };
+    const detalle = [e?.message, e?.code].filter(Boolean).join(' | ');
+    if (detalle) {
+      console.error(`[Worker] Job fallido: ${job?.name} -> ${detalle}`);
+    } else {
+      console.error(`[Worker] Job fallido: ${job?.name} -> sin mensaje:`, err);
+    }
   });
 
   console.log('[Worker] Listo. Esperando jobs...');
