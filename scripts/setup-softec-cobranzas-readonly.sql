@@ -94,9 +94,11 @@ FROM irjnl;
 --    Usada en: saldo a favor, conciliación bancaria, estado de cuenta.
 --    JOIN con ijnl_onlpay para obtener IJ_PAY (tipo pago: EF/CK/6).
 -- -------------------------------------------------------------
--- IJ_TYPEDOC agregado el 1-sep-2026: el saldo a favor filtraba por SERIE
--- (IJ_SINORIN) porque el tipo no estaba expuesto, y eso colaba documentos DC
--- con serie 'RC'. Serie y tipo NO son lo mismo. Ver lib/cobranzas/saldo-favor.ts.
+-- IJ_TYPEDOC expuesto el 1-sep-2026. NO es obligatorio para el codigo actual:
+-- saldo-favor.ts filtra por las tres SERIES de recibo ('RC','DE','DC'), que
+-- cubren exactamente el mismo conjunto (verificado en DEV: 16.345 filas, cero
+-- diferencias). Se deja expuesto para que futuras consultas puedan distinguir
+-- TIPO de SERIE sin volver a confundirlos. Ver lib/cobranzas/saldo-favor.ts.
 CREATE OR REPLACE VIEW v_cobr_ijnl_pay AS
 SELECT
     p.IJ_LOCAL,

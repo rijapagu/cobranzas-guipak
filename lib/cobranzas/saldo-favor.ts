@@ -49,10 +49,9 @@ export type AjusteSaldo = Omit<SaldoCliente, 'codigo_cliente'>;
  *   Antigüedad de Saldo" del módulo CC. La brecha era crédito sin aplicar que
  *   esta función no veía. Se decidió (dueño) conciliar con el ERP:
  *     - se AGREGAN las notas de crédito, que faltaban por completo;
- *     - se AGREGAN los DC/DE, que el fix del 12-may-2026 había excluido;
- *     - se filtra por TIPO de documento (IJ_TYPEDOC) y no por SERIE
- *       (IJ_SINORIN): el filtro viejo `IJ_SINORIN='RC'` colaba 24 documentos
- *       DC justamente por mirar la serie.
+ *     - se AGREGAN los DC/DE, que el fix del 12-may-2026 había excluido: el
+ *       filtro pasa de `IJ_SINORIN='RC'` a las tres series de recibo
+ *       ('RC','DE','DC'), que es el mismo conjunto que IJ_TYPEDOC IN ('RC','DC');
  *   POR QUÉ AHORA SÍ SE PUEDEN INCLUIR LAS DE: el fix del 12-may existía porque
  *   las DE inflaban el saldo a favor en RD$5.59M (18 falsos "cubiertos por
  *   anticipo", clientes que dejaban de recibir gestión). Esa inflación no venía
@@ -103,9 +102,13 @@ export async function obtenerSaldoAFavorPorCliente(
   // un documento sobre-aplicado (raro, viene de ajustes contables) no resta del
   // saldo a favor del cliente — replica el endpoint estado-cuenta.
   //
-  // Rama 1: recibos de ijnl_pay. Se filtra por IJ_TYPEDOC ('RC','DC') y NO por
-  // IJ_SINORIN: la serie y el tipo no son lo mismo, y filtrar por serie dejaba
-  // entrar 24 documentos DC con serie 'RC' (medido en DEV el 1-sep-2026).
+  // Rama 1: recibos de ijnl_pay. Se listan las TRES series de recibo
+  // ('RC','DE','DC') en vez de sólo 'RC'. Medido en DEV: eso cubre exactamente
+  // el mismo conjunto que IJ_TYPEDOC IN ('RC','DC') — 16.345 filas, los pares
+  // son RC/RC, DC/DE, DC/DC y DC/RC. Se usa la serie y no el tipo porque
+  // `v_cobr_ijnl_pay` NO expone IJ_TYPEDOC en PROD, y no vale la pena atar este
+  // fix a un cambio de vista. Lo que estaba MAL no era filtrar por serie: era
+  // la llave del JOIN (ver abajo).
   // Rama 2: notas de crédito de ijnl (IJ_INVTORF='C'), que antes no se miraban.
   // Para las NC alcanza IJ_TOTAPPL: verificado en DEV contra el recálculo del
   // ERP (ONLPAID+ONLCR+irjnl) sobre los 368 documentos, diferencia 0.00.
@@ -134,7 +137,7 @@ export async function obtenerSaldoAFavorPorCliente(
          AND ap.IR_PAYDOC = pay.IJ_SINORIN
          AND ap.IR_RECNUM = pay.IJ_RECNUM
        WHERE pay.IJ_CCODE IS NOT NULL
-         AND pay.IJ_TYPEDOC IN ('RC', 'DC')
+         AND pay.IJ_SINORIN IN ('RC', 'DE', 'DC')
          ${filtroCodigos}
 
        UNION ALL
