@@ -1,6 +1,7 @@
 import { cobranzasQuery, cobranzasExecute, logAccion } from '@/lib/db/cobranzas';
 import { testSoftecConnection } from '@/lib/db/softec';
-import { enviarMensajeGrupo } from '@/lib/telegram/client';
+import { enviarMensajeGrupo, enviarMensajePrivado } from '@/lib/telegram/client';
+import { esDiaLaborable, fechaAST } from '@/lib/horario';
 import { procesarLinea } from './matcher';
 import { toYmd } from '@/lib/utils/fechas';
 import type { LineaExtracto } from '@/lib/types/conciliacion';
@@ -294,4 +295,89 @@ export async function recordatorioChequesDevueltos(): Promise<number> {
   }
 
   return viejos.length;
+}
+
+/**
+ * Le pide el extracto bancario al administrador si hoy todavía no ha llegado.
+ *
+ * La conciliación es la primera responsabilidad del asistente de cobros —antes
+ * que cobrar—, pero no puede empezarla solo: el extracto lo baja una persona
+ * del banco. Esto cierra ese hueco pidiéndolo, en vez de esperar callado.
+ *
+ * Va al chat PRIVADO del administrador, no al grupo: responderle adjuntando el
+ * fichero ahí es lo natural, y el webhook ya sabe recibirlo
+ * (`manejarDocumento`). Se calla en fin de semana y se calla si hoy ya se cargó
+ * alguno — no hay estado que mantener, la propia tabla de conciliación es el
+ * registro de si llegó.
+ */
+export async function pedirExtractoSiFalta(): Promise<{
+  pedido: boolean;
+  motivo: string;
+  dias?: number;
+}> {
+  if (!esDiaLaborable()) return { pedido: false, motivo: 'fin de semana' };
+
+  const filas = await cobranzasQuery<{ ultima: string | null }>(
+    'SELECT MAX(created_at) AS ultima FROM cobranza_conciliacion WHERE empresa_id = 1'
+  );
+  const ultimaRaw = filas[0]?.ultima;
+  const hoy = fechaAST();
+
+  let dias = 0;
+  if (ultimaRaw) {
+    const ultima = new Date(ultimaRaw);
+    if (fechaAST(ultima) === hoy) {
+      return { pedido: false, motivo: 'ya se cargó un extracto hoy' };
+    }
+    dias = Math.max(
+      1,
+      Math.round((Date.parse(`${hoy}T12:00:00Z`) - Date.parse(`${fechaAST(ultima)}T12:00:00Z`)) / 86400000)
+    );
+  }
+
+  // A quién: el ADMIN activo con Telegram vinculado. Se busca por el rol de la
+  // APP y no por el del chat, porque el del chat es derivado y no distingue
+  // ADMIN de SUPERVISOR.
+  const destinatarios = await cobranzasQuery<{ telegram_user_id: number; nombre: string }>(
+    `SELECT t.telegram_user_id, u.nombre
+     FROM cobranza_telegram_usuarios t
+     JOIN usuarios u ON u.id = t.usuario_id AND u.empresa_id = t.empresa_id
+     WHERE t.empresa_id = 1 AND t.activo = 1 AND u.activo = 1 AND u.rol = 'ADMIN'`
+  );
+  if (destinatarios.length === 0) {
+    return { pedido: false, motivo: 'ningún ADMIN con Telegram vinculado' };
+  }
+
+  const cuantoLlevamos =
+    dias === 0
+      ? 'Todavía no tengo ningún extracto cargado.'
+      : dias === 1
+        ? 'El último que cargamos fue ayer.'
+        : `Llevamos <b>${dias} días</b> sin cargar ninguno.`;
+
+  const msg =
+    `🏦 <b>¿Me pasas el extracto del banco?</b>\n\n` +
+    `${cuantoLlevamos}\n\n` +
+    `Mándamelo por aquí en <b>Excel</b> o <b>CSV</b> y lo concilio en el momento: ` +
+    `te digo cuántos depósitos casaron solos, cuáles quedan por aplicar y cuáles ` +
+    `no tienen dueño. Si viene algún cheque devuelto, te aviso aparte.\n\n` +
+    `<i>Puedes escribir el banco en el pie del adjunto (ej.: BHD).</i>`;
+
+  let enviados = 0;
+  for (const d of destinatarios) {
+    if (await enviarMensajePrivado(d.telegram_user_id, msg)) enviados++;
+  }
+
+  if (enviados === 0) {
+    // Falla si esa persona nunca le dio a Iniciar al bot: sin eso Telegram no
+    // deja que el bot escriba primero.
+    return { pedido: false, motivo: 'no se pudo entregar a ningún ADMIN' };
+  }
+
+  await logAccion('sistema', 'EXTRACTO_SOLICITADO', 'conciliacion', '0', {
+    destinatarios: enviados,
+    dias_sin_extracto: dias,
+  });
+
+  return { pedido: true, motivo: `pedido a ${enviados} administrador(es)`, dias };
 }

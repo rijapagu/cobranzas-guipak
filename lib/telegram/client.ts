@@ -33,6 +33,32 @@ export async function enviarMensajeGrupo(
   return mensaje.message_id;
 }
 
+/**
+ * Mensaje al chat privado de una persona: el chat_id de un privado es su propio
+ * telegram_user_id.
+ *
+ * Ojo: Telegram NO permite que un bot escriba primero a quien nunca le ha
+ * hablado. Si esa persona no le ha dado a Iniciar, falla con 403 — por eso
+ * devuelve un booleano en vez de reventar, y quien llama decide si importa.
+ */
+export async function enviarMensajePrivado(
+  telegramUserId: number,
+  texto: string,
+  opciones?: { teclado?: InlineKeyboardMarkup }
+): Promise<boolean> {
+  try {
+    await getBot().telegram.sendMessage(telegramUserId, texto, {
+      parse_mode: 'HTML',
+      ...(opciones?.teclado && { reply_markup: opciones.teclado }),
+    });
+    return true;
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    console.error(`[TELEGRAM] No se pudo escribir en privado a ${telegramUserId}: ${msg}`);
+    return false;
+  }
+}
+
 export async function editarMensaje(
   messageId: number,
   texto: string

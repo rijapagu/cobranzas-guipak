@@ -75,6 +75,28 @@ export function enHorarioLaboral(now: Date = new Date()): boolean {
   return false; // domingo
 }
 
+/** ¿Es día laborable (L-V) en AST? El sábado cuenta como no laborable aquí. */
+export function esDiaLaborable(now: Date = new Date()): boolean {
+  const { dow } = partesAST(now);
+  return dow >= 1 && dow <= 5;
+}
+
+/**
+ * Fecha 'YYYY-MM-DD' en AST. Sirve para preguntar "¿esto pasó hoy?" sin que la
+ * respuesta dependa de que el contenedor corra en UTC: a las 21:00 AST el
+ * servidor ya está en el día siguiente.
+ */
+export function fechaAST(d: Date = new Date()): string {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: TZ,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(d);
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? '';
+  return `${get('year')}-${get('month')}-${get('day')}`;
+}
+
 function minToHHMM(min: number): string {
   const h = Math.floor(min / 60);
   const m = min % 60;
