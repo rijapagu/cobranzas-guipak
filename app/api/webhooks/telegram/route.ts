@@ -7,6 +7,8 @@ import { enviarGestion } from '@/lib/telegram/enviar-gestion';
 import { marcarUpdateVisto } from '@/lib/telegram/idempotency';
 import { enHorarioLaboral, descripcionHorarioLaboral } from '@/lib/horario';
 import { secretoValido } from '@/lib/auth/secrets';
+import { cargarExtracto } from '@/lib/conciliacion/cargar';
+import { EMPRESA_GUIPAK } from '@/lib/tenant';
 import type { InlineKeyboardMarkup } from 'telegraf/types';
 
 interface TelegramMessage {
@@ -23,6 +25,13 @@ interface TelegramMessage {
     title?: string;
   };
   text?: string;
+  caption?: string;
+  document?: {
+    file_id: string;
+    file_name?: string;
+    file_size?: number;
+    mime_type?: string;
+  };
   reply_to_message?: { message_id: number };
 }
 
@@ -107,8 +116,17 @@ async function procesarUpdate(update: TelegramUpdate): Promise<void> {
     }
 
     const message = update.message || update.edited_message;
-    if (!message || !message.text || !message.from) return;
+    if (!message || !message.from) return;
     if (message.from.is_bot) return;
+
+    // Un documento no lleva `text`, así que esto va ANTES del filtro de abajo:
+    // hasta ahora todo adjunto se descartaba en silencio.
+    if (message.document) {
+      await manejarDocumento(message);
+      return;
+    }
+
+    if (!message.text) return;
 
     const chatIdGrupo = process.env.TELEGRAM_CHAT_ID_GRUPO_COBROS;
     const esGrupoAutorizado = chatIdGrupo && String(message.chat.id) === chatIdGrupo;
@@ -383,6 +401,128 @@ async function manejarCallback(
     default:
       await bot.telegram.answerCbQuery(cb.id, 'Acción desconocida');
       return NextResponse.json({ ok: false });
+  }
+}
+
+/** Formatos que el parser de extractos sabe leer hoy. PDF todavía no. */
+const EXTENSIONES_EXTRACTO = /\.(xlsx|xls|csv|txt)$/i;
+/** Telegram ya limita a 20 MB por getFile; 10 basta de sobra para un extracto. */
+const MAX_EXTRACTO_BYTES = 10 * 1024 * 1024;
+
+/**
+ * Extracto bancario enviado como adjunto.
+ *
+ * Entra por la MISMA puerta que la pantalla de Conciliación
+ * (`lib/conciliacion/cargar.ts`) y con el mismo permiso: solo ADMIN/SUPERVISOR.
+ * El rol del chat se deriva del rol de la app, así que `esSupervisor` equivale
+ * exactamente al guard de la ruta HTTP — nadie tiene por chat lo que no tiene
+ * en la web.
+ *
+ * El bot NO actúa por su cuenta: carga el extracto EN NOMBRE de quien lo envió,
+ * y así queda en `cargado_por` y en la bitácora.
+ */
+async function manejarDocumento(message: TelegramMessage): Promise<void> {
+  const doc = message.document;
+  if (!doc || !message.from) return;
+
+  const nombre = doc.file_name || 'archivo';
+  const chatId = message.chat.id;
+
+  if (!EXTENSIONES_EXTRACTO.test(nombre)) {
+    const esPdf = /\.pdf$/i.test(nombre);
+    await responderMensaje(
+      chatId,
+      esPdf
+        ? `📄 Recibí <b>${nombre}</b>, pero todavía no sé leer PDF.\n\nPídele al banco el extracto en <b>Excel</b> o <b>CSV</b> y te lo concilio en el momento.`
+        : `📎 Recibí <b>${nombre}</b>, pero no reconozco ese formato.\n\nPara conciliar necesito el extracto bancario en <b>.xlsx</b> o <b>.csv</b>.`,
+      message.message_id
+    );
+    return;
+  }
+
+  const auth = await resolverUsuarioTelegram(message.from.id);
+  if (!auth) {
+    await responderMensaje(
+      chatId,
+      '⛔ No estás autorizado. Pídele a Ricardo que te dé acceso.',
+      message.message_id
+    );
+    return;
+  }
+  if (!esSupervisor(auth)) {
+    await responderMensaje(
+      chatId,
+      '⛔ Cargar un extracto bancario está reservado a supervisores.',
+      message.message_id
+    );
+    return;
+  }
+
+  if (doc.file_size && doc.file_size > MAX_EXTRACTO_BYTES) {
+    await responderMensaje(
+      chatId,
+      `El archivo pesa ${(doc.file_size / 1024 / 1024).toFixed(1)} MB y el límite son 10 MB. Súbelo desde la pantalla de Conciliación.`,
+      message.message_id
+    );
+    return;
+  }
+
+  await responderMensaje(chatId, `📥 Recibido <b>${nombre}</b>. Dame un momento…`, message.message_id);
+
+  try {
+    const enlace = await getTelegraf().telegram.getFileLink(doc.file_id);
+    const respuesta = await fetch(enlace.href);
+    if (!respuesta.ok) throw new Error(`descarga falló: HTTP ${respuesta.status}`);
+    const buffer = Buffer.from(await respuesta.arrayBuffer());
+
+    const usuarios = await cobranzasQuery<{ email: string }>(
+      'SELECT email FROM usuarios WHERE id = ? LIMIT 1',
+      [auth.usuario_id]
+    );
+
+    // El banco puede venir en el pie de foto ("BHD", "Popular"); si no, el
+    // parser ya detecta Banco Popular solo y el resto queda sin especificar.
+    const banco = (message.caption || '').trim().slice(0, 60) || 'Sin especificar';
+
+    const r = await cargarExtracto(buffer, nombre, banco, {
+      userId: auth.usuario_id,
+      email: usuarios[0]?.email || `telegram:${message.from.id}`,
+      empresaId: EMPRESA_GUIPAK,
+    });
+
+    if (!r.huboNovedad) {
+      await responderMensaje(chatId, `ℹ️ ${r.mensaje}`);
+      return;
+    }
+
+    const lineas = [
+      `✅ <b>Extracto conciliado</b> — ${nombre}`,
+      ``,
+      `• <b>${r.conciliadas}</b> conciliadas solas`,
+      `• <b>${r.porAplicar}</b> por aplicar`,
+      `• <b>${r.desconocidas}</b> sin dueño — necesito que me digas de quién son`,
+    ];
+    if (r.multiRecibo > 0) lineas.push(`• ${r.multiRecibo} depósitos que cubren varios recibos`);
+    if (r.duplicadasOmitidas > 0) lineas.push(`• ${r.duplicadasOmitidas} ya estaban, no se duplicaron`);
+    if (r.chequesDevueltos.length > 0) {
+      lineas.push(
+        ``,
+        `⚠️ <b>${r.chequesDevueltos.length} cheque(s) devuelto(s)</b> por ${r.montoDevuelto.toLocaleString('es-DO', { minimumFractionDigits: 2 })}.`,
+        `Hay que desaplicarlos en Softec — eso lo hace una persona allá, ni la app ni yo tocamos el ERP.`
+      );
+    }
+    if (r.tareasCreadas > 0) lineas.push(``, `Te dejé ${r.tareasCreadas} tarea(s) en <b>Tareas</b>.`);
+    if (r.desconocidas > 0) lineas.push(``, `Pregúntame <i>"¿qué depósitos quedaron sin dueño?"</i> y los repasamos.`);
+
+    await responderMensaje(chatId, lineas.join('\n'));
+  } catch (error) {
+    const { logError } = await import('@/lib/db/cobranzas');
+    await logError('telegram-extracto', error, { archivo: nombre, from: message.from.id });
+    const detalle = error instanceof Error ? error.message : String(error);
+    await responderMensaje(
+      chatId,
+      `❌ No pude procesar <b>${nombre}</b>.\n<code>${detalle.slice(0, 200)}</code>\n\nSi el archivo está bien, súbelo desde la pantalla de Conciliación.`
+    );
   }
 }
 

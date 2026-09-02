@@ -79,6 +79,13 @@ export default function ConciliacionPage() {
         return;
       }
 
+      // Reenviar un extracto ya cargado no es un error, pero tampoco es un
+      // "procesado: 0, 0, 0" — que sonaría a que algo salió mal.
+      if (data.ya_cargado) {
+        messageApi.info(data.message);
+        return;
+      }
+
       const parts = [`${data.conciliadas} conciliadas`, `${data.por_aplicar} por aplicar`, `${data.desconocidas} desconocidas`];
       if (data.cheques_devueltos > 0) parts.push(`${data.cheques_devueltos} cheques devueltos`);
       messageApi.success(`Procesado: ${parts.join(', ')}`);
