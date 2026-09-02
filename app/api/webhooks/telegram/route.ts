@@ -401,10 +401,32 @@ async function manejarComando(
       );
       return NextResponse.json({ ok: true });
 
+    // Antes del control de acceso a propósito: este comando sirve JUSTAMENTE
+    // para quien todavía no tiene acceso. Solo revela el id de quien pregunta
+    // —lo mismo que ya hace cualquier bot público tipo @userinfobot—, así que
+    // no expone nada que Telegram no diera igual. Sin él, dar de alta a alguien
+    // obliga a tener su teléfono en la mano.
+    case '/id': {
+      const id = message.from?.id;
+      const alias = message.from?.username;
+      await responderMensaje(
+        message.chat.id,
+        id
+          ? `🪪 Tu <b>Id de Telegram</b> es <code>${id}</code>\n` +
+            (alias
+              ? `Tu usuario es <code>${alias}</code> (se guarda sin la @).\n`
+              : `No tienes usuario de Telegram puesto — no hace falta, con el Id basta.\n`) +
+            `\nPásale el Id a Ricardo para que te dé acceso en <b>Usuarios</b>.`
+          : 'No pude leer tu Id. Háblame por chat privado.',
+        message.message_id
+      );
+      return NextResponse.json({ ok: true });
+    }
+
     case '/help':
       await responderMensaje(
         message.chat.id,
-        `<b>Comandos disponibles:</b>\n\n/start — Saludo y guía\n/help — Esta ayuda\n/estado — Resumen rápido del día\n\n<b>O pregúntame en lenguaje natural:</b>\n• Consultas de saldo, gestiones pendientes, promesas vencidas\n• "Genera un correo para [cliente]" — yo redacto y tú apruebas con un botón`,
+        `<b>Comandos disponibles:</b>\n\n/start — Saludo y guía\n/help — Esta ayuda\n/id — Tu Id de Telegram (para pedir acceso)\n/estado — Resumen rápido del día\n\n<b>O pregúntame en lenguaje natural:</b>\n• Consultas de saldo, gestiones pendientes, promesas vencidas\n• "Genera un correo para [cliente]" — yo redacto y tú apruebas con un botón`,
         message.message_id
       );
       return NextResponse.json({ ok: true });
