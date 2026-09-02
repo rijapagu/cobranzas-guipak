@@ -94,7 +94,7 @@ export default function CadenciasPage() {
   const abrirCrear = () => {
     setEditando(null);
     form.resetFields();
-    form.setFieldsValue({ requiere_aprobacion: true, activa: true });
+    form.setFieldsValue({ activa: true });
     setModalOpen(true);
   };
 
@@ -104,7 +104,6 @@ export default function CadenciasPage() {
       segmento: c.segmento,
       dia_desde_vencimiento: c.dia_desde_vencimiento,
       accion: c.accion,
-      requiere_aprobacion: c.requiere_aprobacion,
       activa: c.activa,
     });
     setModalOpen(true);
@@ -114,7 +113,11 @@ export default function CadenciasPage() {
     setSaving(true);
     try {
       const method = editando ? "PUT" : "POST";
-      const body = editando ? { id: editando.id, ...values } : values;
+      // CP-02: el motor fuerza estado PENDIENTE para toda gestión de cadencia
+      // (lib/queue/jobs/cadencias.ts). Se guarda 1 siempre para que la config
+      // no vuelva a decir algo que el motor ignora.
+      const campos = { ...values, requiere_aprobacion: true };
+      const body = editando ? { id: editando.id, ...campos } : campos;
       const res = await fetch("/api/cobranzas/cadencias", {
         method,
         headers: { "Content-Type": "application/json" },
@@ -179,7 +182,6 @@ export default function CadenciasPage() {
   };
 
   const activas = cadencias.filter((c) => c.activa).length;
-  const conAprobacion = cadencias.filter((c) => c.activa && c.requiere_aprobacion).length;
 
   const columns: ColumnsType<Cadencia> = [
     {
@@ -213,14 +215,12 @@ export default function CadenciasPage() {
     },
     {
       title: "Aprobación",
-      dataIndex: "requiere_aprobacion",
       key: "aprobacion",
-      render: (v: boolean) =>
-        v ? (
-          <Tag color="orange">Manual</Tag>
-        ) : (
-          <Tag color="green">Auto</Tag>
-        ),
+      // Constante a propósito. El motor fuerza PENDIENTE para toda gestión de
+      // cadencia (CP-02), así que pintar el valor guardado de
+      // `requiere_aprobacion` mostraría "Auto" para filas que igual pasan por
+      // la cola. Una columna que miente es peor que una que no está.
+      render: () => <Tag color="orange">Cola de aprobación</Tag>,
     },
     {
       title: "Estado",
@@ -293,7 +293,7 @@ export default function CadenciasPage() {
         type="info"
         showIcon
         style={{ marginBottom: 16 }}
-        message="Las cadencias crean gestiones automáticamente cuando una factura cruza el umbral de días configurado. Las gestiones con aprobación Manual van a la Cola de Aprobación; las Auto se envían directamente (solo usar con cautela)."
+        message="Las cadencias crean gestiones automáticamente cuando una factura cruza el umbral de días configurado. Lo automático es redactar la gestión, no enviarla: TODAS van a la Cola de Aprobación y ninguna sale a un cliente sin que una persona la apruebe (CP-02)."
       />
 
       <Row gutter={16} style={{ marginBottom: 16 }}>
@@ -309,8 +309,9 @@ export default function CadenciasPage() {
         <Col span={6}>
           <Card>
             <Statistic
-              title="Con aprobación manual"
-              value={conAprobacion}
+              title="Pasan por la cola"
+              value={activas}
+              suffix={`/ ${activas}`}
               valueStyle={{ color: "#fa8c16" }}
             />
           </Card>
@@ -399,16 +400,9 @@ export default function CadenciasPage() {
             </Select>
           </Form.Item>
 
-          <Form.Item
-            name="requiere_aprobacion"
-            label="Requiere aprobación manual"
-            valuePropName="checked"
-          >
-            <Switch
-              checkedChildren="Manual (cola)"
-              unCheckedChildren="Auto"
-            />
-          </Form.Item>
+          {/* Aquí había un toggle Manual/Auto. Se quitó: desde la migración 029
+              el motor fuerza PENDIENTE siempre, así que ponerlo en "Auto" no
+              cambiaba nada y prometía un envío directo que no ocurre. */}
 
           {editando && (
             <Form.Item name="activa" label="Activa" valuePropName="checked">
