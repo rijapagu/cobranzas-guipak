@@ -16,10 +16,12 @@ import {
   MailOutlined,
   CalendarOutlined,
   ThunderboltOutlined,
+  UserSwitchOutlined,
 } from "@ant-design/icons";
 
 const { Sider } = Layout;
 
+/** Entradas visibles para cualquier usuario autenticado. */
 const menuItems = [
   {
     key: "/",
@@ -88,14 +90,26 @@ const menuItems = [
   },
 ];
 
+/** Entradas solo para ADMIN. La API las protege igual; esto es para no
+ *  enseñar una puerta que va a devolver 403. */
+const menuItemsAdmin = [
+  {
+    key: "/usuarios",
+    icon: <UserSwitchOutlined />,
+    label: "Usuarios",
+  },
+];
+
 interface SidebarProps {
   collapsed: boolean;
   onCollapse: (collapsed: boolean) => void;
+  userRol?: string;
 }
 
-export default function Sidebar({ collapsed, onCollapse }: SidebarProps) {
+export default function Sidebar({ collapsed, onCollapse, userRol }: SidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
+  const items = userRol === "ADMIN" ? [...menuItems, ...menuItemsAdmin] : menuItems;
 
   return (
     <Sider
@@ -129,7 +143,7 @@ export default function Sidebar({ collapsed, onCollapse }: SidebarProps) {
         theme="dark"
         mode="inline"
         selectedKeys={[pathname]}
-        items={menuItems}
+        items={items}
         onClick={({ key }) => router.push(key)}
       />
     </Sider>

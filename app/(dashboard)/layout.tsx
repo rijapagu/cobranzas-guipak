@@ -34,7 +34,7 @@ export default function DashboardLayout({
 
   return (
     <Layout style={{ minHeight: "100vh" }}>
-      <Sidebar collapsed={collapsed} onCollapse={setCollapsed} />
+      <Sidebar collapsed={collapsed} onCollapse={setCollapsed} userRol={user.rol} />
       <Layout style={{ marginLeft: collapsed ? 80 : 200, transition: "all 0.2s" }}>
         <Header userName={user.nombre} userRol={user.rol} />
         <Content
