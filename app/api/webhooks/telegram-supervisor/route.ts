@@ -101,6 +101,26 @@ async function procesarUpdate(update: TgUpdate): Promise<void> {
 
   const texto = message.text.trim();
 
+  // /id va ANTES del control de acceso, igual que en @CobrosGuipakBot: sirve
+  // justamente para quien todavía NO tiene acceso. Aquí el orden está invertido
+  // respecto al otro bot (auth primero, comandos después), así que ponerlo abajo
+  // lo dejaría inalcanzable para su único caso de uso.
+  // No amplía la exposición: solo devuelve el id de quien pregunta —lo mismo que
+  // cualquier bot público— y a un desconocido este bot ya le contesta igual con
+  // la negativa de abajo.
+  if (texto.split(/[\s@]/)[0].toLowerCase() === '/id') {
+    const alias = message.from.username;
+    await responder(
+      message.chat.id,
+      `🪪 Tu <b>Id de Telegram</b> es <code>${message.from.id}</code>\n` +
+        (alias
+          ? `Tu usuario es <code>${escapeHtml(alias)}</code> (se guarda sin la @).\n`
+          : `No tienes usuario de Telegram puesto — no hace falta, con el Id basta.\n`) +
+        `\nPásale el Id a Ricardo para que te dé acceso en <b>Usuarios</b>.`
+    );
+    return;
+  }
+
   // Auth: solo rol 'supervisor' (la dirección).
   const auth = await resolverUsuarioTelegram(message.from.id);
   if (!auth || !esSupervisor(auth)) {
@@ -122,6 +142,7 @@ async function procesarUpdate(update: TgUpdate): Promise<void> {
           `• <i>¿Cómo está la cartera?</i>\n` +
           `• <i>¿Qué hago con [cliente]?</i>\n` +
           `• <i>¿A quién priorizo cobrar esta semana?</i>\n\n` +
+          `También <code>/id</code> — te dice tu Id de Telegram (para dar acceso a alguien).\n\n` +
           `Atiendo <b>fuera del horario laboral</b> (${descripcionHorarioLaboral()}); ` +
           `de día te atiende el Asistente (@CobrosGuipakBot). Las alertas por excepción te llegan a cualquier hora.\n\n` +
           `Solo analizo y recomiendo — la decisión es tuya.`
