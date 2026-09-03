@@ -11,10 +11,7 @@
 -- crece (nunca se actualiza el contenido de una fila ya escrita) asi que no
 -- hay costo de reindexado por UPDATE.
 
--- IF NOT EXISTS (2026-09-03, MySQL 8.0.29+): seguro de re-intentar completo
--- si una corrida anterior se queda a medias por cualquier motivo (ver el
--- historial de 034_memoria_equipo_por_usuario.sql, que fallo asi en produccion).
 ALTER TABLE cobranza_telegram_historial
-  ADD COLUMN IF NOT EXISTS codigo_cliente VARCHAR(20) NULL AFTER contenido,
-  ADD INDEX IF NOT EXISTS idx_cliente_ts (codigo_cliente, created_at),
-  ADD FULLTEXT INDEX IF NOT EXISTS ft_contenido (contenido);
+  ADD COLUMN codigo_cliente VARCHAR(20) NULL AFTER contenido,
+  ADD INDEX idx_cliente_ts (codigo_cliente, created_at),
+  ADD FULLTEXT INDEX ft_contenido (contenido);

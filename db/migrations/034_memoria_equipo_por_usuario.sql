@@ -10,22 +10,23 @@
 -- telegram_user_id se conserva tal cual (sigue NOT NULL, sigue siendo 0 desde
 -- la web) -- solo deja de ser la clave de identidad para lectura/escritura.
 --
--- IF [NOT] EXISTS en cada paso (2026-09-03, MySQL 8.0.29+): la primera
--- version de este archivo asumio que el indice unico original de la tabla
--- (020_telegram_memoria.sql: uq_user_clave) seguia llamandose asi, pero
--- 031_saas_uniques_compuestos.sql ya lo habia renombrado a
--- uq_empresa_user_clave al agregar soporte multi-tenant. Eso hizo fallar el
--- ultimo paso en produccion DESPUES de que el ADD COLUMN y los backfills de
--- abajo ya habian corrido. Con IF [NOT] EXISTS en las 3 sentencias, este
--- archivo queda seguro de re-intentar completo sin importar en que punto se
--- haya quedado a medias la corrida anterior.
+-- Nota (2026-09-03): el primer intento de esta migracion asumio que el
+-- indice unico original de la tabla (020_telegram_memoria.sql: uq_user_clave)
+-- seguia llamandose asi, pero 031_saas_uniques_compuestos.sql ya lo habia
+-- renombrado a uq_empresa_user_clave al agregar soporte multi-tenant. Fallo
+-- en produccion justo en el ultimo paso, DESPUES de que el ADD COLUMN y los
+-- backfills de abajo ya habian corrido. IF [NOT] EXISTS (probado en este
+-- mismo servidor) NO evita el error de columna duplicada aqui -- por eso
+-- este archivo NO lo usa. Esta version queda correcta de punta a punta para
+-- una base de datos que NUNCA haya corrido ninguna version de este archivo
+-- (dev nueva, disaster recovery). La reparacion puntual de la corrida
+-- parcial en produccion se hizo aparte, sin re-ejecutar este archivo.
 ALTER TABLE cobranza_telegram_memoria_equipo
-  ADD COLUMN IF NOT EXISTS usuario_id INT NULL AFTER telegram_user_id,
-  ADD COLUMN IF NOT EXISTS ambito ENUM('USUARIO','EQUIPO') NOT NULL DEFAULT 'USUARIO' AFTER clave;
+  ADD COLUMN usuario_id INT NULL AFTER telegram_user_id,
+  ADD COLUMN ambito ENUM('USUARIO','EQUIPO') NOT NULL DEFAULT 'USUARIO' AFTER clave;
 
 -- Backfill desde el vinculo Telegram->usuario ya existente. Solo cubre filas
--- con un telegram_user_id real y vinculado (>0). Re-correrlo sobre filas ya
--- backfilleadas no hace daño (mismo valor de nuevo).
+-- con un telegram_user_id real y vinculado (>0).
 UPDATE cobranza_telegram_memoria_equipo m
   JOIN cobranza_telegram_usuarios t ON t.telegram_user_id = m.telegram_user_id
   SET m.usuario_id = t.usuario_id
@@ -40,6 +41,5 @@ UPDATE cobranza_telegram_memoria_equipo
   WHERE telegram_user_id = 0;
 
 ALTER TABLE cobranza_telegram_memoria_equipo
-  DROP INDEX IF EXISTS uq_user_clave,
-  DROP INDEX IF EXISTS uq_empresa_user_clave,
-  ADD UNIQUE KEY IF NOT EXISTS uq_empresa_usuario_clave (empresa_id, usuario_id, clave(100));
+  DROP INDEX uq_empresa_user_clave,
+  ADD UNIQUE KEY uq_empresa_usuario_clave (empresa_id, usuario_id, clave(100));
