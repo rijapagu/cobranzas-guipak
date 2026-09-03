@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { cobranzasQuery, cobranzasExecute, logAccion } from '@/lib/db/cobranzas';
 import { procesarRespuestaCliente } from '@/lib/cobranzas/procesar-respuesta';
 import { secretoValido } from '@/lib/auth/secrets';
+import { configDeEmpresa } from '@/lib/empresas/config';
+import { EMPRESA_GUIPAK } from '@/lib/tenant';
+import { verificarInstancia } from '@/lib/evolution/instancia';
 
 /**
  * Extrae el número de teléfono del cliente desde la `key` del mensaje de Evolution.
@@ -40,6 +43,18 @@ function extraerNumero(key: {
  * configurar la URL del webhook en Evolution como
  *   https://<app>/api/webhooks/whatsapp?token=<EVOLUTION_WEBHOOK_TOKEN>
  * (o enviar el header x-webhook-token).
+ *
+ * Además del token, exige que el evento venga de NUESTRA instancia de Evolution
+ * (la misma por la que sale el envío en lib/evolution/client.ts). El token solo
+ * prueba que quien llama conoce el secreto, no de qué número viene el mensaje:
+ * el servidor de Evolution hospeda varias instancias y el número está compartido
+ * con otros sistemas, así que sin este filtro un cliente de la cartera que
+ * escribiera por CUALQUIER otro motivo entraba aquí y podía acabar con una
+ * promesa de pago o una disputa inventadas.
+ *
+ * Fail-closed a propósito: si no coincide, o si no hay instancia configurada, el
+ * evento se descarta. Preferimos no procesar a procesar de más — lo que se cuela
+ * aquí termina en la cola de aprobación con el nombre de un cliente real.
  */
 export async function POST(request: NextRequest) {
   const tokenRecibido =
@@ -52,6 +67,28 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json();
+
+    // ── Filtro por instancia ────────────────────────────────────────────────
+    // Evolution v2 manda `instance` en la raíz del webhook. Para Guipak
+    // configDeEmpresa lee de env y no toca la DB, así que esto no añade latencia.
+    const instanciaEsperada = (await configDeEmpresa(EMPRESA_GUIPAK)).evolution?.instance;
+    const veredicto = verificarInstancia(body.instance, instanciaEsperada);
+
+    if (!veredicto.aceptar) {
+      if (veredicto.motivo === 'sin-instancia-configurada') {
+        console.error(
+          '[WEBHOOK-WA] descartado: no hay EVOLUTION_INSTANCE configurada, no se puede verificar el origen'
+        );
+      } else {
+        console.warn(
+          '[WEBHOOK-WA] descartado: evento de otra instancia.',
+          'recibida:', veredicto.recibida || '(ausente)',
+          '| esperada:', instanciaEsperada,
+          '| event:', body.event
+        );
+      }
+      return NextResponse.json({ ok: true, ignorado: veredicto.motivo });
+    }
 
     // Evolution API envía diferentes tipos de eventos
     const event = body.event;

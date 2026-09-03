@@ -35,6 +35,7 @@ const TESTS = [
   { file: 'test-parser-extracto.ts',          grupo: 'offline',  desc: 'Parser de extractos (ExcelJS en memoria)' },
   { file: 'test-slim-saldo.mjs',              grupo: 'offline',  desc: 'Cálculo slim de saldo (datos inline)' },
   { file: 'smoke-test-guard.mjs',             grupo: 'offline',  desc: 'Guard anti-escritura a Softec (lógica)' },
+  { file: 'test-instancia-webhook.ts',         grupo: 'offline',  desc: 'Filtro por instancia del webhook de WhatsApp' },
 
   // FIXTURES — lee datos locales en Extractos/ (carpeta untracked, no en repo).
   { file: 'test-parser-banco-popular.mjs',    grupo: 'fixtures', desc: 'Parser extractos Banco Popular', necesita: 'Extractos/ local' },
