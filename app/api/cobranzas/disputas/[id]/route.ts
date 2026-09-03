@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { getSession } from '@/lib/auth/session';
-import { cobranzasQuery, cobranzasExecute, logAccion } from '@/lib/db/cobranzas';
+import { cobranzasQuery } from '@/lib/db/cobranzas';
 import { empresaIdDeSesion } from '@/lib/tenant';
 import { adaptadorParaEmpresa } from '@/lib/erp';
+import { actualizarDisputa } from '@/lib/cobranzas/disputas';
 
 const UpdateSchema = z.object({
   motivo: z.string().min(5).optional(),
@@ -89,7 +90,12 @@ export async function GET(
 
 /**
  * PUT /api/cobranzas/disputas/[id]
- * Transiciones de estado y edición de motivo/monto.
+ * Transiciones de estado (la única forma en que la UI llama esta ruta —
+ * verificado en app/(dashboard)/disputas/page.tsx: siempre manda `estado`,
+ * nunca una edición de motivo/monto sin transición).
+ *
+ * La lógica vive en lib/cobranzas/disputas.ts (actualizarDisputa) —
+ * compartida con la tool resolver_disputa del agente conversacional.
  *
  * Reglas:
  *   ABIERTA → EN_REVISION  (sin requisito extra)
@@ -108,84 +114,26 @@ export async function PUT(
   const { id } = await params;
   const idNum = Number(id);
 
-  const rows = await cobranzasQuery('SELECT * FROM cobranza_disputas WHERE id = ? AND empresa_id = ' + empresaIdDeSesion(session), [idNum]);
-  if (rows.length === 0) return NextResponse.json({ error: 'No encontrada' }, { status: 404 });
-  const actual = rows[0] as { estado: string };
-
-  if (actual.estado === 'RESUELTA' || actual.estado === 'ANULADA') {
-    return NextResponse.json({ error: 'No se puede modificar una disputa resuelta o anulada' }, { status: 400 });
-  }
-
   const body = await req.json().catch(() => null);
   const parsed = UpdateSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json({ error: 'Datos inválidos', detalle: parsed.error.issues }, { status: 400 });
   }
   const data = parsed.data;
-
-  // Validar transición de estado
-  if (data.estado) {
-    const transicionesValidas: Record<string, string[]> = {
-      ABIERTA: ['EN_REVISION', 'ANULADA'],
-      EN_REVISION: ['RESUELTA', 'ANULADA'],
-    };
-    if (!transicionesValidas[actual.estado]?.includes(data.estado)) {
-      return NextResponse.json(
-        { error: `Transición inválida: ${actual.estado} → ${data.estado}` },
-        { status: 400 }
-      );
-    }
-    if (data.estado === 'RESUELTA' && !data.resolucion) {
-      return NextResponse.json({ error: 'Se requiere el campo "resolucion" para resolver una disputa' }, { status: 400 });
-    }
+  if (!data.estado) {
+    return NextResponse.json({ error: 'Se requiere el campo "estado"' }, { status: 400 });
   }
 
-  const updates: string[] = [];
-  const values: (string | number | null)[] = [];
+  const resultado = await actualizarDisputa(
+    idNum,
+    { estado: data.estado, resolucion: data.resolucion },
+    { userId: String(session.userId), userEmail: session.email },
+    empresaIdDeSesion(session)
+  );
 
-  if (data.motivo !== undefined) { updates.push('motivo = ?'); values.push(data.motivo); }
-  if (data.monto_disputado !== undefined) { updates.push('monto_disputado = ?'); values.push(data.monto_disputado); }
-
-  if (data.estado) {
-    updates.push('estado = ?');
-    values.push(data.estado);
-
-    if (data.estado === 'RESUELTA') {
-      updates.push('resolucion = ?', 'resuelto_por = ?', 'fecha_resolucion = NOW()');
-      values.push(data.resolucion!, session.email);
-    } else if (data.estado === 'ANULADA') {
-      updates.push('resuelto_por = ?', 'fecha_resolucion = NOW()');
-      values.push(session.email);
-      if (data.resolucion) {
-        updates.push('resolucion = ?');
-        values.push(data.resolucion);
-      }
-    }
+  if (!resultado.ok) {
+    const status = resultado.mensaje.includes('no encontrada') ? 404 : 400;
+    return NextResponse.json({ error: resultado.mensaje }, { status });
   }
-
-  if (updates.length === 0) return NextResponse.json({ error: 'Sin cambios' }, { status: 400 });
-
-  values.push(idNum);
-  await cobranzasExecute(
-    `UPDATE cobranza_disputas SET ${updates.join(', ')} WHERE id = ?`,
-    values
-  );
-
-  const accion = data.estado
-    ? `DISPUTA_${data.estado}`
-    : 'DISPUTA_EDITADA';
-
-  await logAccion(
-    String(session.userId),
-    accion,
-    'disputa',
-    String(idNum),
-    {
-      estado_anterior: actual.estado,
-      estado_nuevo: data.estado || actual.estado,
-      campos: Object.keys(data),
-    }
-  );
-
   return NextResponse.json({ ok: true });
 }

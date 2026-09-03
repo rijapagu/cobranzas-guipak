@@ -15,6 +15,7 @@
  *   npm test -- --db              → solo el grupo db (DB cobranzas local)
  *   npm test -- --fixtures        → tests que leen datos locales en Extractos/
  *   npm test -- --integration     → todo lo que necesita un backend (no destructivo)
+ *   npm test -- --llm             → llama la API real de Anthropic (cuesta unos centavos)
  *   npm test -- --manual          → EFECTOS SECUNDARIOS (escribe DB / envía mensajes reales)
  *   npm test -- --all             → absolutamente todo (incluye --manual)
  *   npm test -- --grep evolution  → filtra por subcadena del nombre (sobre todos los grupos)
@@ -36,6 +37,7 @@ const TESTS = [
   { file: 'test-slim-saldo.mjs',              grupo: 'offline',  desc: 'Cálculo slim de saldo (datos inline)' },
   { file: 'smoke-test-guard.mjs',             grupo: 'offline',  desc: 'Guard anti-escritura a Softec (lógica)' },
   { file: 'test-instancia-webhook.ts',         grupo: 'offline',  desc: 'Filtro por instancia del webhook de WhatsApp' },
+  { file: 'test-prompt-tools.ts',              grupo: 'offline',  desc: 'Coherencia prompt <-> tools.ts (nombres viejos, cobertura)' },
 
   // FIXTURES — lee datos locales en Extractos/ (carpeta untracked, no en repo).
   { file: 'test-parser-banco-popular.mjs',    grupo: 'fixtures', desc: 'Parser extractos Banco Popular', necesita: 'Extractos/ local' },
@@ -49,6 +51,12 @@ const TESTS = [
   // DB — necesita la base cobranzas local (Docker, puerto 3308).
   { file: 'test-saldo-favor.ts',              grupo: 'db',       desc: 'Saldo a favor — lógica contra DB', necesita: 'DB cobranzas' },
   { file: 'test-saldo-favor-telegram.ts',     grupo: 'db',       desc: 'Saldo a favor (formato Telegram)', necesita: 'DB cobranzas' },
+  { file: 'test-conciliacion-acciones.ts',    grupo: 'db',       desc: 'Asignar/aprobar depósito — ciclo completo contra DB', necesita: 'DB cobranzas' },
+  { file: 'test-memoria-episodica.ts',        grupo: 'db',       desc: 'buscarHistorial + lineaDeTiempoCliente contra DB', necesita: 'DB cobranzas' },
+
+  // LLM — llama la API real de Anthropic (unos centavos por corrida). No
+  // escribe nada (tools mockeadas) pero SÍ cuesta dinero — nunca en --integration.
+  { file: 'test-agente-llm.ts',               grupo: 'llm',      desc: 'Regresión de routing del agente (sesión pegada, nombres de tool)', necesita: 'ANTHROPIC_API_KEY' },
 
   // MANUAL — EFECTOS SECUNDARIOS. Nunca en CI; requiere opt-in explícito.
   { file: 'test-smtp.mjs',                    grupo: 'manual',   desc: 'Prueba de correo', efecto: 'ENVÍA un email real', necesita: 'SMTP' },

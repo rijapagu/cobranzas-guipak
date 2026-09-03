@@ -1,13 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth/session';
-import { cobranzasQuery, cobranzasExecute, logAccion } from '@/lib/db/cobranzas';
+import { cobranzasQuery } from '@/lib/db/cobranzas';
 import { empresaIdDeSesion } from '@/lib/tenant';
-import crypto from 'crypto';
+import { generarTokenPortal } from '@/lib/cobranzas/portal';
 
 /**
  * POST /api/cobranzas/portal/generar-token
  * Genera un token de acceso al portal de autogestión para un cliente.
  * CP-07: Token único con expiración de 30 días.
+ *
+ * La lógica vive en lib/cobranzas/portal.ts — compartida con la tool
+ * generar_link_portal del agente conversacional.
  */
 export async function POST(request: NextRequest) {
   const session = await getSession();
@@ -22,41 +25,16 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'codigo_cliente requerido' }, { status: 400 });
     }
 
-    // Generar token único — CP-07
-    const rawToken = crypto.randomUUID();
-    const hmac = crypto.createHmac('sha256', process.env.NEXTAUTH_SECRET || 'default-secret');
-    hmac.update(rawToken);
-    const token = `${rawToken}-${hmac.digest('hex').substring(0, 12)}`;
-
-    // Expiración 30 días
-    const expiracion = new Date();
-    expiracion.setDate(expiracion.getDate() + 30);
-
-    // Desactivar tokens previos del mismo cliente
-    const empresaId = empresaIdDeSesion(session);
-    await cobranzasExecute(
-      'UPDATE cobranza_portal_tokens SET activo = 0 WHERE codigo_cliente = ? AND empresa_id = ? AND activo = 1',
-      [codigo_cliente, empresaId]
+    const resultado = await generarTokenPortal(
+      codigo_cliente,
+      { userId: session.email, userEmail: session.email },
+      empresaIdDeSesion(session)
     );
-
-    // Insertar nuevo token
-    const result = await cobranzasExecute(
-      `INSERT INTO cobranza_portal_tokens (empresa_id, codigo_cliente, token, fecha_expiracion, activo)
-       VALUES (?, ?, ?, ?, 1)`,
-      [empresaId, codigo_cliente, token, expiracion]
-    );
-
-    const baseUrl = process.env.NEXTAUTH_URL || 'https://cobros.sguipak.com';
-    const portalUrl = `${baseUrl}/portal/${token}`;
-
-    await logAccion(session.email, 'TOKEN_PORTAL_GENERADO', 'portal_token', result.insertId.toString(), {
-      codigo_cliente, expiracion: expiracion.toISOString(),
-    });
 
     return NextResponse.json({
-      token,
-      url: portalUrl,
-      expiracion: expiracion.toISOString(),
+      token: resultado.token,
+      url: resultado.url,
+      expiracion: resultado.expiracion,
     });
   } catch (error) {
     console.error('[PORTAL-TOKEN] Error:', error);

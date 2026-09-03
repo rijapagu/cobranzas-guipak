@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { getSession } from '@/lib/auth/session';
-import { cobranzasQuery, cobranzasExecute, logAccion } from '@/lib/db/cobranzas';
 import { empresaIdDeSesion } from '@/lib/tenant';
+import { asignarClienteADeposito } from '@/lib/conciliacion/acciones';
 
 const asignarSchema = z.object({
   codigo_cliente: z.string().min(1),
@@ -14,6 +14,10 @@ const asignarSchema = z.object({
  * Asigna cliente a entrada DESCONOCIDA.
  * CP-05: Primera vez siempre MANUAL.
  * CP-08: Log.
+ *
+ * La lógica vive en lib/conciliacion/acciones.ts — compartida con la tool
+ * asignar_deposito_a_cliente del agente conversacional, para que CP-05/CP-08
+ * no puedan divergir entre la web y el chat.
  */
 export async function POST(
   request: NextRequest,
@@ -37,54 +41,18 @@ export async function POST(
 
     const { codigo_cliente, nombre_cliente } = parsed.data;
 
-    const entries = await cobranzasQuery<{ id: number; estado: string; cuenta_origen: string; monto: number }>(
-      'SELECT id, estado, cuenta_origen, monto FROM cobranza_conciliacion WHERE id = ? AND empresa_id = ?',
-      [entryId, empresaIdDeSesion(session)]
-    );
-
-    if (entries.length === 0) return NextResponse.json({ error: 'No encontrada' }, { status: 404 });
-    if (entries[0].estado !== 'DESCONOCIDO') {
-      return NextResponse.json({ error: `Estado actual: ${entries[0].estado}` }, { status: 400 });
-    }
-
-    const cuentaOrigen = entries[0].cuenta_origen;
-
-    // Actualizar entrada con cliente asignado → POR_APLICAR
-    await cobranzasExecute(
-      'UPDATE cobranza_conciliacion SET codigo_cliente = ?, estado = ?, aprobado_por = ? WHERE id = ? AND empresa_id = ?',
-      [codigo_cliente, 'POR_APLICAR', session.email, entryId, empresaIdDeSesion(session)]
-    );
-
-    // CP-05: Registrar en sistema de aprendizaje (confianza=MANUAL)
-    if (cuentaOrigen) {
-      const existente = await cobranzasQuery<{ id: number; veces_usado: number }>(
-        'SELECT id, veces_usado FROM cobranza_cuentas_aprendizaje WHERE empresa_id = ? AND cuenta_origen = ?',
-        [empresaIdDeSesion(session), cuentaOrigen]
-      );
-
-      if (existente.length > 0) {
-        // Actualizar contador
-        await cobranzasExecute(
-          'UPDATE cobranza_cuentas_aprendizaje SET veces_usado = veces_usado + 1, ultima_vez_visto = NOW(), confianza = CASE WHEN veces_usado >= 2 THEN ? ELSE confianza END WHERE id = ?',
-          ['AUTO', existente[0].id]
-        );
-      } else {
-        // Primera vez: insertar como MANUAL
-        await cobranzasExecute(
-          `INSERT INTO cobranza_cuentas_aprendizaje
-           (empresa_id, cuenta_origen, nombre_origen, codigo_cliente, nombre_cliente, confianza, confirmado_por)
-           VALUES (?, ?, ?, ?, ?, 'MANUAL', ?)`,
-          [empresaIdDeSesion(session), cuentaOrigen, entries[0].cuenta_origen, codigo_cliente, nombre_cliente, session.email]
-        );
-      }
-    }
-
-    await logAccion(session.userId.toString(), 'CUENTA_ASIGNADA', 'conciliacion', id, {
-      cuenta_origen: cuentaOrigen,
+    const resultado = await asignarClienteADeposito(
+      entryId,
       codigo_cliente,
       nombre_cliente,
-      monto: entries[0].monto,
-    });
+      { userId: session.userId.toString(), userEmail: session.email },
+      empresaIdDeSesion(session)
+    );
+
+    if (!resultado.ok) {
+      const status = resultado.mensaje.includes('no encontrado') ? 404 : 400;
+      return NextResponse.json({ error: resultado.mensaje }, { status });
+    }
 
     return NextResponse.json({
       message: `Cliente asignado: ${nombre_cliente}`,

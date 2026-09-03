@@ -28,6 +28,7 @@ interface GestionRow {
   asunto_email: string | null;
   mensaje_propuesto_email: string | null;
   mensaje_propuesto_wa: string | null;
+  mensaje_final_wa: string | null;
   mensaje_final_email: string | null;
   ultima_consulta_softec: string;
 }
@@ -43,7 +44,7 @@ export async function enviarGestion(gestionId: number): Promise<ResultadoEnvio> 
   // El bot de Telegram es de Guipak (Etapa 4 lo parametrizará por empresa).
   // Este guard de entrada hace tenant-safe el resto de operaciones por id (PK).
   const rows = await cobranzasQuery<GestionRow>(
-    'SELECT id, estado, aprobado_por, canal, codigo_cliente, ij_inum, saldo_pendiente, asunto_email, mensaje_propuesto_email, mensaje_propuesto_wa, mensaje_final_email, ultima_consulta_softec FROM cobranza_gestiones WHERE id = ? AND empresa_id = ?',
+    'SELECT id, estado, aprobado_por, canal, codigo_cliente, ij_inum, saldo_pendiente, asunto_email, mensaje_propuesto_email, mensaje_propuesto_wa, mensaje_final_wa, mensaje_final_email, ultima_consulta_softec FROM cobranza_gestiones WHERE id = ? AND empresa_id = ?',
     [gestionId, EMPRESA_GUIPAK]
   );
 
@@ -136,7 +137,11 @@ export async function enviarGestion(gestionId: number): Promise<ResultadoEnvio> 
       return { ok: false, error: 'Cliente sin número de WhatsApp registrado' };
     }
 
-    const textoWa = gestion.mensaje_propuesto_wa || '';
+    // Paridad con la ruta web /gestiones/[id]/enviar: si el correo/WhatsApp fue
+    // EDITADO antes de aprobar, mensaje_final_wa tiene ese texto — usar
+    // mensaje_propuesto_wa aquí (como hasta el 2026-09-03) mandaba la propuesta
+    // original ignorando la edición.
+    const textoWa = gestion.mensaje_final_wa || gestion.mensaje_propuesto_wa || '';
     if (!textoWa) {
       await cobranzasExecute(
         "UPDATE cobranza_gestiones SET estado='FALLIDO', motivo_descarte='SIN_MENSAJE_WA' WHERE id = ?",

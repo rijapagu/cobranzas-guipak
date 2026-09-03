@@ -4,7 +4,12 @@ import { getConfig, setConfig } from '@/lib/db/configuracion';
 import { logAccion } from '@/lib/db/cobranzas';
 import { empresaIdDeSesion } from '@/lib/tenant';
 
-const CLAVE = 'prompt_agente';
+// Renombrada de 'prompt_agente' a 'prompt_tono': esta clave solo controla el TONO
+// (persona, estilo). Las reglas operativas viven siempre en código (REGLAS_OPERATIVAS
+// en lib/telegram/agent-prompt.ts) y no son editables desde aquí — así una edición
+// del tono nunca puede desactivar una regla de seguridad (CP-02, etc).
+// La fila vieja 'prompt_agente' queda inerte en la DB, sin migración destructiva.
+const CLAVE = 'prompt_tono';
 
 export async function GET() {
   const session = await getSession();
@@ -33,8 +38,8 @@ export async function PUT(request: NextRequest) {
     }
 
     const empresaId = empresaIdDeSesion(session);
-    await setConfig(CLAVE, prompt.trim(), 'Prompt del agente IA (system prompt)', session.email, empresaId);
-    await logAccion(session.email, 'PROMPT_AGENTE_ACTUALIZADO', 'config', CLAVE, {
+    await setConfig(CLAVE, prompt.trim(), 'Tono del agente IA (persona/estilo, no reglas)', session.email, empresaId);
+    await logAccion(session.email, 'PROMPT_TONO_ACTUALIZADO', 'config', CLAVE, {
       longitud: prompt.trim().length,
     }, undefined, empresaId);
 

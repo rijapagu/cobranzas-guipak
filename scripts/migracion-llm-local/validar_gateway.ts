@@ -29,7 +29,6 @@ async function main() {
     'utf8',
   );
   const { staticPart, dynamicPart } = await buildSystemPrompt(
-    '',
     [],
     null,
     async () => promptAgente,

@@ -1,11 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth/session';
-import { cobranzasQuery, cobranzasExecute, logAccion } from '@/lib/db/cobranzas';
 import { empresaIdDeSesion } from '@/lib/tenant';
+import { aprobarDeposito } from '@/lib/conciliacion/acciones';
 
 /**
  * POST /api/conciliacion/[id]/aprobar
  * Aprueba una entrada POR_APLICAR. CP-08: Log.
+ *
+ * La lógica vive en lib/conciliacion/acciones.ts — compartida con la tool
+ * aprobar_deposito del agente conversacional.
  */
 export async function POST(
   _request: NextRequest,
@@ -21,25 +24,16 @@ export async function POST(
     const { id } = await params;
     const entryId = Number(id);
 
-    const entries = await cobranzasQuery<{ id: number; estado: string; monto: number; codigo_cliente: string }>(
-      'SELECT id, estado, monto, codigo_cliente FROM cobranza_conciliacion WHERE id = ? AND empresa_id = ?',
-      [entryId, empresaIdDeSesion(session)]
+    const resultado = await aprobarDeposito(
+      entryId,
+      { userId: session.userId.toString(), userEmail: session.email },
+      empresaIdDeSesion(session)
     );
 
-    if (entries.length === 0) return NextResponse.json({ error: 'No encontrada' }, { status: 404 });
-    if (entries[0].estado !== 'POR_APLICAR') {
-      return NextResponse.json({ error: `Estado actual: ${entries[0].estado}` }, { status: 400 });
+    if (!resultado.ok) {
+      const status = resultado.mensaje.includes('no encontrado') ? 404 : 400;
+      return NextResponse.json({ error: resultado.mensaje }, { status });
     }
-
-    await logAccion(session.userId.toString(), 'CONCILIACION_APROBADA', 'conciliacion', id, {
-      monto: entries[0].monto,
-      cliente: entries[0].codigo_cliente,
-    });
-
-    await cobranzasExecute(
-      'UPDATE cobranza_conciliacion SET estado = ?, aprobado_por = ?, fecha_aprobacion = NOW() WHERE id = ? AND empresa_id = ?',
-      ['CONCILIADO', session.email, entryId, empresaIdDeSesion(session)]
-    );
 
     return NextResponse.json({ message: `Entrada ${entryId} aprobada` });
   } catch (error) {

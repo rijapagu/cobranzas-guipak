@@ -17,16 +17,24 @@ import type {
 export interface AnthropicLLMOptions {
   apiKey: string;
   model: string;
+  /**
+   * `output_config.effort` — solo se envía si el modelo lo soporta. Haiku 4.5
+   * lo RECHAZA (400), por eso el check `!model.includes('haiku')` abajo en vez
+   * de mandarlo siempre. Sin definir, la API usa su default ('high').
+   */
+  effort?: 'low' | 'medium' | 'high' | 'max';
 }
 
 export class AnthropicLLM implements LLMProvider {
   readonly name = 'anthropic';
   private client: Anthropic;
   private model: string;
+  private effort?: 'low' | 'medium' | 'high' | 'max';
 
   constructor(opts: AnthropicLLMOptions) {
     this.client = new Anthropic({ apiKey: opts.apiKey });
     this.model = opts.model;
+    this.effort = opts.effort;
   }
 
   async generate(req: LLMRequest): Promise<LLMResponse> {
@@ -56,12 +64,16 @@ export class AnthropicLLM implements LLMProvider {
 
     const messages = toAnthropicMessages(req.messages);
 
+    // Haiku 4.5 rechaza output_config.effort con 400 — no mandarlo ahí.
+    const soportaEffort = !!this.effort && !this.model.includes('haiku');
+
     const response = await this.client.messages.create({
       model: this.model,
       max_tokens: req.maxTokens,
       system: systemBlocks,
       ...(tools ? { tools } : {}),
       messages,
+      ...(soportaEffort ? { output_config: { effort: this.effort } } : {}),
     });
 
     const text =
@@ -86,9 +98,14 @@ export class AnthropicLLM implements LLMProvider {
         outputTokens: response.usage.output_tokens,
         cachedInputTokens:
           response.usage.cache_read_input_tokens ?? undefined,
+        cacheCreationTokens:
+          response.usage.cache_creation_input_tokens ?? undefined,
       },
       latencyMs: Date.now() - t0,
       model: this.model,
+      // Bloques crudos (incluye `thinking` con firma si el modelo pensó en
+      // este turno) — ver LLMMessage.rawContent para por qué hace falta.
+      rawAssistantContent: response.content as unknown[],
     };
   }
 }
@@ -104,6 +121,8 @@ function mapAnthropicStopReason(
       return 'tool_use';
     case 'max_tokens':
       return 'max_tokens';
+    case 'refusal':
+      return 'refusal';
     default:
       return 'error';
   }
@@ -138,17 +157,25 @@ function toAnthropicMessages(
     flushToolResults();
 
     if (m.role === 'assistant' && (m.toolCalls?.length ?? 0) > 0) {
-      const blocks: Anthropic.ContentBlockParam[] = [];
-      if (m.content) blocks.push({ type: 'text', text: m.content });
-      for (const tc of m.toolCalls!) {
-        blocks.push({
-          type: 'tool_use',
-          id: tc.id,
-          name: tc.name,
-          input: tc.arguments,
-        });
+      if (m.rawContent) {
+        // Reenvía los bloques tal cual los devolvió el modelo (incluye
+        // `thinking` con su firma si pensó en este turno). Reconstruir solo
+        // texto+tool_use SIN el thinking que lo precedió rompe el loop de
+        // tools en modelos con thinking (Sonnet 5+) con un 400.
+        out.push({ role: 'assistant', content: m.rawContent as Anthropic.ContentBlockParam[] });
+      } else {
+        const blocks: Anthropic.ContentBlockParam[] = [];
+        if (m.content) blocks.push({ type: 'text', text: m.content });
+        for (const tc of m.toolCalls!) {
+          blocks.push({
+            type: 'tool_use',
+            id: tc.id,
+            name: tc.name,
+            input: tc.arguments,
+          });
+        }
+        out.push({ role: 'assistant', content: blocks });
       }
-      out.push({ role: 'assistant', content: blocks });
     } else {
       out.push({ role: m.role, content: m.content });
     }

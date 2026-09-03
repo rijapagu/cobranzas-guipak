@@ -53,7 +53,6 @@ async function test(numCtx: number) {
 
 async function main() {
   const { staticPart, dynamicPart } = await buildSystemPrompt(
-    '',
     [],
     null,
     async () => promptAgente,

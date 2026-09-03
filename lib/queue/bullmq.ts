@@ -20,6 +20,10 @@ export const JOBS = {
   CADENCIAS_HORARIAS: 'cadencias-horarias',
   REPORTE_DIARIO: 'reporte-diario',
   INTELIGENCIA_CLIENTES: 'inteligencia-clientes',
+  PEDIR_EXTRACTO: 'pedir-extracto',
+  PEDIR_EXTRACTO_RECORDATORIO: 'pedir-extracto-recordatorio',
+  CONCILIACION_SEGUIMIENTO: 'conciliacion-seguimiento',
+  DEPOSITOS_SIN_DUENO: 'depositos-sin-dueno',
 } as const;
 
 let cronQueue: Queue | null = null;
@@ -39,87 +43,34 @@ export function getCronQueue(): Queue {
   return cronQueue;
 }
 
-export async function scheduleEmpujeMatutino() {
-  const queue = getCronQueue();
-
-  // Remove existing repeatable job before re-adding
-  const repeatables = await queue.getRepeatableJobs();
-  for (const job of repeatables) {
-    if (job.name === JOBS.EMPUJE_MATUTINO) {
-      await queue.removeRepeatableByKey(job.key);
-    }
-  }
-
-  // 8:00 AM AST = 12:00 UTC (UTC-4)
-  await queue.add(
-    JOBS.EMPUJE_MATUTINO,
-    {},
-    {
-      repeat: { pattern: '0 12 * * *', tz: 'UTC' },
-    }
-  );
-
-  console.log('[BullMQ] Empuje matutino programado: 8:00 AM AST (12:00 UTC)');
-}
-
-export async function scheduleCadenciasHorarias() {
+/**
+ * Registra (o re-registra) un job repetible. Reemplaza cualquier programación
+ * previa con ese nombre antes de añadir la nueva — así un redeploy con un
+ * pattern distinto no deja el viejo corriendo en paralelo.
+ *
+ * `data` viaja al processor de worker.ts vía `job.data` (ej. {modo:'peticion'}
+ * para diferenciar dos jobs que llaman a la misma función con distinto
+ * argumento). `pattern`/`tz` son cron estándar de BullMQ (node-cron syntax);
+ * este proyecto programa todo en UTC y hace la conversión a AST a mano en el
+ * comentario de cada llamada (AST = UTC-4 fijo, sin horario de verano).
+ */
+export async function scheduleRepeatable(
+  name: string,
+  pattern: string,
+  data: Record<string, unknown> = {},
+  tz: string = 'UTC'
+): Promise<void> {
   const queue = getCronQueue();
 
   const repeatables = await queue.getRepeatableJobs();
   for (const job of repeatables) {
-    if (job.name === JOBS.CADENCIAS_HORARIAS) {
+    if (job.name === name) {
       await queue.removeRepeatableByKey(job.key);
     }
   }
 
-  // Cada hora en punto
-  await queue.add(
-    JOBS.CADENCIAS_HORARIAS,
-    {},
-    { repeat: { pattern: '0 * * * *', tz: 'UTC' } }
-  );
-
-  console.log('[BullMQ] Cadencias horarias programadas: 0 * * * *');
-}
-
-export async function scheduleReporteDiario() {
-  const queue = getCronQueue();
-
-  const repeatables = await queue.getRepeatableJobs();
-  for (const job of repeatables) {
-    if (job.name === JOBS.REPORTE_DIARIO) {
-      await queue.removeRepeatableByKey(job.key);
-    }
-  }
-
-  // 8:30 AM AST = 12:30 UTC — 30 min después del empuje matutino
-  await queue.add(
-    JOBS.REPORTE_DIARIO,
-    {},
-    { repeat: { pattern: '30 12 * * 1-5', tz: 'UTC' } }
-  );
-
-  console.log('[BullMQ] Reporte diario programado: 8:30 AM AST L-V (12:30 UTC)');
-}
-
-export async function scheduleInteligenciaClientes() {
-  const queue = getCronQueue();
-
-  const repeatables = await queue.getRepeatableJobs();
-  for (const job of repeatables) {
-    if (job.name === JOBS.INTELIGENCIA_CLIENTES) {
-      await queue.removeRepeatableByKey(job.key);
-    }
-  }
-
-  // 1:00 AM AST = 5:00 AM UTC — el equipo llega con datos frescos a las 8 AM
-  await queue.add(
-    JOBS.INTELIGENCIA_CLIENTES,
-    {},
-    { repeat: { pattern: '0 5 * * *', tz: 'UTC' } }
-  );
-
-  console.log('[BullMQ] Inteligencia clientes programada: 1:00 AM AST (5:00 UTC)');
+  await queue.add(name, data, { repeat: { pattern, tz } });
+  console.log(`[BullMQ] ${name} programado: ${pattern} (${tz})`);
 }
 
 export function createCronWorker(

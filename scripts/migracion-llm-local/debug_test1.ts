@@ -19,7 +19,6 @@ const QUERY = '¿Cómo va el día hoy? Dame el resumen del estado de cobros.';
 async function main() {
   const promptAgente = readFileSync(PROMPT_PATH, 'utf8');
   const { staticPart, dynamicPart } = await buildSystemPrompt(
-    '',
     [],
     null,
     async () => promptAgente,

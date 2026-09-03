@@ -4,10 +4,12 @@ import { procesarMensajeBot } from '@/lib/telegram/agent';
 import { getTelegraf } from '@/lib/telegram/client';
 import { cobranzasQuery, logAccion } from '@/lib/db/cobranzas';
 import { aprobarGestion, descartarGestion } from '@/lib/telegram/gestion-acciones';
+import { limpiarSesion } from '@/lib/telegram/session';
 import { marcarUpdateVisto } from '@/lib/telegram/idempotency';
 import { enHorarioLaboral, descripcionHorarioLaboral } from '@/lib/horario';
 import { secretoValido } from '@/lib/auth/secrets';
 import { cargarExtracto } from '@/lib/conciliacion/cargar';
+import { listarDepositosPendientes } from '@/lib/conciliacion/acciones';
 import { EMPRESA_GUIPAK } from '@/lib/tenant';
 import type { InlineKeyboardMarkup } from 'telegraf/types';
 
@@ -32,7 +34,10 @@ interface TelegramMessage {
     file_size?: number;
     mime_type?: string;
   };
-  reply_to_message?: { message_id: number };
+  reply_to_message?: {
+    message_id: number;
+    from?: { id: number; is_bot: boolean; username?: string };
+  };
 }
 
 interface TelegramCallbackQuery {
@@ -138,7 +143,14 @@ async function procesarUpdate(update: TelegramUpdate): Promise<void> {
     if (esGrupoAutorizado) {
       const mencionaBot = texto.includes(BOT_USERNAME_PREFIX);
       const esComando = texto.startsWith('/');
-      if (!mencionaBot && !esComando) return;
+      // Responder a un mensaje del bot cuenta como mención: es como el usuario
+      // sigue una conversación ya iniciada ("el 512 es de Padrón" respondiendo
+      // al mensaje del bot que pidió el extracto o listó los depósitos), sin
+      // tener que escribir @CobrosGuipakBot cada vez.
+      const esRespuestaAlBot =
+        message.reply_to_message?.from?.is_bot === true &&
+        message.reply_to_message.from.username === BOT_USERNAME_PREFIX.slice(1);
+      if (!mencionaBot && !esComando && !esRespuestaAlBot) return;
       textoLimpio = texto.replace(BOT_USERNAME_PREFIX, '').trim();
     }
 
@@ -157,14 +169,16 @@ async function procesarUpdate(update: TelegramUpdate): Promise<void> {
       return;
     }
 
-    // Compuerta de horario: el Asistente (Qwen) atiende solo en horario laboral.
-    // Fuera de ese horario la GPU se reserva al Supervisor (deepseek). Así Qwen y
-    // deepseek no pelean por la VRAM de la tarjeta única.
-    if (!enHorarioLaboral()) {
+    // Compuerta de horario: SOLO en el grupo, y solo por herencia histórica del
+    // time-share de la GPU local (Qwen de día, deepseek de noche). Con Anthropic
+    // ese conflicto no existe (2026-09-03) — los chats PRIVADOS ya atienden 24/7.
+    // El grupo la mantiene porque sigue siendo un canal compartido por todo el
+    // equipo y de uso operativo, no por límite técnico.
+    if (esGrupoAutorizado && !enHorarioLaboral()) {
       await responderMensaje(
         message.chat.id,
-        `🌙 Estoy fuera de mi horario de atención (${descripcionHorarioLaboral()}). ` +
-          `De noche y fines de semana, para temas estratégicos te atiende el Supervisor (@CobrosSupervisorBot).`,
+        `🌙 Estoy fuera de mi horario de atención en el grupo (${descripcionHorarioLaboral()}). ` +
+          `Escríbeme por privado si es urgente, o para temas estratégicos te atiende el Supervisor (@CobrosSupervisorBot).`,
         message.message_id
       );
       return;
@@ -362,17 +376,18 @@ async function manejarCallback(
         await bot.telegram.answerCbQuery(cb.id, 'No se puede editar este mensaje');
         return NextResponse.json({ ok: false });
       }
-      // Para editar, mostramos un mensaje pidiendo el nuevo texto
+      // Para editar, escríbeme en texto libre — no hay comando /editar; lo
+      // resuelve el agente conversacional con la tool editar_gestion.
       const link = `${process.env.NEXT_PUBLIC_APP_URL || 'https://cobros.sguipak.com'}/cola-aprobacion`;
       await bot.telegram.sendMessage(
         cb.message.chat.id,
-        `✏️ Para editar este correo, abre la cola de aprobación en la app:\n${link}\n\nO envía el comando:\n<code>/editar ${gestionId} TU NUEVO TEXTO</code>`,
+        `✏️ Escríbeme qué cambiar, por ejemplo:\n<code>edita la gestión ${gestionId}: cambia el asunto a "..."</code>\n\nO ábrela en la app: ${link}`,
         {
           parse_mode: 'HTML',
           reply_parameters: { message_id: cb.message.message_id },
         }
       );
-      await bot.telegram.answerCbQuery(cb.id, 'Edita en la app');
+      await bot.telegram.answerCbQuery(cb.id, 'Escríbeme el cambio');
       return NextResponse.json({ ok: true });
     }
 
@@ -462,11 +477,23 @@ async function manejarDocumento(message: TelegramMessage): Promise<void> {
     // parser ya detecta Banco Popular solo y el resto queda sin especificar.
     const banco = (message.caption || '').trim().slice(0, 60) || 'Sin especificar';
 
-    const r = await cargarExtracto(buffer, nombre, banco, {
-      userId: auth.usuario_id,
-      email: usuarios[0]?.email || `telegram:${message.from.id}`,
-      empresaId: EMPRESA_GUIPAK,
-    });
+    // Si el chat es el grupo, cargarExtracto NO manda su propio resumen al
+    // grupo (notificarGrupo:false) — esta misma respuesta YA es al grupo, y
+    // antes salían dos mensajes iguales (el detallado y el de montos).
+    const esGrupoDelDocumento =
+      String(chatId) === (process.env.TELEGRAM_CHAT_ID_GRUPO_COBROS ?? '');
+
+    const r = await cargarExtracto(
+      buffer,
+      nombre,
+      banco,
+      {
+        userId: auth.usuario_id,
+        email: usuarios[0]?.email || `telegram:${message.from.id}`,
+        empresaId: EMPRESA_GUIPAK,
+      },
+      { notificarGrupo: !esGrupoDelDocumento }
+    );
 
     if (!r.huboNovedad) {
       await responderMensaje(chatId, `ℹ️ ${r.mensaje}`);
@@ -490,7 +517,25 @@ async function manejarDocumento(message: TelegramMessage): Promise<void> {
       );
     }
     if (r.tareasCreadas > 0) lineas.push(``, `Te dejé ${r.tareasCreadas} tarea(s) en <b>Tareas</b>.`);
-    if (r.desconocidas > 0) lineas.push(``, `Pregúntame <i>"¿qué depósitos quedaron sin dueño?"</i> y los repasamos.`);
+
+    // Lista real con ids — antes esto invitaba a preguntar "¿qué depósitos
+    // quedaron sin dueño?" sin que ninguna tool respaldara esa pregunta.
+    if (r.desconocidas > 0) {
+      const sinDueno = await listarDepositosPendientes({
+        archivo: nombre,
+        estado: 'DESCONOCIDO',
+        limite: 10,
+      });
+      lineas.push(``, `<b>Sin dueño:</b>`);
+      for (const d of sinDueno) {
+        const monto = Number(d.monto).toLocaleString('es-DO', { minimumFractionDigits: 2 });
+        lineas.push(`  #${d.id} — RD$${monto} — ${(d.descripcion || '').slice(0, 40)}`);
+      }
+      lineas.push(
+        ``,
+        `Respóndeme a este mensaje diciendo de quién es cada uno (ej. <i>"el ${sinDueno[0]?.id ?? '512'} es de Padrón Office"</i>) y lo aplico.`
+      );
+    }
 
     await responderMensaje(chatId, lineas.join('\n'));
   } catch (error) {
@@ -544,7 +589,19 @@ async function manejarComando(
     case '/help':
       await responderMensaje(
         message.chat.id,
-        `<b>Comandos disponibles:</b>\n\n/start — Saludo y guía\n/help — Esta ayuda\n/id — Tu Id de Telegram (para pedir acceso)\n/estado — Resumen rápido del día\n\n<b>O pregúntame en lenguaje natural:</b>\n• Consultas de saldo, gestiones pendientes, promesas vencidas\n• "Genera un correo para [cliente]" — yo redacto y tú apruebas con un botón`,
+        `<b>Comandos disponibles:</b>\n\n/start — Saludo y guía\n/help — Esta ayuda\n/id — Tu Id de Telegram (para pedir acceso)\n/estado — Resumen rápido del día\n/olvidar — Olvida el cliente activo de esta conversación\n\n<b>O pregúntame en lenguaje natural:</b>\n• Consultas de saldo, gestiones pendientes, promesas vencidas\n• "Genera un correo para [cliente]" — yo redacto y tú apruebas con un botón`,
+        message.message_id
+      );
+      return NextResponse.json({ ok: true });
+
+    // El cliente activo de la sesión ya caduca solo (ver lib/telegram/session.ts),
+    // pero a veces conviene soltarlo antes de que pase el TTL — ej. si acabas de
+    // preguntar por un cliente y quieres hacer ya una pregunta de cartera completa.
+    case '/olvidar':
+      await limpiarSesion(message.chat.id);
+      await responderMensaje(
+        message.chat.id,
+        '🧹 Listo, olvidé el cliente activo de esta conversación.',
         message.message_id
       );
       return NextResponse.json({ ok: true });
@@ -557,10 +614,14 @@ async function manejarComando(
         await responderMensaje(message.chat.id, '⛔ No autorizado.', message.message_id);
         return NextResponse.json({ ok: true });
       }
-      if (!enHorarioLaboral()) {
+      // Horario solo aplica en el grupo (ver comentario en procesarUpdate) — los
+      // chats privados atienden 24/7.
+      const esGrupoDeEstado =
+        String(message.chat.id) === (process.env.TELEGRAM_CHAT_ID_GRUPO_COBROS ?? '');
+      if (esGrupoDeEstado && !enHorarioLaboral()) {
         await responderMensaje(
           message.chat.id,
-          `🌙 Fuera de horario (${descripcionHorarioLaboral()}). De noche te atiende el Supervisor (@CobrosSupervisorBot).`,
+          `🌙 Fuera de horario en el grupo (${descripcionHorarioLaboral()}). De noche te atiende el Supervisor (@CobrosSupervisorBot).`,
           message.message_id
         );
         return NextResponse.json({ ok: true });

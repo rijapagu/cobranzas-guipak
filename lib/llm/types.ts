@@ -22,6 +22,15 @@ export interface LLMMessage {
   toolCalls?: LLMToolCall[];
   toolCallId?: string;
   isError?: boolean;
+  /**
+   * Bloques crudos del proveedor para este turno de asistente (ver
+   * LLMResponse.rawAssistantContent). Si están presentes, el proveedor los
+   * reenvía tal cual en vez de reconstruir el turno desde `content`+`toolCalls`
+   * — necesario en modelos con thinking (Sonnet 5+): reconstruir solo
+   * texto+tool_use sin el `thinking` que lo precedió rompe el loop de tools
+   * con un 400 ("Expected thinking, found tool_use").
+   */
+  rawContent?: unknown[];
 }
 
 export interface LLMToolCall {
@@ -55,12 +64,15 @@ export interface LLMRequest {
   jsonMode?: boolean;
 }
 
-export type LLMStopReason = 'end_turn' | 'tool_use' | 'max_tokens' | 'error';
+export type LLMStopReason = 'end_turn' | 'tool_use' | 'max_tokens' | 'refusal' | 'error';
 
 export interface LLMUsage {
   inputTokens: number;
   outputTokens: number;
   cachedInputTokens?: number;
+  /** Tokens gastados ESCRIBIENDO al caché en este turno (solo el primer turno
+   *  del día suele tener esto > 0; los siguientes leen del caché). */
+  cacheCreationTokens?: number;
 }
 
 export interface LLMResponse {
@@ -74,6 +86,8 @@ export interface LLMResponse {
   latencyMs: number;
   /** Modelo concreto que se usó (string libre, para logging). */
   model: string;
+  /** Ver LLMMessage.rawContent. Solo Anthropic lo rellena hoy. */
+  rawAssistantContent?: unknown[];
 }
 
 export interface LLMProvider {

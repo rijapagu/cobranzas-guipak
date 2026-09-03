@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { getSession } from '@/lib/auth/session';
-import { cobranzasQuery, cobranzasExecute, logAccion } from '@/lib/db/cobranzas';
+import { cobranzasQuery } from '@/lib/db/cobranzas';
 import { adaptadorParaEmpresa } from '@/lib/erp';
 import { empresaIdDeSesion } from '@/lib/tenant';
+import { crearDisputa } from '@/lib/cobranzas/disputas';
 
 const EstadoEnum = z.enum(['ABIERTA', 'EN_REVISION', 'RESUELTA', 'ANULADA']);
 
@@ -101,6 +102,9 @@ export async function GET(req: NextRequest) {
 /**
  * POST /api/cobranzas/disputas
  * Crea una nueva disputa manualmente.
+ *
+ * La lógica vive en lib/cobranzas/disputas.ts — compartida con la tool
+ * crear_disputa del agente conversacional.
  */
 export async function POST(req: NextRequest) {
   const session = await getSession();
@@ -113,22 +117,16 @@ export async function POST(req: NextRequest) {
   }
   const d = parsed.data;
 
-  const result = await cobranzasExecute(
-    `INSERT INTO cobranza_disputas (empresa_id, codigo_cliente, ij_inum, motivo, monto_disputado, registrado_por)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-    [empresaIdDeSesion(session), d.codigo_cliente, d.ij_inum, d.motivo, d.monto_disputado ?? null, session.email]
-  );
-  const id = (result as { insertId?: number }).insertId;
-
-  await logAccion(
-    String(session.userId),
-    'DISPUTA_CREADA',
-    'disputa',
-    String(id),
-    { codigo_cliente: d.codigo_cliente, ij_inum: d.ij_inum, motivo: d.motivo.substring(0, 100) }
+  const resultado = await crearDisputa(
+    { codigoCliente: d.codigo_cliente, ijInum: d.ij_inum, motivo: d.motivo, montoDisputado: d.monto_disputado },
+    { userId: String(session.userId), userEmail: session.email },
+    empresaIdDeSesion(session)
   );
 
-  return NextResponse.json({ ok: true, id });
+  if (!resultado.ok) {
+    return NextResponse.json({ error: resultado.mensaje }, { status: 400 });
+  }
+  return NextResponse.json({ ok: true, id: resultado.id });
 }
 
 interface DisputaRow {

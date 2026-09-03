@@ -8,7 +8,6 @@ import type { ConciliacionEntry, ClienteOption } from "@/lib/types/conciliacion"
 import CargadorExtracto from "@/components/conciliacion/CargadorExtracto";
 import ResumenConciliacion from "@/components/conciliacion/ResumenConciliacion";
 import TablaConciliacion from "@/components/conciliacion/TablaConciliacion";
-import { getMockClientes } from "@/lib/mock/conciliacion-mock";
 
 const { Title } = Typography;
 
@@ -16,7 +15,7 @@ export default function ConciliacionPage() {
   const [entradas, setEntradas] = useState<ConciliacionEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [cargando, setCargando] = useState(false);
-  const [clientes] = useState<ClienteOption[]>(getMockClientes());
+  const [clientes, setClientes] = useState<ClienteOption[]>([]);
   const [limpiando, setLimpiando] = useState(false);
   const [archivoAEliminar, setArchivoAEliminar] = useState<string | null>(null);
   const [archivosCargados, setArchivosCargados] = useState<{ archivo_origen: string; fecha_extracto: string; registros: number }[]>([]);
@@ -59,6 +58,13 @@ export default function ConciliacionPage() {
   useEffect(() => {
     fetchResultados();
   }, [fetchResultados]);
+
+  useEffect(() => {
+    fetch("/api/conciliacion/clientes")
+      .then((res) => res.json())
+      .then((data) => setClientes(data.clientes || []))
+      .catch(() => setClientes([]));
+  }, []);
 
   const handleProcesar = async (file: File, banco: string) => {
     setCargando(true);

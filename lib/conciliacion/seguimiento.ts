@@ -3,7 +3,9 @@ import { testSoftecConnection } from '@/lib/db/softec';
 import { enviarMensajeGrupo, enviarMensajePrivado } from '@/lib/telegram/client';
 import { esDiaLaborable, fechaAST } from '@/lib/horario';
 import { procesarLinea } from './matcher';
-import { toYmd } from '@/lib/utils/fechas';
+import { toYmd, addDiasYmd } from '@/lib/utils/fechas';
+import { EMPRESA_GUIPAK } from '@/lib/tenant';
+import { ultimoExtracto, listarDepositosPendientes } from './acciones';
 import type { LineaExtracto } from '@/lib/types/conciliacion';
 
 interface ConciliacionPendiente {
@@ -297,57 +299,79 @@ export async function recordatorioChequesDevueltos(): Promise<number> {
   return viejos.length;
 }
 
+const DIAS_ES = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
+const MESES_ES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+
+function nombreDiaEnEspanol(ymd: string): string {
+  const [, m, d] = ymd.split('-').map(Number);
+  const dow = new Date(`${ymd}T12:00:00Z`).getUTCDay();
+  return `${DIAS_ES[dow]} ${d} ${MESES_ES[(m || 1) - 1]}`;
+}
+
+/** El día hábil más reciente ANTES de `hoy` (retrocede sábados/domingos). */
+function diaHabilAnterior(hoy: string): string {
+  let candidato = addDiasYmd(hoy, -1);
+  while (!esDiaLaborable(new Date(`${candidato}T12:00:00Z`))) {
+    candidato = addDiasYmd(candidato, -1);
+  }
+  return candidato;
+}
+
 /**
- * Le pide el extracto bancario al administrador si hoy todavía no ha llegado.
+ * Le pide el extracto bancario al GRUPO si aún no ha llegado.
  *
  * La conciliación es la primera responsabilidad del asistente de cobros —antes
  * que cobrar—, pero no puede empezarla solo: el extracto lo baja una persona
  * del banco. Esto cierra ese hueco pidiéndolo, en vez de esperar callado.
  *
- * Va al chat PRIVADO del administrador, no al grupo: responderle adjuntando el
- * fichero ahí es lo natural, y el webhook ya sabe recibirlo
- * (`manejarDocumento`). Se calla en fin de semana y se calla si hoy ya se cargó
- * alguno — no hay estado que mantener, la propia tabla de conciliación es el
- * registro de si llegó.
+ * Al GRUPO, no al privado del ADMIN (cambiado 2026-09-03): así Daria también
+ * puede subirlo si Ricardo no está, y el ciclo completo (pedir → cargar →
+ * listar sin dueño → asignar → aprobar) vive en un solo chat en vez de partido
+ * entre el privado del ADMIN y el grupo. Si el envío al grupo falla, cae al
+ * privado de cada ADMIN vinculado (comportamiento anterior, ahora solo de
+ * respaldo).
+ *
+ * `modo:'peticion'` es el aviso de la mañana; `modo:'recordatorio'` es el
+ * empujón de media mañana si para entonces sigue sin llegar — mismo chequeo
+ * de "¿falta?", texto más corto y sin repetir el "cuánto llevamos".
+ *
+ * "Falta" ya no es solo "¿se cargó algo hoy?": también cuenta si YA hay
+ * movimientos del último día hábil registrados (aunque se hayan cargado en
+ * otro momento) — evita pedir de nuevo si ayer por la tarde ya se cubrió el
+ * día. Se calla en fin de semana. No hay estado propio que mantener: la
+ * propia tabla de conciliación es el registro de si llegó.
  */
-export async function pedirExtractoSiFalta(): Promise<{
-  pedido: boolean;
-  motivo: string;
-  dias?: number;
-}> {
+export async function pedirExtractoSiFalta(
+  modo: 'peticion' | 'recordatorio' = 'peticion'
+): Promise<{ pedido: boolean; motivo: string; dias?: number }> {
   if (!esDiaLaborable()) return { pedido: false, motivo: 'fin de semana' };
 
-  const filas = await cobranzasQuery<{ ultima: string | null }>(
-    'SELECT MAX(created_at) AS ultima FROM cobranza_conciliacion WHERE empresa_id = 1'
+  const filas = await cobranzasQuery<{ ultima_carga: string | null; ultima_transaccion: string | null }>(
+    'SELECT MAX(created_at) AS ultima_carga, MAX(fecha_transaccion) AS ultima_transaccion FROM cobranza_conciliacion WHERE empresa_id = 1'
   );
-  const ultimaRaw = filas[0]?.ultima;
+  const fila = filas[0];
   const hoy = fechaAST();
 
-  let dias = 0;
-  if (ultimaRaw) {
-    const ultima = new Date(ultimaRaw);
-    if (fechaAST(ultima) === hoy) {
-      return { pedido: false, motivo: 'ya se cargó un extracto hoy' };
-    }
-    dias = Math.max(
-      1,
-      Math.round((Date.parse(`${hoy}T12:00:00Z`) - Date.parse(`${fechaAST(ultima)}T12:00:00Z`)) / 86400000)
-    );
+  if (fila?.ultima_carga && fechaAST(new Date(fila.ultima_carga)) === hoy) {
+    return { pedido: false, motivo: 'ya se cargó un extracto hoy' };
   }
 
-  // A quién: el ADMIN activo con Telegram vinculado. Se busca por el rol de la
-  // APP y no por el del chat, porque el del chat es derivado y no distingue
-  // ADMIN de SUPERVISOR.
-  const destinatarios = await cobranzasQuery<{ telegram_user_id: number; nombre: string }>(
-    `SELECT t.telegram_user_id, u.nombre
-     FROM cobranza_telegram_usuarios t
-     JOIN usuarios u ON u.id = t.usuario_id AND u.empresa_id = t.empresa_id
-     WHERE t.empresa_id = 1 AND t.activo = 1 AND u.activo = 1 AND u.rol = 'ADMIN'`
-  );
-  if (destinatarios.length === 0) {
-    return { pedido: false, motivo: 'ningún ADMIN con Telegram vinculado' };
+  const diaEsperado = diaHabilAnterior(hoy);
+  if (fila?.ultima_transaccion && toYmd(fila.ultima_transaccion) >= diaEsperado) {
+    return { pedido: false, motivo: `ya hay movimientos de ${diaEsperado} o después registrados` };
   }
 
+  const dias = fila?.ultima_carga
+    ? Math.max(
+        1,
+        Math.round(
+          (Date.parse(`${hoy}T12:00:00Z`) - Date.parse(`${fechaAST(new Date(fila.ultima_carga))}T12:00:00Z`)) /
+            86400000
+        )
+      )
+    : 0;
+
+  const nombreDia = nombreDiaEnEspanol(diaEsperado);
   const cuantoLlevamos =
     dias === 0
       ? 'Todavía no tengo ningún extracto cargado.'
@@ -356,28 +380,95 @@ export async function pedirExtractoSiFalta(): Promise<{
         : `Llevamos <b>${dias} días</b> sin cargar ninguno.`;
 
   const msg =
-    `🏦 <b>¿Me pasas el extracto del banco?</b>\n\n` +
-    `${cuantoLlevamos}\n\n` +
-    `Mándamelo por aquí en <b>Excel</b> o <b>CSV</b> y lo concilio en el momento: ` +
-    `te digo cuántos depósitos casaron solos, cuáles quedan por aplicar y cuáles ` +
-    `no tienen dueño. Si viene algún cheque devuelto, te aviso aparte.\n\n` +
-    `<i>Puedes escribir el banco en el pie del adjunto (ej.: BHD).</i>`;
+    modo === 'recordatorio'
+      ? `🏦 ¿Alguien tiene a mano el extracto de <b>${nombreDia}</b>? Todavía no me ha llegado.\n\n` +
+        `Respondan a este mensaje con el Excel/CSV y lo concilio en el momento.`
+      : `🏦 <b>¿Me pasan el extracto del banco de ${nombreDia}?</b>\n\n` +
+        `${cuantoLlevamos}\n\n` +
+        `Respondan a ESTE mensaje con el <b>Excel</b> o <b>CSV</b> y lo concilio en el momento: ` +
+        `les digo cuántos depósitos casaron solos, cuáles quedan por aplicar y cuáles ` +
+        `no tienen dueño. Si viene algún cheque devuelto, aviso aparte.\n\n` +
+        `<i>Pueden escribir el banco en el pie del adjunto (ej.: BHD).</i>`;
 
-  let enviados = 0;
-  for (const d of destinatarios) {
-    if (await enviarMensajePrivado(d.telegram_user_id, msg)) enviados++;
+  let entregado = false;
+  try {
+    await enviarMensajeGrupo(msg);
+    entregado = true;
+  } catch (error) {
+    console.error('[CONCILIACION-EXTRACTO] Error enviando al grupo, cae a privado de ADMIN:', error);
   }
 
-  if (enviados === 0) {
-    // Falla si esa persona nunca le dio a Iniciar al bot: sin eso Telegram no
-    // deja que el bot escriba primero.
-    return { pedido: false, motivo: 'no se pudo entregar a ningún ADMIN' };
+  if (!entregado) {
+    // A quién en el fallback: el ADMIN activo con Telegram vinculado. Se
+    // busca por el rol de la APP y no por el del chat, porque el del chat es
+    // derivado y no distingue ADMIN de SUPERVISOR.
+    const destinatarios = await cobranzasQuery<{ telegram_user_id: number }>(
+      `SELECT t.telegram_user_id
+       FROM cobranza_telegram_usuarios t
+       JOIN usuarios u ON u.id = t.usuario_id AND u.empresa_id = t.empresa_id
+       WHERE t.empresa_id = 1 AND t.activo = 1 AND u.activo = 1 AND u.rol = 'ADMIN'`
+    );
+    for (const d of destinatarios) {
+      // Falla si esa persona nunca le dio a Iniciar al bot: sin eso Telegram
+      // no deja que el bot escriba primero.
+      if (await enviarMensajePrivado(d.telegram_user_id, msg)) entregado = true;
+    }
+  }
+
+  if (!entregado) {
+    return { pedido: false, motivo: 'no se pudo entregar ni al grupo ni a ningún ADMIN' };
   }
 
   await logAccion('sistema', 'EXTRACTO_SOLICITADO', 'conciliacion', '0', {
-    destinatarios: enviados,
+    modo,
     dias_sin_extracto: dias,
   });
 
-  return { pedido: true, motivo: `pedido a ${enviados} administrador(es)`, dias };
+  return { pedido: true, motivo: `pedido (${modo})`, dias };
+}
+
+/**
+ * Aviso de media tarde: si el extracto de HOY sigue con depósitos DESCONOCIDO
+ * o POR_APLICAR sin resolver, empuja al grupo con la lista. Se apaga con
+ * `NUDGE_DEPOSITOS=off` si en la práctica resulta ruido en vez de ayuda.
+ * No toca cheques devueltos (esos ya tienen su propio recordatorio cada 3
+ * días — recordatorioChequesDevueltos).
+ */
+export async function recordarDepositosSinDueno(): Promise<{ avisado: boolean; motivo: string }> {
+  if ((process.env.NUDGE_DEPOSITOS ?? '').toLowerCase() === 'off') {
+    return { avisado: false, motivo: 'apagado por NUDGE_DEPOSITOS=off' };
+  }
+  if (!esDiaLaborable()) return { avisado: false, motivo: 'fin de semana' };
+
+  const extracto = await ultimoExtracto(EMPRESA_GUIPAK);
+  if (!extracto) return { avisado: false, motivo: 'no hay ningún extracto cargado' };
+  if (fechaAST(new Date(extracto.cargadoAt)) !== fechaAST()) {
+    return { avisado: false, motivo: 'el último extracto no es de hoy' };
+  }
+
+  const pendientes = await listarDepositosPendientes({
+    estado: 'TODOS',
+    archivo: extracto.archivo,
+    limite: 50,
+  });
+  const relevantes = pendientes.filter((d) => d.estado !== 'CHEQUE_DEVUELTO');
+  if (relevantes.length === 0) return { avisado: false, motivo: 'todo resuelto' };
+
+  const fmt = (n: number) =>
+    new Intl.NumberFormat('es-DO', { style: 'currency', currency: 'DOP', maximumFractionDigits: 0 }).format(n);
+
+  let msg = `👋 Del extracto de hoy quedan <b>${relevantes.length}</b> depósito(s) sin resolver:\n\n`;
+  for (const d of relevantes.slice(0, 8)) {
+    msg += `• #${d.id} — ${fmt(Number(d.monto))} — ${d.estado === 'DESCONOCIDO' ? 'sin dueño' : 'por aplicar'}\n`;
+  }
+  if (relevantes.length > 8) msg += `... y ${relevantes.length - 8} más\n`;
+  msg += `\nRespóndanme quién es cada uno y los cierro.`;
+
+  try {
+    await enviarMensajeGrupo(msg);
+    return { avisado: true, motivo: `${relevantes.length} pendientes` };
+  } catch (error) {
+    console.error('[CONCILIACION-NUDGE] Error enviando al grupo:', error);
+    return { avisado: false, motivo: 'error enviando al grupo' };
+  }
 }

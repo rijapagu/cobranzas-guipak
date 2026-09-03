@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth/session';
-import { cobranzasQuery, cobranzasExecute, logAccion } from '@/lib/db/cobranzas';
+import { cobranzasExecute, logAccion } from '@/lib/db/cobranzas';
 import { empresaIdDeSesion } from '@/lib/tenant';
+import { listarCadencias } from '@/lib/cobranzas/cadencias-config';
 
 const ACCIONES_VALIDAS = ['EMAIL', 'WHATSAPP', 'LLAMADA_TICKET', 'RECLASIFICAR', 'ESCALAR_LEGAL'];
 const SEGMENTOS_VALIDOS = ['VERDE', 'AMARILLO', 'NARANJA', 'ROJO'];
@@ -9,38 +10,16 @@ const SEGMENTOS_VALIDOS = ['VERDE', 'AMARILLO', 'NARANJA', 'ROJO'];
 /**
  * GET /api/cobranzas/cadencias
  * Lista todas las cadencias con la última ejecución si está disponible.
+ *
+ * El listado vive en lib/cobranzas/cadencias-config.ts — compartido con la
+ * tool listar_cadencias del agente conversacional.
  */
 export async function GET() {
   const session = await getSession();
   if (!session) return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
 
-  const cadencias = await cobranzasQuery<{
-    id: number;
-    segmento: string;
-    dia_desde_vencimiento: number;
-    accion: string;
-    requiere_aprobacion: number;
-    plantilla_mensaje_id: number | null;
-    activa: number;
-  }>(
-    'SELECT id, segmento, dia_desde_vencimiento, accion, requiere_aprobacion, plantilla_mensaje_id, activa FROM cobranza_cadencias WHERE empresa_id = ? ORDER BY dia_desde_vencimiento ASC, segmento ASC',
-    [empresaIdDeSesion(session)]
-  );
-
-  // Estadísticas del último run
-  const ultimoRun = await cobranzasQuery<{ detalle: string; created_at: string }>(
-    "SELECT detalle, created_at FROM cobranza_logs WHERE empresa_id = ? AND accion='CADENCIAS_HORARIAS' ORDER BY created_at DESC LIMIT 1",
-    [empresaIdDeSesion(session)]
-  );
-
-  return NextResponse.json({
-    cadencias: cadencias.map((c) => ({
-      ...c,
-      requiere_aprobacion: !!c.requiere_aprobacion,
-      activa: !!c.activa,
-    })),
-    ultimo_run: ultimoRun[0] ? { created_at: ultimoRun[0].created_at } : null,
-  });
+  const { cadencias, ultimo_run } = await listarCadencias(empresaIdDeSesion(session));
+  return NextResponse.json({ cadencias, ultimo_run });
 }
 
 /**

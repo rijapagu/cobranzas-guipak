@@ -9,15 +9,37 @@ import { obtenerContactos, resolverEmailPropio, resolverWhatsAppPropio } from '@
 import { EMPRESA_GUIPAK } from '@/lib/tenant';
 import { proponerCorreoCliente } from './draft-correo';
 import { proponerWhatsAppCliente } from './draft-whatsapp';
-import { guardarMemoriaEquipo } from './historial';
+import { guardarMemoriaEquipo, buscarHistorial } from './historial';
+import { lineaDeTiempoCliente } from '@/lib/cobranzas/linea-tiempo';
 import { listarPlantillasActivas } from '@/lib/templates/seleccionar';
 import {
   aprobarGestion,
   descartarGestion,
   escalarGestion,
+  editarGestion,
   type ActorGestion,
   type ResultadoAccionGestion,
 } from './gestion-acciones';
+import {
+  listarDepositosPendientes,
+  asignarClienteADeposito,
+  aprobarDeposito,
+  ultimoExtracto,
+} from '@/lib/conciliacion/acciones';
+import { listarDisputas, crearDisputa, actualizarDisputa } from '@/lib/cobranzas/disputas';
+import {
+  generarExcelCartera,
+  generarExcelGestiones,
+  generarExcelEstadoCuenta,
+} from '@/lib/reportes/excel';
+import { Input } from 'telegraf';
+import { getTelegraf } from './client';
+import { enviarFacturaCliente } from '@/lib/cobranzas/enviar-factura';
+import { listarCadencias, actualizarCadencia } from '@/lib/cobranzas/cadencias-config';
+import { ejecutarCadenciasHorarias } from '@/lib/queue/jobs/cadencias';
+import { generarColaAprobacion } from '@/lib/cobranzas/generar-cola';
+import { pausarCliente, reactivarCliente } from '@/lib/cobranzas/clientes-enriquecidos';
+import { generarTokenPortal } from '@/lib/cobranzas/portal';
 
 /**
  * Definición de herramientas que Claude puede invocar desde el bot de Telegram.
@@ -75,11 +97,11 @@ export const TOOLS: Anthropic.Tool[] = [
   {
     name: 'resumen_estado_cobros_hoy',
     description:
-      'Cuándo usar: el usuario pregunta "cómo vamos", "estado del día", "dashboard", "qué hay hoy", "resumen de cobros" — sin mencionar a un cliente específico.\n' +
-      'Qué hace: resumen ad-hoc del estado actual de cobros (cartera total, distribución por segmento, alertas activas, mensajes pendientes de aprobación, promesas que vencen hoy).\n' +
-      'Devuelve: { cartera_total, segmentos: {...}, alertas: [...], pendientes_aprobacion: N, promesas_hoy: N, observaciones }.\n' +
-      'Pre-condiciones: ninguna.\n' +
-      'NO usar si: el usuario pregunta por un cliente específico (eso va al contexto consulta_cliente).',
+      'Cuándo usar: el usuario pregunta "cómo vamos", "estado del día", "dashboard", "qué hay hoy", "resumen de cobros", "cómo está el DSO" — sin mencionar a un cliente específico.\n' +
+      'Qué hace: resumen ad-hoc del estado actual de cobros (cartera bruta/a favor/neta, DSO, distribución por segmento, promesas y pendientes de aprobación).\n' +
+      'Devuelve: { cartera_total, cartera_a_favor, cartera_neta, clientes_cubiertos, total_facturas, total_clientes, dso, modo_mock, por_segmento: {VERDE,AMARILLO,NARANJA,ROJO}, mensajes_pendientes_aprobacion, promesas_vencen_hoy, promesas_vencidas }.\n' +
+      'Pre-condiciones: ninguna. Si modo_mock=true, el dso (siempre 45 en ese caso) y los montos no son datos reales — dilo si preguntan.\n' +
+      'NO usar si: el usuario pregunta por un cliente específico (eso va a consultar_saldo_cliente).',
     input_schema: {
       type: 'object' as const,
       properties: {},
@@ -488,14 +510,71 @@ export const TOOLS: Anthropic.Tool[] = [
   {
     name: 'resumen_conciliacion_bancaria',
     description:
-      'Cuándo usar: el usuario pregunta "cómo va la conciliación", "depósitos sin identificar", "cheques devueltos", "qué hay pendiente del banco".\n' +
-      'Qué hace: resumen del estado de la conciliación bancaria (transacciones conciliadas, desconocidas, cheques devueltos, tareas de seguimiento pendientes).\n' +
-      'Devuelve: { conciliadas, desconocidas, cheques_devueltos: N, tareas_seguimiento: N, ultimo_corte }.\n' +
+      'Cuándo usar: el usuario pregunta "cómo va la conciliación", "cómo quedó el extracto de hoy", "cuántos depósitos sin identificar", "cheques devueltos", "qué hay pendiente del banco".\n' +
+      'Qué hace: resumen del último extracto cargado (conciliadas/por_aplicar/desconocidas/cheques_devueltos con montos) más un acumulado histórico y las tareas de seguimiento abiertas.\n' +
+      'Devuelve: { ultimo_extracto: {archivo, banco, fecha_extracto, cargado_at} | null, del_ultimo_extracto: {conciliadas, por_aplicar, desconocidas, cheques_devueltos} (cada uno {cantidad, monto}), pendientes_historicos: {por_aplicar, desconocidas, cheques_devueltos} (cantidad total sin resolver, de cualquier extracto), tareas_abiertas: [{id, tipo, titulo, dias_abierta}] }.\n' +
       'Pre-condiciones: ninguna.\n' +
-      'NO usar si: el usuario quiere CARGAR un nuevo estado bancario o ASIGNAR una transacción a un cliente — esas operaciones tienen endpoints propios, no van por el agente.',
+      'NO usar si: el usuario quiere VER las transacciones individuales con sus ids (usa listar_depositos_pendientes), o CARGAR/ASIGNAR/APROBAR una transacción (usa las tools correspondientes, o dile que suba el extracto por chat).',
     input_schema: {
       type: 'object' as const,
       properties: {},
+    },
+  },
+  {
+    name: 'listar_depositos_pendientes',
+    description:
+      'Cuándo usar: el usuario pregunta "qué depósitos quedaron sin dueño", "qué falta por aplicar", "dame los ids de los desconocidos", o después de cargar un extracto quiere ver el detalle. También cuando va a asignar o aprobar uno y necesita saber el id.\n' +
+      'Qué hace: lista transacciones de conciliación que necesitan una decisión humana, con su ID (necesario para asignar_deposito_a_cliente / aprobar_deposito).\n' +
+      'Devuelve: { total, depositos: [{id, estado, fecha_transaccion, descripcion, referencia, cuenta_origen, monto, moneda, archivo_origen, codigo_cliente}] }.\n' +
+      'Pre-condiciones: ninguna. Por defecto solo mira el ÚLTIMO extracto cargado (solo_ultimo_extracto=true) — pon eso en false si el usuario pide ver todo el histórico.\n' +
+      'NO usar si: el usuario solo quiere el conteo/resumen (usa resumen_conciliacion_bancaria).',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        estado: {
+          type: 'string',
+          enum: ['DESCONOCIDO', 'POR_APLICAR', 'CHEQUE_DEVUELTO', 'TODOS'],
+          description: 'Filtrar por estado. Default TODOS (desconocido+por_aplicar+cheque_devuelto).',
+        },
+        solo_ultimo_extracto: {
+          type: 'boolean',
+          description: 'Si true (default), solo el último extracto cargado. false = todo el histórico.',
+        },
+        limite: { type: 'number', description: 'Cantidad máxima a listar (default 20, tope 50)' },
+      },
+    },
+  },
+  {
+    name: 'asignar_deposito_a_cliente',
+    description:
+      'Cuándo usar: el usuario dice EXPLÍCITAMENTE de quién es un depósito DESCONOCIDO — "el depósito 512 es de Padrón Office", "ese 512 es de CG0006" — con un id concreto (de listar_depositos_pendientes) y un cliente identificado.\n' +
+      'Qué hace: asigna el cliente al depósito (pasa de DESCONOCIDO a POR_APLICAR) y aprende la cuenta bancaria de origen para la próxima vez (CP-05: nace en confianza MANUAL, nunca automática). NO aprueba el cobro — eso es aprobar_deposito, un paso aparte.\n' +
+      'Devuelve: { mensaje: string }.\n' +
+      'Pre-condiciones: conciliacion_id numérico exacto. Si el usuario dio un NOMBRE de cliente (no un código), primero usa buscar_cliente para resolver el código — nunca inventes un código.\n' +
+      'NO usar si: el usuario no da un id concreto, o no identifica un cliente. NUNCA llamar esta tool por iniciativa propia — la orden del usuario ES la confirmación humana que exige CP-05.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        conciliacion_id: { type: 'number', description: 'ID numérico del depósito (de listar_depositos_pendientes)' },
+        codigo_cliente: { type: 'string', description: 'Código del cliente (resuelto con buscar_cliente si el usuario solo dio el nombre)' },
+      },
+      required: ['conciliacion_id', 'codigo_cliente'],
+    },
+  },
+  {
+    name: 'aprobar_deposito',
+    description:
+      'Cuándo usar: el usuario dice EXPLÍCITAMENTE "aprueba el depósito 512", "ese ya lo puedes aplicar" — con un id concreto de un depósito en estado POR_APLICAR (ya tiene cliente asignado).\n' +
+      'Qué hace: marca el depósito como CONCILIADO. Es la confirmación final antes de que contabilidad lo registre en Softec — la app no lo aplica sola en el ERP.\n' +
+      'Devuelve: { mensaje: string }.\n' +
+      'Pre-condiciones: conciliacion_id numérico exacto, y que el depósito ya esté POR_APLICAR (si está DESCONOCIDO, primero asignar_deposito_a_cliente).\n' +
+      'NO usar si: el usuario no da un id concreto. NUNCA llamar esta tool por iniciativa propia.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        conciliacion_id: { type: 'number', description: 'ID numérico del depósito (de listar_depositos_pendientes)' },
+      },
+      required: ['conciliacion_id'],
     },
   },
   {
@@ -627,11 +706,11 @@ export const TOOLS: Anthropic.Tool[] = [
   {
     name: 'guardar_preferencia_equipo',
     description:
-      'Cuándo usar: el usuario dice "recuerda mi preferencia X", "de ahora en adelante haz Y", "anota para el equipo Z", "siempre que pase X haz Y" — registrar una preferencia DEL EQUIPO o del negocio (no de un cliente).\n' +
-      'Qué hace: guarda un dato permanente clave-valor sobre el equipo, sus preferencias o el contexto del negocio (cómo prefiere trabajar el usuario, quién maneja qué clientes, acuerdos internos, contexto de la empresa).\n' +
-      'Devuelve: { clave, valor, actualizado_por, actualizado_en }. Si la clave ya existía: la sobreescribe.\n' +
-      'Pre-condiciones: clave en formato snake_case descriptivo (ej. "preferencia_correos_ricardo", "horario_reunion_semanal"). Valor claro y completo para ser útil en futuras sesiones.\n' +
-      'NO usar si: el usuario está hablando de UN cliente específico — eso es consultar_notas_cliente / guardar_patron_pago_cliente / guardar_canal_efectivo_cliente (contexto memoria).',
+      'Cuándo usar: el usuario dice EXPLÍCITAMENTE "recuerda mi preferencia X", "de ahora en adelante haz Y", "anota para el equipo Z", "siempre que pase X haz Y", "prefiero que..." — registrar una preferencia DEL EQUIPO o del negocio (no de un cliente). NUNCA la infieras de una conversación normal — solo cuando el usuario la declare así de explícito.\n' +
+      'Qué hace: guarda un dato permanente clave-valor. ambito=usuario (default) es solo para quien te habla; ambito=equipo la hace visible para cualquiera que use el bot — solo si el usuario dice "para el equipo", "que todos lo sepan" o similar.\n' +
+      'Devuelve: { clave, valor, ambito, actualizado_por, actualizado_en }. Si la clave ya existía para ese usuario: la sobreescribe.\n' +
+      'Pre-condiciones: clave en formato snake_case descriptivo (ej. "preferencia_correos_ricardo", "horario_reunion_semanal"). Valor claro y completo. ambito=equipo exige SUPERVISOR.\n' +
+      'NO usar si: el usuario está hablando de UN cliente específico — eso es consultar_notas_cliente / guardar_patron_pago_cliente / guardar_canal_efectivo_cliente (contexto memoria). Tampoco inventes una preferencia que el usuario no pidió explícitamente guardar — confírmasela en una línea después de guardarla, nunca antes la asumas en silencio.',
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -643,8 +722,271 @@ export const TOOLS: Anthropic.Tool[] = [
           type: 'string',
           description: 'El dato a recordar, escrito de forma clara y completa para que sea útil en el futuro',
         },
+        ambito: {
+          type: 'string',
+          enum: ['usuario', 'equipo'],
+          description: 'usuario (default) = solo para ti. equipo = visible para todos — requiere que el usuario lo pida explícitamente y ser supervisor.',
+        },
       },
       required: ['clave', 'valor'],
+    },
+  },
+  {
+    name: 'listar_disputas',
+    description:
+      'Cuándo usar: "cuántas disputas tenemos abiertas", "qué disputas hay de X cliente", "qué falta por resolver de disputas".\n' +
+      'Qué hace: lista disputas de factura con filtro opcional por estado y/o cliente.\n' +
+      'Devuelve: { total, disputas: [{id, codigo_cliente, nombre_cliente, ij_inum, motivo, monto_disputado, estado, resolucion, resuelto_por, fecha_resolucion, registrado_por, created_at}] }.\n' +
+      'Pre-condiciones: ninguna.\n' +
+      'NO usar si: quiere abrir una nueva disputa (crear_disputa) o cambiarle el estado a una existente (resolver_disputa).',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        estado: {
+          type: 'string',
+          enum: ['ABIERTA', 'EN_REVISION', 'RESUELTA', 'ANULADA'],
+          description: 'Filtrar por estado. Sin este campo trae todas.',
+        },
+        codigo_cliente: { type: 'string', description: 'Filtrar por un cliente concreto.' },
+        limite: { type: 'number', description: 'Cantidad máxima a listar (default 20, tope 50).' },
+      },
+    },
+  },
+  {
+    name: 'crear_disputa',
+    description:
+      'Cuándo usar: el usuario reporta que un cliente disputa una factura — "X dice que la factura 12345 vino mal", "abre una disputa de la factura Y por mercancía dañada".\n' +
+      'Qué hace: crea la disputa en estado ABIERTA. CP-03: mientras esté ABIERTA o EN_REVISION, esa factura queda excluida de la cobranza automática (cadencias no la tocan).\n' +
+      'Devuelve: { mensaje, id }.\n' +
+      'Pre-condiciones: código exacto del cliente (usa buscar_cliente si el usuario solo dio el nombre), número de factura (ij_inum) y un motivo de al menos 5 caracteres.\n' +
+      'NO usar si: falta el motivo o el número de factura — pregunta antes de inventar cualquiera de los dos.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        codigo_cliente: { type: 'string', description: 'Código exacto del cliente.' },
+        ij_inum: { type: 'number', description: 'Número interno de la factura disputada.' },
+        motivo: { type: 'string', description: 'Motivo de la disputa (mínimo 5 caracteres).' },
+        monto_disputado: { type: 'number', description: 'Monto disputado, si el usuario lo da. Opcional.' },
+      },
+      required: ['codigo_cliente', 'ij_inum', 'motivo'],
+    },
+  },
+  {
+    name: 'resolver_disputa',
+    description:
+      'Cuándo usar: el usuario da una orden explícita sobre una disputa concreta — "la disputa 5 pasa a revisión", "resuelve la disputa 5: ya se aplicó el descuento", "anula la disputa 5".\n' +
+      'Qué hace: transición de estado. ABIERTA→EN_REVISION o ANULADA. EN_REVISION→RESUELTA (exige resolución) o ANULADA. RESUELTA/ANULADA son finales — ya no admiten cambios.\n' +
+      'Devuelve: { mensaje }. Si la transición no es válida, el mensaje explica por qué.\n' +
+      'Pre-condiciones: disputa_id exacto (de listar_disputas); si estado=RESUELTA, hace falta indicar la resolución.\n' +
+      'NO usar si: el usuario no da un id concreto. NUNCA llamar esta tool por iniciativa propia — la orden del usuario ES la confirmación.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        disputa_id: { type: 'number', description: 'ID numérico de la disputa (de listar_disputas).' },
+        estado: {
+          type: 'string',
+          enum: ['EN_REVISION', 'RESUELTA', 'ANULADA'],
+          description: 'Estado destino.',
+        },
+        resolucion: { type: 'string', description: 'Texto de la resolución. Obligatorio si estado=RESUELTA.' },
+      },
+      required: ['disputa_id', 'estado'],
+    },
+  },
+  {
+    name: 'enviar_reporte_excel',
+    description:
+      'Cuándo usar: "mándame el Excel de cartera", "el reporte de gestiones de este mes", "pásame el estado de cuenta de X en excel".\n' +
+      'Qué hace: genera el archivo y te lo manda directo aquí en Telegram como documento adjunto. Si te habla desde el widget web, en su lugar devuelve el link de descarga (preséntalo como enlace: <a href="URL">Descargar reporte</a>).\n' +
+      'Devuelve (Telegram): { mensaje }. Devuelve (web): { mensaje, url }.\n' +
+      'Pre-condiciones: tipo en {cartera, gestiones, estado_cuenta}. estado_cuenta EXIGE codigo_cliente (usa buscar_cliente si solo hay nombre). gestiones acepta desde/hasta en YYYY-MM-DD (default: últimos 30 días).\n' +
+      'NO usar si: tipo=estado_cuenta sin codigo_cliente resuelto — pregunta o busca el cliente primero.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        tipo: {
+          type: 'string',
+          enum: ['cartera', 'gestiones', 'estado_cuenta'],
+          description: 'Qué reporte generar.',
+        },
+        desde: { type: 'string', description: 'Solo para tipo=gestiones. Fecha YYYY-MM-DD.' },
+        hasta: { type: 'string', description: 'Solo para tipo=gestiones. Fecha YYYY-MM-DD.' },
+        codigo_cliente: { type: 'string', description: 'Obligatorio para tipo=estado_cuenta.' },
+      },
+      required: ['tipo'],
+    },
+  },
+  {
+    name: 'enviar_factura_cliente',
+    description:
+      'Cuándo usar: orden explícita de un supervisor de mandar una factura puntual — "mándale la factura 12345 a Padrón por WhatsApp", "envíale el PDF de la 9080 a cxp@cliente.com".\n' +
+      'Qué hace: manda el PDF de la factura (desde Google Drive) por email o WhatsApp a un destinatario. Busca el documento por número de factura — no hace falta ningún id interno.\n' +
+      'Devuelve: { mensaje }. Si no hay PDF vinculado a esa factura, te lo dice (eso solo se sube desde la web, en Documentos).\n' +
+      'Pre-condiciones: SOLO SUPERVISOR. ij_inum (número de factura) y codigo_cliente exactos (usa buscar_cliente si solo hay nombre), canal en {EMAIL, WHATSAPP}. Si el usuario no da destinatario, usa el email/WhatsApp guardado del cliente antes de preguntar.\n' +
+      'NO usar si: no eres supervisor, o no se pudo identificar cliente+factura con certeza.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        ij_inum: { type: 'number', description: 'Número de la factura (no un id interno).' },
+        codigo_cliente: { type: 'string', description: 'Código exacto del cliente dueño de la factura.' },
+        canal: { type: 'string', enum: ['EMAIL', 'WHATSAPP'], description: 'Canal de envío.' },
+        destinatario: { type: 'string', description: 'Email o teléfono destino. Si se omite, se usa el contacto guardado del cliente.' },
+      },
+      required: ['ij_inum', 'codigo_cliente', 'canal'],
+    },
+  },
+  {
+    name: 'listar_cadencias',
+    description:
+      'Cuándo usar: "qué cadencias tenemos configuradas", "cómo está armada la cobranza automática", "cuándo corrió por última vez la cadencia".\n' +
+      'Qué hace: lista las reglas de cadencia (segmento + día desde vencimiento + acción) y cuándo fue la última corrida automática.\n' +
+      'Devuelve: { cadencias: [{id, segmento, dia_desde_vencimiento, accion, requiere_aprobacion, plantilla_mensaje_id, activa}], ultimo_run }.\n' +
+      'Pre-condiciones: ninguna.\n' +
+      'NO usar si: quiere prender/apagar una (activar_cadencia) o correrlas ya (ejecutar_cadencias_ahora).',
+    input_schema: { type: 'object' as const, properties: {} },
+  },
+  {
+    name: 'activar_cadencia',
+    description:
+      'Cuándo usar: "apaga la cadencia 3", "activa de nuevo la cadencia del segmento ROJO" — con un id concreto de listar_cadencias.\n' +
+      'Qué hace: prende o apaga una regla de cadencia (no crea ni edita segmento/día/acción — eso solo en la web).\n' +
+      'Devuelve: { mensaje }.\n' +
+      'Pre-condiciones: SOLO SUPERVISOR. id numérico exacto de listar_cadencias.\n' +
+      'NO usar si: no eres supervisor, o el usuario quiere cambiar el segmento/día/acción/plantilla (dile que eso es solo desde la web, en Configuración → Cadencias).',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        id: { type: 'number', description: 'ID de la cadencia (de listar_cadencias).' },
+        activa: { type: 'boolean', description: 'true = activar, false = desactivar.' },
+      },
+      required: ['id', 'activa'],
+    },
+  },
+  {
+    name: 'ejecutar_cadencias_ahora',
+    description:
+      'Cuándo usar: orden explícita de un supervisor de correr las cadencias YA, sin esperar a la corrida automática — "corre las cadencias ahora", "aplica la cobranza automática de una vez".\n' +
+      'Qué hace: ejecuta el mismo job que corre solo cada hora (evaluar facturas vencidas contra las reglas de cadencia y aplicar la acción que corresponda a cada una).\n' +
+      'Devuelve: { empresas, evaluadas, aplicadas, fastForward, omitidas, errores }.\n' +
+      'Pre-condiciones: SOLO SUPERVISOR.\n' +
+      'NO usar si: no eres supervisor, o el usuario no lo pidió explícitamente — esto APLICA acciones reales, no es de solo lectura.',
+    input_schema: { type: 'object' as const, properties: {} },
+  },
+  {
+    name: 'generar_cola_hoy',
+    description:
+      'Cuándo usar: orden explícita de un supervisor de generar la cola de aprobación del día — "genera la cola de hoy", "arma los mensajes de cobranza pendientes".\n' +
+      'Qué hace: toma hasta 20 facturas vencidas sin gestión activa (excluye disputas CP-03, clientes pausados y clientes cubiertos por saldo a favor CP-15), redacta el mensaje de cada una con Claude o plantilla, y las deja en PENDIENTE de aprobación.\n' +
+      'Devuelve: { generadas, total_facturas, clientes_excluidos_por_saldo_a_favor, facturas_excluidas_por_saldo_a_favor, modo }.\n' +
+      'Pre-condiciones: SOLO SUPERVISOR. Cuesta llamadas reales a la API de Claude — nunca la llames por iniciativa propia.\n' +
+      'NO usar si: no eres supervisor, o el usuario no lo pidió explícitamente en este turno.',
+    input_schema: { type: 'object' as const, properties: {} },
+  },
+  {
+    name: 'editar_gestion',
+    description:
+      'Cuándo usar: "cambia el asunto de la gestión 123 a...", "edita el correo de la 123: ...", "el WhatsApp de la 123 debería decir...", antes de aprobarla.\n' +
+      'Qué hace: sobreescribe el asunto y/o el texto de email/WhatsApp de una gestión PENDIENTE. El mensaje original generado por IA queda guardado aparte (mensaje_propuesto_*) — esto solo cambia lo que se va a enviar.\n' +
+      'Devuelve: { mensaje }. La gestión sigue PENDIENTE — no la envía ni la aprueba.\n' +
+      'Pre-condiciones: gestion_id exacto (de listar_mensajes_pendientes_aprobacion), la gestión debe estar PENDIENTE, y al menos uno de asunto/texto_email/texto_whatsapp.\n' +
+      'NO usar si: la gestión ya no está PENDIENTE (dirá el estado actual). Para aprobar después de editar, usa aprobar_gestion por separado.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        gestion_id: { type: 'number', description: 'ID de la gestión (de listar_mensajes_pendientes_aprobacion).' },
+        asunto: { type: 'string', description: 'Nuevo asunto del email.' },
+        texto_email: { type: 'string', description: 'Nuevo texto del email.' },
+        texto_whatsapp: { type: 'string', description: 'Nuevo texto del WhatsApp.' },
+      },
+      required: ['gestion_id'],
+    },
+  },
+  {
+    name: 'pausar_cliente',
+    description:
+      'Cuándo usar: "pausa a Padrón hasta el 15 de septiembre", "no le mandes cobranza a X por ahora", "detén los mensajes automáticos a X hasta nuevo aviso".\n' +
+      'Qué hace: excluye al cliente de la cadencia automática y de generar_cola_hoy hasta la fecha dada (no borra ni toca su email/whatsapp/notas guardados).\n' +
+      'Devuelve: { mensaje }.\n' +
+      'Pre-condiciones: SOLO SUPERVISOR. codigo_cliente exacto (usa buscar_cliente si solo hay nombre) y fecha hasta en YYYY-MM-DD.\n' +
+      'NO usar si: no eres supervisor, o no hay fecha clara — pregunta hasta cuándo antes de pausar indefinidamente.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        codigo_cliente: { type: 'string', description: 'Código exacto del cliente.' },
+        hasta: { type: 'string', description: 'Fecha YYYY-MM-DD hasta la que queda pausado.' },
+        motivo: { type: 'string', description: 'Motivo de la pausa, si el usuario lo da. Opcional.' },
+      },
+      required: ['codigo_cliente', 'hasta'],
+    },
+  },
+  {
+    name: 'reactivar_cliente',
+    description:
+      'Cuándo usar: "reactiva a Padrón", "ya puedes volver a cobrarle a X", "quita la pausa de X".\n' +
+      'Qué hace: quita la pausa del cliente — vuelve a ser elegible para cadencia automática y generar_cola_hoy.\n' +
+      'Devuelve: { mensaje }.\n' +
+      'Pre-condiciones: SOLO SUPERVISOR. codigo_cliente exacto.\n' +
+      'NO usar si: no eres supervisor, o el cliente no tenía pausa activa (te lo dirá).',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        codigo_cliente: { type: 'string', description: 'Código exacto del cliente.' },
+      },
+      required: ['codigo_cliente'],
+    },
+  },
+  {
+    name: 'generar_link_portal',
+    description:
+      'Cuándo usar: "dame el link del portal de 0000274", "mándale a X su link de autogestión", "necesito el portal del cliente Y".\n' +
+      'Qué hace: genera un link de acceso al portal de autogestión del cliente (ve su estado de cuenta y facturas). Válido 30 días; genera uno nuevo invalida el anterior.\n' +
+      'Devuelve: { mensaje, url, expiracion }.\n' +
+      'Pre-condiciones: codigo_cliente exacto (usa buscar_cliente si solo hay nombre).\n' +
+      'NO usar si: no se pudo identificar el cliente con certeza.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        codigo_cliente: { type: 'string', description: 'Código exacto del cliente.' },
+      },
+      required: ['codigo_cliente'],
+    },
+  },
+  {
+    name: 'recordar_conversaciones',
+    description:
+      'Cuándo usar: "qué hablamos de X la semana pasada", "cuándo mencioné a Y", "busca en el historial cuándo dijimos Z".\n' +
+      'Qué hace: busca en el historial de chat (texto libre y/o cliente y/o rango de fechas). SOLO busca en el grupo del equipo y en TU propio chat — nunca en chats privados de otras personas.\n' +
+      'Devuelve: { total, resultados: [{rol, contenido, codigo_cliente, chat_id, created_at}] }.\n' +
+      'Pre-condiciones: al menos uno de termino/codigo_cliente/desde/hasta — no traer todo el historial sin filtro. Si el usuario menciona un cliente por NOMBRE (no código), pasa el nombre directo como termino — NO hace falta resolver el código primero con buscar_cliente, el texto se busca tal cual aparece en los mensajes.\n' +
+      'NO usar si: quieres TODO lo que pasó con un cliente en orden (facturas, pagos, tareas, no solo mensajes de chat) — para eso usa linea_de_tiempo_cliente.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        termino: { type: 'string', description: 'Texto a buscar en el contenido de los mensajes.' },
+        codigo_cliente: { type: 'string', description: 'Filtrar por cliente (código exacto).' },
+        desde: { type: 'string', description: 'Fecha YYYY-MM-DD desde.' },
+        hasta: { type: 'string', description: 'Fecha YYYY-MM-DD hasta.' },
+        limite: { type: 'number', description: 'Cantidad máxima (default 15, tope 50).' },
+      },
+    },
+  },
+  {
+    name: 'linea_de_tiempo_cliente',
+    description:
+      'Cuándo usar: "línea de tiempo de X", "qué ha pasado con X", "historial completo de X", "todo lo de X en agosto".\n' +
+      'Qué hace: cruza TODO lo registrado del cliente en orden cronológico — gestiones, conversaciones enviadas, promesas de pago, conciliación bancaria, tareas, disputas y mensajes de chat.\n' +
+      'Devuelve: { codigo_cliente, total, eventos: [{fecha, tipo, resumen}] } — tipo en {GESTION, CONVERSACION, PROMESA, CONCILIACION, TAREA, DISPUTA, MENSAJE}.\n' +
+      'Pre-condiciones: codigo_cliente exacto (usa buscar_cliente si solo hay nombre).\n' +
+      'NO usar si: solo quiere mensajes de chat (más barato: recordar_conversaciones), o el saldo/facturas actuales (consultar_saldo_cliente).',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        codigo_cliente: { type: 'string', description: 'Código exacto del cliente.' },
+        desde: { type: 'string', description: 'Fecha YYYY-MM-DD desde.' },
+        hasta: { type: 'string', description: 'Fecha YYYY-MM-DD hasta.' },
+        limite: { type: 'number', description: 'Cantidad máxima de eventos (default 30, tope 100).' },
+      },
+      required: ['codigo_cliente'],
     },
   },
 ];
@@ -688,6 +1030,7 @@ export async function ejecutarTool(
     userEmail?: string;
     telegramUserId?: number;
     rol?: 'supervisor' | 'agente_cobros';
+    chatId?: number;
   }
 ): Promise<ResultadoTool> {
   try {
@@ -698,11 +1041,9 @@ export async function ejecutarTool(
           Boolean(argumentos.mostrar_todas)
         );
 
-      case 'estado_cobros_hoy': // alias deprecado, retirar tras 1 release
       case 'resumen_estado_cobros_hoy':
         return await estadoCobrosHoy();
 
-      case 'listar_pendientes_aprobacion': // alias deprecado, retirar tras 1 release
       case 'listar_mensajes_pendientes_aprobacion':
         return await listarPendientesAprobacion(Number(argumentos.limite) || 10);
 
@@ -726,11 +1067,9 @@ export async function ejecutarTool(
           ctx
         );
 
-      case 'listar_promesas_vencidas': // alias deprecado, retirar tras 1 release
       case 'listar_promesas_pago_incumplidas':
         return await listarPromesasVencidas(Number(argumentos.limite) || 10);
 
-      case 'historial_conversaciones_cliente': // alias deprecado, retirar tras 1 release
       case 'consultar_historial_conversaciones':
         return await historialConversacionesCliente(
           String(argumentos.codigo_cliente),
@@ -740,19 +1079,15 @@ export async function ejecutarTool(
       case 'buscar_cliente':
         return await buscarCliente(String(argumentos.termino));
 
-      case 'crear_tarea': // alias deprecado, retirar tras 1 release
       case 'crear_tarea_recordatorio':
         return await crearTarea(argumentos, ctx);
 
-      case 'listar_tareas': // alias deprecado, retirar tras 1 release
       case 'listar_tareas_pendientes':
         return await listarTareas(argumentos);
 
-      case 'marcar_tarea_hecha': // alias deprecado, retirar tras 1 release
       case 'marcar_tarea_completada':
         return await marcarTareaHecha(argumentos, ctx);
 
-      case 'proponer_correo_cliente': // alias deprecado, retirar tras 1 release
       case 'proponer_correo_cobranza_cliente': {
         const emailDestino = argumentos.email_destino ? String(argumentos.email_destino).trim() : undefined;
         const plantillaId = argumentos.plantilla_id ? Number(argumentos.plantilla_id) : undefined;
@@ -760,24 +1095,14 @@ export async function ejecutarTool(
         return { ok: result.ok, data: result };
       }
 
-      case 'listar_plantillas': // alias deprecado, retirar tras 1 release
       case 'listar_plantillas_email': {
         const plantillas = await listarPlantillasActivas(EMPRESA_GUIPAK);
         return { ok: true, data: { total: plantillas.length, plantillas } };
       }
 
-      case 'obtener_contactos_cliente': // alias deprecado, retirar tras 1 release
       case 'consultar_contactos_cliente':
       case 'consultar_contactos_cliente_detalle':
         return await obtenerContactosCliente(String(argumentos.termino));
-
-      case 'guardar_dato_cliente': // alias deprecado, retirar tras 1 release
-        return await guardarDatoCliente(
-          String(argumentos.codigo_cliente),
-          String(argumentos.campo) as 'email' | 'whatsapp' | 'contacto_cobros',
-          String(argumentos.valor),
-          ctx
-        );
 
       case 'guardar_email_cliente':
         return await guardarDatoCliente(
@@ -803,33 +1128,41 @@ export async function ejecutarTool(
           ctx
         );
 
-      case 'listar_clientes_sin_datos': // alias deprecado, retirar tras 1 release
       case 'listar_clientes_con_datos_faltantes':
         return await listarClientesSinDatos(
           String(argumentos.faltante || 'cualquiera') as 'email' | 'whatsapp' | 'cualquiera',
           Number(argumentos.limite) || 15
         );
 
-      case 'estado_cadencias': // alias deprecado, retirar tras 1 release
       case 'resumen_cadencias_automaticas':
         return await estadoCadencias();
 
-      case 'estado_conciliacion': // alias deprecado, retirar tras 1 release
       case 'resumen_conciliacion_bancaria':
         return await estadoConciliacion();
 
-      case 'proponer_whatsapp_cliente': // alias deprecado, retirar tras 1 release
+      case 'listar_depositos_pendientes': {
+        const estadoFiltro = argumentos.estado as 'DESCONOCIDO' | 'POR_APLICAR' | 'CHEQUE_DEVUELTO' | 'TODOS' | undefined;
+        const depositos = await listarDepositosPendientes({
+          estado: estadoFiltro,
+          soloUltimoExtracto: argumentos.solo_ultimo_extracto !== false,
+          limite: Number(argumentos.limite) || 20,
+        });
+        return { ok: true, data: { total: depositos.length, depositos } };
+      }
+
+      case 'asignar_deposito_a_cliente':
+        return await asignarDepositoTool(argumentos, ctx);
+
+      case 'aprobar_deposito':
+        return await aprobarDepositoTool(argumentos, ctx);
+
       case 'proponer_whatsapp_cobranza_cliente': {
         const result = await proponerWhatsAppCliente(String(argumentos.termino));
         return { ok: result.ok, data: result };
       }
 
-      case 'consultar_memoria_cliente': // alias deprecado, retirar tras 1 release
       case 'consultar_notas_cliente':
         return await consultarMemoriaCliente(String(argumentos.codigo_cliente));
-
-      case 'guardar_memoria_cliente': // alias deprecado, retirar tras 1 release (acepta cualquier campo)
-        return await guardarMemoriaCliente(argumentos, ctx);
 
       case 'guardar_patron_pago_cliente':
         return await guardarMemoriaCliente(
@@ -849,17 +1182,59 @@ export async function ejecutarTool(
           ctx
         );
 
-      case 'guardar_memoria_equipo': // alias deprecado, retirar tras 1 release
       case 'guardar_preferencia_equipo':
         return await guardarMemoriaEquipoTool(argumentos, ctx);
 
-      case 'obtener_perfil_riesgo_cliente': // alias deprecado, retirar tras 1 release
       case 'consultar_perfil_riesgo_cliente':
         return await obtenerPerfilRiesgoCliente(String(argumentos.codigo_cliente));
 
-      case 'analizar_riesgo_cartera': // alias deprecado, retirar tras 1 release
       case 'resumen_riesgo_cartera':
         return await analizarRiesgoCartera(Number(argumentos.limite_criticos) || 5);
+
+      case 'listar_disputas':
+        return await listarDisputasTool(argumentos);
+
+      case 'crear_disputa':
+        return await crearDisputaTool(argumentos, ctx);
+
+      case 'resolver_disputa':
+        return await resolverDisputaTool(argumentos, ctx);
+
+      case 'enviar_reporte_excel':
+        return await enviarReporteExcelTool(argumentos, ctx);
+
+      case 'enviar_factura_cliente':
+        return await enviarFacturaClienteTool(argumentos, ctx);
+
+      case 'listar_cadencias':
+        return await listarCadenciasTool();
+
+      case 'activar_cadencia':
+        return await activarCadenciaTool(argumentos, ctx);
+
+      case 'ejecutar_cadencias_ahora':
+        return await ejecutarCadenciasAhoraTool(ctx);
+
+      case 'generar_cola_hoy':
+        return await generarColaHoyTool(ctx);
+
+      case 'editar_gestion':
+        return await editarGestionTool(argumentos, ctx);
+
+      case 'pausar_cliente':
+        return await pausarClienteTool(argumentos, ctx);
+
+      case 'reactivar_cliente':
+        return await reactivarClienteTool(argumentos, ctx);
+
+      case 'generar_link_portal':
+        return await generarLinkPortalTool(argumentos, ctx);
+
+      case 'recordar_conversaciones':
+        return await recordarConversacionesTool(argumentos, ctx);
+
+      case 'linea_de_tiempo_cliente':
+        return await lineaDeTiempoClienteTool(argumentos);
 
       default:
         return { ok: false, error: `Tool desconocida: ${nombre}` };
@@ -1006,6 +1381,7 @@ async function estadoCobrosHoy(): Promise<ResultadoTool> {
   let clientes_cubiertos = 0;
   let total_facturas = 0;
   let total_clientes = 0;
+  let dso = 0;
   const segmentos: Record<string, number> = { VERDE: 0, AMARILLO: 0, NARANJA: 0, ROJO: 0 };
 
   if (softecOk) {
@@ -1058,6 +1434,22 @@ async function estadoCobrosHoy(): Promise<ResultadoTool> {
     }
     cartera_a_favor = Math.round(aFavorAplicable * 100) / 100;
     cartera_neta = Math.round(netoAcumulado * 100) / 100;
+
+    // DSO = (CxC / ventas últimos 90 días) × 90 — sobre BRUTO a propósito
+    // (misma query que app/api/cobranzas/dashboard/route.ts, CP-15 no aplica
+    // aquí: es una métrica de disciplina contable, no de cobrabilidad real).
+    const dsoData = await softecQuery<{ cxc: number; ventas_90: number }>(`
+      SELECT
+        (SELECT SUM(IJ_TOT - IJ_TOTAPPL) FROM v_cobr_ijnl WHERE IJ_TYPEDOC='IN' AND IJ_INVTORF='T' AND IJ_PAID='F' AND (IJ_TOT - IJ_TOTAPPL) > 0) AS cxc,
+        (SELECT SUM(IJ_TOT) FROM v_cobr_ijnl WHERE IJ_TYPEDOC='IN' AND IJ_INVTORF='T' AND IJ_DATE >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)) AS ventas_90
+    `);
+    if (dsoData[0] && Number(dsoData[0].ventas_90) > 0) {
+      dso = Math.round((Number(dsoData[0].cxc) / Number(dsoData[0].ventas_90)) * 90);
+    }
+  } else {
+    // Mismo centinela que el dashboard web (dashboard/route.ts) — 45 exacto
+    // es la señal de "sin conexión a Softec", documentada en CONOCIMIENTO_APP.
+    dso = 45;
   }
 
   const pendientes = await cobranzasQuery<{ total: number }>(
@@ -1079,6 +1471,8 @@ async function estadoCobrosHoy(): Promise<ResultadoTool> {
       clientes_cubiertos,
       total_facturas,
       total_clientes,
+      dso,
+      modo_mock: !softecOk,
       por_segmento: segmentos,
       mensajes_pendientes_aprobacion: Number(pendientes[0]?.total) || 0,
       promesas_vencen_hoy: Number(promesasHoy[0]?.total) || 0,
@@ -1785,21 +2179,35 @@ async function guardarMemoriaCliente(
 
 async function guardarMemoriaEquipoTool(
   args: Record<string, unknown>,
-  ctx?: { userId?: string; userEmail?: string; telegramUserId?: number }
+  ctx?: { userId?: string; userEmail?: string; telegramUserId?: number; rol?: 'supervisor' | 'agente_cobros' }
 ): Promise<ResultadoTool> {
   const clave = String(args.clave || '').trim();
   const valor = String(args.valor || '').trim();
   if (!clave || clave.length < 2) return { ok: false, error: 'clave inválida' };
   if (!valor || valor.length < 2) return { ok: false, error: 'valor inválido' };
 
+  const ambitoPedido = String(args.ambito || 'usuario').toLowerCase();
+  if (ambitoPedido !== 'usuario' && ambitoPedido !== 'equipo') {
+    return { ok: false, error: 'ambito inválido — debe ser usuario o equipo.' };
+  }
+  if (ambitoPedido === 'equipo' && ctx?.rol !== 'supervisor') {
+    return { ok: false, error: 'Solo un supervisor puede guardar una preferencia para todo el equipo.' };
+  }
+  const ambito: 'USUARIO' | 'EQUIPO' = ambitoPedido === 'equipo' ? 'EQUIPO' : 'USUARIO';
+
+  // usuario_id (no telegram_user_id) es la identidad real: el widget web usa
+  // telegram_user_id=0 para todos, así que guardar por eso colapsaba las
+  // preferencias de cualquier persona que usara el chat web en un solo balde.
   const telegramUserId = ctx?.telegramUserId ?? 0;
-  await guardarMemoriaEquipo(telegramUserId, clave, valor);
+  const usuarioId = Number(ctx?.userId) || 0;
+  await guardarMemoriaEquipo(telegramUserId, usuarioId, clave, valor, ambito);
   await logAccion(ctx?.userId || null, 'MEMORIA_EQUIPO_GUARDADA', 'telegram', clave, {
     valor,
-    telegram_user_id: telegramUserId,
+    ambito,
+    usuario_id: usuarioId,
     via: 'telegram',
   });
-  return { ok: true, data: { clave, valor } };
+  return { ok: true, data: { clave, valor, ambito: ambitoPedido } };
 }
 
 async function marcarTareaHecha(
@@ -2019,45 +2427,443 @@ async function analizarRiesgoCartera(limiteCriticos: number): Promise<ResultadoT
   };
 }
 
+/**
+ * Reescrita (2026-09-03) para acotar al ÚLTIMO extracto en vez de agregar TODA
+ * la historia — la forma real no coincidía con lo que la description del tool
+ * prometía, y para un cierre diario hacía falta distinguir "hoy" de
+ * "acumulado". Ya no expone montos/cantidades sin ids: para eso está
+ * listar_depositos_pendientes.
+ */
 async function estadoConciliacion(): Promise<ResultadoTool> {
-  const stats = await cobranzasQuery<{ estado: string; total: number; cantidad: number }>(
-    `SELECT estado, SUM(monto) as total, COUNT(*) as cantidad
-     FROM cobranza_conciliacion WHERE empresa_id = 1 GROUP BY estado`
+  const extracto = await ultimoExtracto(EMPRESA_GUIPAK);
+
+  const porEstadoDelExtracto = extracto
+    ? await cobranzasQuery<{ estado: string; cantidad: number; total: number }>(
+        `SELECT estado, COUNT(*) AS cantidad, SUM(monto) AS total
+         FROM cobranza_conciliacion
+         WHERE empresa_id = ? AND archivo_origen = ?
+         GROUP BY estado`,
+        [EMPRESA_GUIPAK, extracto.archivo]
+      )
+    : [];
+
+  const pendientesHistoricos = await cobranzasQuery<{ estado: string; cantidad: number }>(
+    `SELECT estado, COUNT(*) AS cantidad
+     FROM cobranza_conciliacion
+     WHERE empresa_id = ? AND estado IN ('POR_APLICAR','DESCONOCIDO','CHEQUE_DEVUELTO')
+     GROUP BY estado`,
+    [EMPRESA_GUIPAK]
   );
 
-  const tareas = await cobranzasQuery<{
-    tipo: string; estado: string; titulo: string; id: number;
-    created_at: string;
-  }>(
-    `SELECT id, tipo, estado, titulo, created_at
+  const tareas = await cobranzasQuery<{ id: number; tipo: string; titulo: string; created_at: string }>(
+    `SELECT id, tipo, titulo, created_at
      FROM cobranza_tareas
      WHERE empresa_id = 1 AND origen = 'CONCILIACION' AND estado IN ('PENDIENTE', 'EN_PROGRESO')
      ORDER BY created_at DESC LIMIT 20`
   );
 
-  const ultimaCarga = await cobranzasQuery<{ archivo_origen: string; fecha_extracto: string; total: number }>(
-    `SELECT archivo_origen, fecha_extracto, COUNT(*) as total
-     FROM cobranza_conciliacion
-     WHERE empresa_id = 1
-     GROUP BY archivo_origen, fecha_extracto
-     ORDER BY fecha_extracto DESC LIMIT 3`
-  );
+  const porEstado = (estado: string) => {
+    const r = porEstadoDelExtracto.find((x) => x.estado === estado);
+    return { cantidad: Number(r?.cantidad || 0), monto: Number(r?.total || 0) };
+  };
+  const cantidadHistorica = (estado: string) =>
+    Number(pendientesHistoricos.find((x) => x.estado === estado)?.cantidad || 0);
 
   return {
     ok: true,
     data: {
-      resumen_por_estado: stats.map(s => ({
-        estado: s.estado,
-        cantidad: Number(s.cantidad),
-        monto_total: Number(s.total),
-      })),
-      tareas_seguimiento_pendientes: tareas.map(t => ({
+      ultimo_extracto: extracto
+        ? {
+            archivo: extracto.archivo,
+            banco: extracto.banco,
+            fecha_extracto: extracto.fechaExtracto,
+            cargado_at: extracto.cargadoAt,
+          }
+        : null,
+      del_ultimo_extracto: {
+        conciliadas: porEstado('CONCILIADO'),
+        por_aplicar: porEstado('POR_APLICAR'),
+        desconocidas: porEstado('DESCONOCIDO'),
+        cheques_devueltos: porEstado('CHEQUE_DEVUELTO'),
+      },
+      pendientes_historicos: {
+        por_aplicar: cantidadHistorica('POR_APLICAR'),
+        desconocidas: cantidadHistorica('DESCONOCIDO'),
+        cheques_devueltos: cantidadHistorica('CHEQUE_DEVUELTO'),
+      },
+      tareas_abiertas: tareas.map((t) => ({
         id: t.id,
         tipo: t.tipo,
         titulo: t.titulo,
         dias_abierta: Math.floor((Date.now() - new Date(t.created_at).getTime()) / 86400000),
       })),
-      ultimas_cargas: ultimaCarga,
     },
   };
+}
+
+/** Exige supervisor (paridad con /conciliacion/[id]/asignar-cliente, ADMIN|SUPERVISOR). */
+async function asignarDepositoTool(
+  args: Record<string, unknown>,
+  ctx?: { userId?: string; userEmail?: string; rol?: 'supervisor' | 'agente_cobros' }
+): Promise<ResultadoTool> {
+  if (ctx?.rol !== 'supervisor') {
+    return { ok: false, error: 'Solo un supervisor puede asignar un cliente a un depósito.' };
+  }
+  const id = Number(args.conciliacion_id);
+  if (!id || Number.isNaN(id)) return { ok: false, error: 'conciliacion_id inválido o ausente.' };
+  const codigo = normalizarCodigoCliente(String(args.codigo_cliente || '').trim());
+  if (!codigo) return { ok: false, error: 'codigo_cliente inválido o ausente.' };
+
+  // Nombre canónico desde Softec (no el que el modelo haya transcrito) — para
+  // que cobranza_cuentas_aprendizaje y el log de CP-08 queden con el nombre
+  // real del cliente, igual que hace enviar-gestion.ts para el destinatario.
+  const cliente = await softecQuery<{ nombre: string }>(
+    "SELECT IC_NAME AS nombre FROM v_cobr_icust WHERE IC_CODE = ? LIMIT 1",
+    [codigo]
+  );
+  const nombre = cliente[0]?.nombre ? String(cliente[0].nombre).trim() : codigo;
+
+  const resultado = await asignarClienteADeposito(id, codigo, nombre, {
+    userId: ctx?.userId || 'desconocido',
+    userEmail: ctx?.userEmail || 'telegram:desconocido',
+  });
+  return { ok: resultado.ok, data: { mensaje: resultado.mensaje } };
+}
+
+/** Exige supervisor (paridad con /conciliacion/[id]/aprobar, ADMIN|SUPERVISOR). */
+async function aprobarDepositoTool(
+  args: Record<string, unknown>,
+  ctx?: { userId?: string; userEmail?: string; rol?: 'supervisor' | 'agente_cobros' }
+): Promise<ResultadoTool> {
+  if (ctx?.rol !== 'supervisor') {
+    return { ok: false, error: 'Solo un supervisor puede aprobar un depósito.' };
+  }
+  const id = Number(args.conciliacion_id);
+  if (!id || Number.isNaN(id)) return { ok: false, error: 'conciliacion_id inválido o ausente.' };
+
+  const resultado = await aprobarDeposito(id, {
+    userId: ctx?.userId || 'desconocido',
+    userEmail: ctx?.userEmail || 'telegram:desconocido',
+  });
+  return { ok: resultado.ok, data: { mensaje: resultado.mensaje } };
+}
+
+async function listarDisputasTool(args: Record<string, unknown>): Promise<ResultadoTool> {
+  const estado = args.estado as 'ABIERTA' | 'EN_REVISION' | 'RESUELTA' | 'ANULADA' | undefined;
+  const codigoCliente = args.codigo_cliente
+    ? normalizarCodigoCliente(String(args.codigo_cliente))
+    : undefined;
+  const disputas = await listarDisputas({
+    estado,
+    codigoCliente,
+    limite: Number(args.limite) || 20,
+  });
+  return { ok: true, data: { total: disputas.length, disputas } };
+}
+
+async function crearDisputaTool(
+  args: Record<string, unknown>,
+  ctx?: { userId?: string; userEmail?: string }
+): Promise<ResultadoTool> {
+  const codigo = normalizarCodigoCliente(String(args.codigo_cliente || '').trim());
+  if (!codigo) return { ok: false, error: 'codigo_cliente inválido o ausente.' };
+  const ijInum = Number(args.ij_inum);
+  if (!ijInum || Number.isNaN(ijInum)) return { ok: false, error: 'ij_inum inválido o ausente.' };
+  const motivo = String(args.motivo || '').trim();
+  if (motivo.length < 5) return { ok: false, error: 'El motivo debe tener al menos 5 caracteres.' };
+  const montoDisputado = args.monto_disputado != null ? Number(args.monto_disputado) : undefined;
+
+  const resultado = await crearDisputa(
+    { codigoCliente: codigo, ijInum, motivo, montoDisputado },
+    { userId: ctx?.userId || 'desconocido', userEmail: ctx?.userEmail || 'telegram:desconocido' }
+  );
+  return { ok: resultado.ok, data: { mensaje: resultado.mensaje, id: resultado.id } };
+}
+
+async function resolverDisputaTool(
+  args: Record<string, unknown>,
+  ctx?: { userId?: string; userEmail?: string }
+): Promise<ResultadoTool> {
+  const id = Number(args.disputa_id);
+  if (!id || Number.isNaN(id)) return { ok: false, error: 'disputa_id inválido o ausente.' };
+  const estado = args.estado as 'EN_REVISION' | 'RESUELTA' | 'ANULADA';
+  if (!['EN_REVISION', 'RESUELTA', 'ANULADA'].includes(estado)) {
+    return { ok: false, error: 'estado inválido — debe ser EN_REVISION, RESUELTA o ANULADA.' };
+  }
+  const resolucion = args.resolucion ? String(args.resolucion).trim() : undefined;
+
+  const resultado = await actualizarDisputa(
+    id,
+    { estado, resolucion },
+    { userId: ctx?.userId || 'desconocido', userEmail: ctx?.userEmail || 'telegram:desconocido' }
+  );
+  return { ok: resultado.ok, data: { mensaje: resultado.mensaje } };
+}
+
+/**
+ * En Telegram (telegramUserId != 0) manda el documento directo al chat con
+ * sendDocument. En el widget web (telegramUserId === 0, sentinela fijado en
+ * app/api/cobranzas/asistente/chat/route.ts) no hay a quién mandarle un
+ * adjunto — se devuelve la URL de la ruta de descarga existente, que ya
+ * autentica con la cookie de sesión del propio navegador.
+ */
+async function enviarReporteExcelTool(
+  args: Record<string, unknown>,
+  ctx?: { telegramUserId?: number; chatId?: number }
+): Promise<ResultadoTool> {
+  const tipo = String(args.tipo || '');
+  if (!['cartera', 'gestiones', 'estado_cuenta'].includes(tipo)) {
+    return { ok: false, error: 'tipo inválido — debe ser cartera, gestiones o estado_cuenta.' };
+  }
+
+  let codigo = '';
+  if (tipo === 'estado_cuenta') {
+    codigo = normalizarCodigoCliente(String(args.codigo_cliente || '').trim());
+    if (!codigo) return { ok: false, error: 'codigo_cliente es obligatorio para tipo=estado_cuenta.' };
+  }
+
+  const esWeb = (ctx?.telegramUserId ?? 0) === 0;
+
+  if (esWeb) {
+    const params = new URLSearchParams();
+    let ruta = '';
+    if (tipo === 'cartera') {
+      ruta = '/api/cobranzas/reportes/cartera-excel';
+    } else if (tipo === 'gestiones') {
+      ruta = '/api/cobranzas/reportes/gestiones-excel';
+      if (args.desde) params.set('desde', String(args.desde));
+      if (args.hasta) params.set('hasta', String(args.hasta));
+    } else {
+      ruta = '/api/cobranzas/reportes/estado-cuenta-excel';
+      params.set('cliente', codigo);
+    }
+    const query = params.toString();
+    const url = query ? `${ruta}?${query}` : ruta;
+    return { ok: true, data: { mensaje: 'Reporte listo para descargar.', url } };
+  }
+
+  if (!ctx?.chatId) return { ok: false, error: 'No se pudo determinar el chat destino.' };
+
+  const reporte =
+    tipo === 'cartera'
+      ? await generarExcelCartera(EMPRESA_GUIPAK)
+      : tipo === 'gestiones'
+        ? await generarExcelGestiones(
+            EMPRESA_GUIPAK,
+            args.desde ? String(args.desde) : undefined,
+            args.hasta ? String(args.hasta) : undefined
+          )
+        : await generarExcelEstadoCuenta(EMPRESA_GUIPAK, codigo);
+
+  await getTelegraf().telegram.sendDocument(
+    ctx.chatId,
+    Input.fromBuffer(reporte.buffer, reporte.filename)
+  );
+  return {
+    ok: true,
+    data: { mensaje: `Te envié ${reporte.filename} (${reporte.registros} filas).` },
+  };
+}
+
+type CtxSupervisor = { userId?: string; userEmail?: string; rol?: 'supervisor' | 'agente_cobros' };
+
+async function enviarFacturaClienteTool(
+  args: Record<string, unknown>,
+  ctx?: CtxSupervisor
+): Promise<ResultadoTool> {
+  if (ctx?.rol !== 'supervisor') {
+    return { ok: false, error: 'Solo un supervisor puede enviar una factura manualmente.' };
+  }
+  const ijInum = Number(args.ij_inum);
+  if (!ijInum || Number.isNaN(ijInum)) return { ok: false, error: 'ij_inum inválido o ausente.' };
+  const codigo = normalizarCodigoCliente(String(args.codigo_cliente || '').trim());
+  if (!codigo) return { ok: false, error: 'codigo_cliente inválido o ausente.' };
+  const canal = args.canal as 'EMAIL' | 'WHATSAPP';
+  if (canal !== 'EMAIL' && canal !== 'WHATSAPP') return { ok: false, error: 'canal debe ser EMAIL o WHATSAPP.' };
+
+  // No hay tool que exponga el id interno de cobranza_facturas_documentos —
+  // se resuelve aquí por número de factura, que es lo que el usuario dice.
+  const docs = await cobranzasQuery<{ id: number }>(
+    'SELECT id FROM cobranza_facturas_documentos WHERE ij_inum = ? AND codigo_cliente = ? AND empresa_id = ? LIMIT 1',
+    [ijInum, codigo, EMPRESA_GUIPAK]
+  );
+  if (docs.length === 0) {
+    return { ok: false, error: `No hay un PDF vinculado a la factura ${ijInum} de ${codigo}. Eso se sube desde la web, en Documentos.` };
+  }
+
+  let destinatario = args.destinatario ? String(args.destinatario).trim() : '';
+  if (!destinatario) {
+    destinatario =
+      (canal === 'EMAIL'
+        ? await resolverEmailPropio(codigo, EMPRESA_GUIPAK)
+        : await resolverWhatsAppPropio(codigo, EMPRESA_GUIPAK)) || '';
+  }
+  if (!destinatario) {
+    return {
+      ok: false,
+      error: 'No se pudo determinar el destinatario — dalo explícito o registra el contacto del cliente primero.',
+    };
+  }
+
+  const resultado = await enviarFacturaCliente(
+    { documentoId: docs[0].id, canal, destinatario },
+    { userId: ctx?.userId || 'desconocido', userEmail: ctx?.userEmail || 'telegram:desconocido' }
+  );
+  return { ok: resultado.ok, data: { mensaje: resultado.mensaje } };
+}
+
+async function listarCadenciasTool(): Promise<ResultadoTool> {
+  const resultado = await listarCadencias();
+  return { ok: true, data: resultado };
+}
+
+async function activarCadenciaTool(
+  args: Record<string, unknown>,
+  ctx?: CtxSupervisor
+): Promise<ResultadoTool> {
+  if (ctx?.rol !== 'supervisor') {
+    return { ok: false, error: 'Solo un supervisor puede activar o desactivar una cadencia.' };
+  }
+  const id = Number(args.id);
+  if (!id || Number.isNaN(id)) return { ok: false, error: 'id inválido o ausente.' };
+  const resultado = await actualizarCadencia(id, Boolean(args.activa), {
+    userId: ctx?.userId || 'desconocido',
+    userEmail: ctx?.userEmail || 'telegram:desconocido',
+  });
+  return { ok: resultado.ok, data: { mensaje: resultado.mensaje } };
+}
+
+async function ejecutarCadenciasAhoraTool(ctx?: CtxSupervisor): Promise<ResultadoTool> {
+  if (ctx?.rol !== 'supervisor') {
+    return { ok: false, error: 'Solo un supervisor puede ejecutar las cadencias manualmente.' };
+  }
+  const stats = await ejecutarCadenciasHorarias();
+  return { ok: true, data: stats };
+}
+
+async function generarColaHoyTool(ctx?: CtxSupervisor): Promise<ResultadoTool> {
+  if (ctx?.rol !== 'supervisor') {
+    return { ok: false, error: 'Solo un supervisor puede generar la cola de aprobación.' };
+  }
+  const resultado = await generarColaAprobacion({
+    userId: ctx?.userId || 'desconocido',
+    userEmail: ctx?.userEmail || 'telegram:desconocido',
+  });
+  return { ok: true, data: resultado };
+}
+
+async function editarGestionTool(
+  args: Record<string, unknown>,
+  ctx?: CtxSupervisor
+): Promise<ResultadoTool> {
+  const id = Number(args.gestion_id);
+  if (!id || Number.isNaN(id)) return { ok: false, error: 'gestion_id inválido o ausente.' };
+
+  const resultado = await editarGestion(
+    id,
+    {
+      userId: ctx?.userId || 'desconocido',
+      userEmail: ctx?.userEmail || 'telegram:desconocido',
+      esSupervisor: ctx?.rol === 'supervisor',
+    },
+    {
+      asunto: args.asunto ? String(args.asunto) : undefined,
+      textoEmail: args.texto_email ? String(args.texto_email) : undefined,
+      textoWhatsapp: args.texto_whatsapp ? String(args.texto_whatsapp) : undefined,
+    }
+  );
+  return { ok: resultado.ok, data: { mensaje: resultado.mensaje } };
+}
+
+async function pausarClienteTool(
+  args: Record<string, unknown>,
+  ctx?: CtxSupervisor
+): Promise<ResultadoTool> {
+  if (ctx?.rol !== 'supervisor') return { ok: false, error: 'Solo un supervisor puede pausar un cliente.' };
+  const codigo = normalizarCodigoCliente(String(args.codigo_cliente || '').trim());
+  if (!codigo) return { ok: false, error: 'codigo_cliente inválido o ausente.' };
+  const hasta = String(args.hasta || '').trim();
+  if (!hasta) return { ok: false, error: 'Falta la fecha hasta la que se pausa (YYYY-MM-DD).' };
+  const motivo = args.motivo ? String(args.motivo).trim() : undefined;
+
+  const resultado = await pausarCliente(codigo, hasta, motivo, {
+    userId: ctx?.userId || 'desconocido',
+    userEmail: ctx?.userEmail || 'telegram:desconocido',
+  });
+  return { ok: resultado.ok, data: { mensaje: resultado.mensaje } };
+}
+
+async function reactivarClienteTool(
+  args: Record<string, unknown>,
+  ctx?: CtxSupervisor
+): Promise<ResultadoTool> {
+  if (ctx?.rol !== 'supervisor') return { ok: false, error: 'Solo un supervisor puede reactivar un cliente.' };
+  const codigo = normalizarCodigoCliente(String(args.codigo_cliente || '').trim());
+  if (!codigo) return { ok: false, error: 'codigo_cliente inválido o ausente.' };
+
+  const resultado = await reactivarCliente(codigo, {
+    userId: ctx?.userId || 'desconocido',
+    userEmail: ctx?.userEmail || 'telegram:desconocido',
+  });
+  return { ok: resultado.ok, data: { mensaje: resultado.mensaje } };
+}
+
+async function generarLinkPortalTool(
+  args: Record<string, unknown>,
+  ctx?: { userId?: string; userEmail?: string }
+): Promise<ResultadoTool> {
+  const codigo = normalizarCodigoCliente(String(args.codigo_cliente || '').trim());
+  if (!codigo) return { ok: false, error: 'codigo_cliente inválido o ausente.' };
+
+  const resultado = await generarTokenPortal(codigo, {
+    userId: ctx?.userId || 'desconocido',
+    userEmail: ctx?.userEmail || 'telegram:desconocido',
+  });
+  return {
+    ok: resultado.ok,
+    data: { mensaje: resultado.mensaje, url: resultado.url, expiracion: resultado.expiracion },
+  };
+}
+
+/** Grupo del equipo + el chat propio de quien pregunta — nunca privados ajenos. */
+function chatIdsPermitidosParaRecordar(ctx?: { chatId?: number }): number[] {
+  const ids = new Set<number>();
+  const grupo = Number(process.env.TELEGRAM_CHAT_ID_GRUPO_COBROS);
+  if (!Number.isNaN(grupo) && process.env.TELEGRAM_CHAT_ID_GRUPO_COBROS) ids.add(grupo);
+  if (ctx?.chatId != null) ids.add(ctx.chatId);
+  return Array.from(ids);
+}
+
+async function recordarConversacionesTool(
+  args: Record<string, unknown>,
+  ctx?: { chatId?: number }
+): Promise<ResultadoTool> {
+  const chatIds = chatIdsPermitidosParaRecordar(ctx);
+  if (chatIds.length === 0) return { ok: false, error: 'No se pudo determinar en qué chats buscar.' };
+
+  if (!args.termino && !args.codigo_cliente && !args.desde && !args.hasta) {
+    return { ok: false, error: 'Da al menos un término, cliente o rango de fechas para buscar.' };
+  }
+
+  const resultados = await buscarHistorial({
+    termino: args.termino ? String(args.termino) : undefined,
+    codigoCliente: args.codigo_cliente ? normalizarCodigoCliente(String(args.codigo_cliente)) : undefined,
+    desde: args.desde ? String(args.desde) : undefined,
+    hasta: args.hasta ? String(args.hasta) : undefined,
+    chatIds,
+    limite: Number(args.limite) || 15,
+  });
+  return { ok: true, data: { total: resultados.length, resultados } };
+}
+
+async function lineaDeTiempoClienteTool(args: Record<string, unknown>): Promise<ResultadoTool> {
+  const codigo = normalizarCodigoCliente(String(args.codigo_cliente || '').trim());
+  if (!codigo) return { ok: false, error: 'codigo_cliente inválido o ausente.' };
+
+  const eventos = await lineaDeTiempoCliente(codigo, {
+    desde: args.desde ? String(args.desde) : undefined,
+    hasta: args.hasta ? String(args.hasta) : undefined,
+    limite: Number(args.limite) || 30,
+  });
+  return { ok: true, data: { codigo_cliente: codigo, total: eventos.length, eventos } };
 }

@@ -1,9 +1,12 @@
 /**
- * Compuerta de horario para la capa conversacional (time-share de la GPU única).
+ * Compuerta de horario para la capa conversacional.
  *
- * Dos bots comparten la RTX 5070 de Robocop y NO deben pelear por VRAM:
- *   - Asistente (Qwen)      → atiende en HORARIO LABORAL (para el equipo).
- *   - Supervisor (deepseek) → atiende FUERA de horario laboral (estratégico, CEO).
+ * Origen (histórico): dos bots compartían la RTX 5070 de Robocop y no debían
+ * pelear por VRAM — Asistente (Qwen) en horario laboral, Supervisor (deepseek)
+ * fuera de él. Con Anthropic (2026-09-03) ese límite técnico desapareció, así
+ * que esta compuerta ya SOLO se aplica al grupo "Cobros Guipak" (compartido por
+ * todo el equipo, uso operativo) — los chats privados atienden 24/7 sin pasar
+ * por `enHorarioLaboral()` (ver app/api/webhooks/telegram/route.ts).
  *
  * `enHorarioLaboral()` decide en qué franja estamos. La zona horaria es AST
  * (America/Santo_Domingo, UTC-4 sin DST) aunque el server corra en UTC (Dokploy):

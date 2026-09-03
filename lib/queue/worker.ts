@@ -1,16 +1,29 @@
-import { createCronWorker, scheduleEmpujeMatutino, scheduleCadenciasHorarias, scheduleReporteDiario, scheduleInteligenciaClientes, JOBS } from './bullmq';
+import { createCronWorker, scheduleRepeatable, JOBS } from './bullmq';
 import { ejecutarEmpujeMatutino } from './jobs/empuje-matutino';
 import { ejecutarCadenciasHorarias } from './jobs/cadencias';
 import { enviarReporteDiario } from '@/lib/reportes/reporte-diario';
 import { ejecutarInteligenciaClientes } from './jobs/inteligencia-clientes';
+import {
+  pedirExtractoSiFalta,
+  verificarDesconocidos,
+  recordatorioChequesDevueltos,
+  recordarDepositosSinDueno,
+} from '@/lib/conciliacion/seguimiento';
 
 async function main() {
   console.log('[Worker] Iniciando worker de cobranzas...');
 
-  await scheduleEmpujeMatutino();
-  await scheduleCadenciasHorarias();
-  await scheduleReporteDiario();
-  await scheduleInteligenciaClientes();
+  await scheduleRepeatable(JOBS.EMPUJE_MATUTINO, '0 12 * * *'); // 8:00 AM AST
+  await scheduleRepeatable(JOBS.CADENCIAS_HORARIAS, '0 * * * *'); // cada hora
+  await scheduleRepeatable(JOBS.REPORTE_DIARIO, '30 12 * * 1-5'); // 8:30 AM AST L-V
+  await scheduleRepeatable(JOBS.INTELIGENCIA_CLIENTES, '0 5 * * *'); // 1:00 AM AST
+
+  // Ciclo diario de conciliación (2026-09-03) — antes dependían de que alguien
+  // los agendara a mano en Dokploy; pedir-extracto nunca llegó a agendarse ahí.
+  await scheduleRepeatable(JOBS.PEDIR_EXTRACTO, '0 12 * * 1-5', { modo: 'peticion' }); // 8:00 AM AST L-V
+  await scheduleRepeatable(JOBS.PEDIR_EXTRACTO_RECORDATORIO, '0 15 * * 1-5', { modo: 'recordatorio' }); // 11:00 AM AST L-V
+  await scheduleRepeatable(JOBS.CONCILIACION_SEGUIMIENTO, '0 13,17,21 * * 1-5'); // 9AM/1PM/5PM AST L-V
+  await scheduleRepeatable(JOBS.DEPOSITOS_SIN_DUENO, '0 19 * * 1-5'); // 3:00 PM AST L-V
 
   const worker = createCronWorker(async (job) => {
     console.log(`[Worker] Procesando job: ${job.name}`);
@@ -31,6 +44,29 @@ async function main() {
     if (job.name === JOBS.INTELIGENCIA_CLIENTES) {
       const r = await ejecutarInteligenciaClientes();
       console.log(`[Worker] Inteligencia clientes: ${r.procesados} procesados, ${r.errores} errores`);
+    }
+
+    if (job.name === JOBS.PEDIR_EXTRACTO || job.name === JOBS.PEDIR_EXTRACTO_RECORDATORIO) {
+      const modo = (job.data?.modo === 'recordatorio' ? 'recordatorio' : 'peticion') as
+        | 'peticion'
+        | 'recordatorio';
+      const r = await pedirExtractoSiFalta(modo);
+      console.log(`[Worker] Pedir extracto (${modo}): pedido=${r.pedido} motivo=${r.motivo}`);
+    }
+
+    if (job.name === JOBS.CONCILIACION_SEGUIMIENTO) {
+      const [desconocidos, cheques] = await Promise.all([
+        verificarDesconocidos(),
+        recordatorioChequesDevueltos(),
+      ]);
+      console.log(
+        `[Worker] Conciliación seguimiento: ${desconocidos.resueltos}/${desconocidos.verificados} desconocidos resueltos, ${cheques} recordatorio(s) de cheques`
+      );
+    }
+
+    if (job.name === JOBS.DEPOSITOS_SIN_DUENO) {
+      const r = await recordarDepositosSinDueno();
+      console.log(`[Worker] Depósitos sin dueño: avisado=${r.avisado} motivo=${r.motivo}`);
     }
   });
 

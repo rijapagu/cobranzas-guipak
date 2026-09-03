@@ -476,8 +476,10 @@ export default function ConfiguracionPage() {
       children: (
         <div>
           <Paragraph type="secondary">
-            Instrucciones que recibe el agente IA al procesar cada mensaje. Define su personalidad,
-            reglas de negocio y comportamiento. Si se deja vacío, usa el prompt predeterminado del sistema.
+            Define el <b>tono y la personalidad</b> del agente (cómo habla, qué tan formal es). Las
+            reglas de negocio (qué herramienta usar, qué exige cada acción, los flujos de correo/WhatsApp)
+            viven siempre en el código y no se editan aquí — así una edición del tono nunca puede romper
+            una regla de seguridad. Si se deja vacío, usa el tono predeterminado del sistema.
           </Paragraph>
           {loadingPrompt ? (
             <div style={{ textAlign: "center", padding: 24 }}>

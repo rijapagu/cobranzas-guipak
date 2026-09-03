@@ -1,16 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth/session';
-import { cobranzasQuery, logAccion } from '@/lib/db/cobranzas';
-import { enviarEmail } from '@/lib/email/sender';
-import { enviarWhatsApp } from '@/lib/evolution/client';
-import { downloadPdfBuffer } from '@/lib/drive/client';
 import { empresaIdDeSesion } from '@/lib/tenant';
-import { adaptadorParaEmpresa } from '@/lib/erp';
-import { configDeEmpresa } from '@/lib/empresas/config';
+import { enviarFacturaCliente } from '@/lib/cobranzas/enviar-factura';
 
 /**
  * POST /api/cobranzas/documentos/enviar
  * Envía una factura PDF a un cliente por email o WhatsApp.
+ *
+ * La lógica vive en lib/cobranzas/enviar-factura.ts — compartida con la tool
+ * enviar_factura_cliente del agente conversacional.
  */
 export async function POST(request: NextRequest) {
   const session = await getSession();
@@ -32,81 +30,17 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Canal debe ser EMAIL o WHATSAPP' }, { status: 400 });
     }
 
-    const docs = await cobranzasQuery<{
-      id: number;
-      ij_inum: number;
-      codigo_cliente: string;
-      google_drive_id: string;
-      nombre_archivo: string | null;
-      url_pdf: string;
-    }>(
-      'SELECT id, ij_inum, codigo_cliente, google_drive_id, nombre_archivo, url_pdf FROM cobranza_facturas_documentos WHERE id = ? AND empresa_id = ? LIMIT 1',
-      [documento_id, empresaIdDeSesion(session)]
+    const resultado = await enviarFacturaCliente(
+      { documentoId: Number(documento_id), canal, destinatario },
+      { userId: session.email, userEmail: session.email },
+      empresaIdDeSesion(session)
     );
 
-    if (docs.length === 0) {
-      return NextResponse.json({ error: 'Documento no encontrado' }, { status: 404 });
+    if (!resultado.ok) {
+      const status = resultado.mensaje.includes('no encontrado') ? 404 : 502;
+      return NextResponse.json({ error: resultado.mensaje }, { status });
     }
-
-    const doc = docs[0];
-
-    const empresaId = empresaIdDeSesion(session);
-    const adapter = await adaptadorParaEmpresa(empresaId);
-    const clienteErp = await adapter.cliente(doc.codigo_cliente).catch(() => null);
-    const nombreCliente = clienteErp?.nombre ?? doc.codigo_cliente;
-    const { identidad } = await configDeEmpresa(empresaId);
-
-    await logAccion(session.email, 'ENVIAR_FACTURA_MANUAL', 'documento', String(doc.id), {
-      canal, destinatario, ij_inum: doc.ij_inum, codigo_cliente: doc.codigo_cliente,
-    });
-
-    if (canal === 'EMAIL') {
-      const pdfBuffer = await downloadPdfBuffer(doc.google_drive_id);
-      const adjuntos = pdfBuffer
-        ? [{
-            filename: doc.nombre_archivo || `factura-${doc.ij_inum}.pdf`,
-            content: pdfBuffer,
-            contentType: 'application/pdf' as const,
-          }]
-        : undefined;
-
-      const asunto = `Factura ${doc.ij_inum} — ${nombreCliente} — ${identidad.alias}`;
-      const cuerpo = `Estimado/a cliente,\n\nAdjunto encontrará la factura #${doc.ij_inum}.\n\nSi tiene alguna pregunta sobre esta factura, no dude en contactarnos.\n\nSaludos cordiales,\n${identidad.firma}`;
-
-      if (!adjuntos) {
-        return NextResponse.json({ error: 'No se pudo descargar el PDF desde Google Drive' }, { status: 500 });
-      }
-
-      const resultadoEmail = await enviarEmail(destinatario.trim(), asunto, cuerpo, adjuntos, undefined, empresaId);
-      if (resultadoEmail.status !== 'sent') {
-        return NextResponse.json(
-          { error: `No se pudo enviar el email: ${resultadoEmail.error || 'error SMTP'}` },
-          { status: 502 }
-        );
-      }
-
-      return NextResponse.json({
-        ok: true,
-        mensaje: `Factura ${doc.ij_inum} enviada por email a ${destinatario}`,
-      });
-    }
-
-    // WHATSAPP
-    const urlPdf = `https://drive.google.com/file/d/${doc.google_drive_id}/view`;
-    const textoWa = `Buen día, le compartimos la factura #${doc.ij_inum} de ${identidad.alias}:\n\n📄 ${urlPdf}\n\nCualquier duda estamos a la orden.`;
-
-    const resultadoWa = await enviarWhatsApp(destinatario.trim(), textoWa, empresaId);
-    if (resultadoWa.status !== 'sent') {
-      return NextResponse.json(
-        { error: `No se pudo enviar el WhatsApp: ${resultadoWa.error || 'error Evolution API'}` },
-        { status: 502 }
-      );
-    }
-
-    return NextResponse.json({
-      ok: true,
-      mensaje: `Factura ${doc.ij_inum} enviada por WhatsApp a ${destinatario}`,
-    });
+    return NextResponse.json({ ok: true, mensaje: resultado.mensaje });
   } catch (error) {
     console.error('[DOCUMENTOS-ENVIAR] Error:', error);
     return NextResponse.json(

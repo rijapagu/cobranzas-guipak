@@ -1,0 +1,8 @@
+msg_id	chat_hash	user_hash	fecha	categoria	chars	contenido_oneline	expected_tool	sesion
+r1	regresion	regresion	2026-09-03	sesion_override	31	cuánto nos deben al día de hoy	resumen_estado_cobros_hoy	0000274|PADRON OFFICE
+r2	regresion	regresion	2026-09-03	sesion_override	33	dame la suma total de la cartera	resumen_estado_cobros_hoy	-
+r3	regresion	regresion	2026-09-03	sesion_ambiguo	11	cuánto debe	consultar_saldo_cliente	0000274|PADRON OFFICE
+r4	regresion	regresion	2026-09-03	conciliacion	32	qué depósitos quedaron sin dueño	listar_depositos_pendientes	-
+r5	regresion	regresion	2026-09-03	conciliacion	33	el depósito 512 es de CG0006	asignar_deposito_a_cliente	-
+r6	regresion	regresion	2026-09-03	conciliacion	25	aprueba el depósito 512	aprobar_deposito	-
+r7	regresion	regresion	2026-09-03	memoria_episodica	38	qué hablamos de Padrón la semana pasada	recordar_conversaciones	-

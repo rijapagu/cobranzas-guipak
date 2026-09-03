@@ -56,9 +56,11 @@ export async function cargarExtracto(
   buffer: Buffer,
   nombreArchivo: string,
   banco: string,
-  actor: ActorCarga
+  actor: ActorCarga,
+  opciones: { notificarGrupo?: boolean } = {}
 ): Promise<ResultadoCarga> {
   const { empresaId } = actor;
+  const notificarGrupo = opciones.notificarGrupo ?? true;
   const lineas = await parsearExtracto(buffer, nombreArchivo);
   if (lineas.length === 0) throw new ExtractoVacio();
 
@@ -211,8 +213,14 @@ export async function cargarExtracto(
   }
 
   // En background: consulta los montos reales de la BD y avisa por Telegram.
-  notificarConciliacionDesdeBD(nombreArchivo, banco, multiRecibo, tareasCreadas)
-    .catch(e => console.error('[CONCILIACION-CARGAR] Error notificando:', e));
+  // notificarGrupo=false cuando quien llama YA está en el grupo (el webhook de
+  // Telegram cuando el chat es el grupo) — antes esto duplicaba el mensaje: el
+  // resumen detallado al que subió el archivo Y el resumen con montos al grupo,
+  // siendo el mismo chat.
+  if (notificarGrupo) {
+    notificarConciliacionDesdeBD(nombreArchivo, banco, multiRecibo, tareasCreadas)
+      .catch(e => console.error('[CONCILIACION-CARGAR] Error notificando:', e));
+  }
 
   return {
     huboNovedad: true,
