@@ -11,6 +11,13 @@ import { proponerCorreoCliente } from './draft-correo';
 import { proponerWhatsAppCliente } from './draft-whatsapp';
 import { guardarMemoriaEquipo } from './historial';
 import { listarPlantillasActivas } from '@/lib/templates/seleccionar';
+import {
+  aprobarGestion,
+  descartarGestion,
+  escalarGestion,
+  type ActorGestion,
+  type ResultadoAccionGestion,
+} from './gestion-acciones';
 
 /**
  * Definición de herramientas que Claude puede invocar desde el bot de Telegram.
@@ -94,6 +101,56 @@ export const TOOLS: Anthropic.Tool[] = [
           description: 'Cantidad máxima a listar (default 10)',
         },
       },
+    },
+  },
+  {
+    name: 'aprobar_gestion',
+    description:
+      'Cuándo usar: el usuario dice EXPLÍCITAMENTE "aprueba la gestión X", "aprueba y envía X", "aprueba lo de fulano" — con un gestion_id concreto o resuelto sin ambigüedad vía listar_mensajes_pendientes_aprobacion. Esta orden del usuario ES la aprobación humana (CP-02) — no es la IA decidiendo aprobar por su cuenta.\n' +
+      'Qué hace: marca la gestión como APROBADO y la ENVÍA de inmediato al cliente (correo o WhatsApp, según el canal). No hay paso intermedio ni confirmación adicional — avísale al usuario de esto si no parece saberlo. Solo funciona sobre gestiones en estado PENDIENTE, y solo si quien pregunta es supervisor.\n' +
+      'Devuelve: { mensaje: string } con el resultado del envío, o el motivo si no se pudo aprobar/enviar.\n' +
+      'Pre-condiciones: gestion_id numérico exacto. Si el usuario solo describe al cliente sin dar el ID, usa listar_mensajes_pendientes_aprobacion primero y confirma cuál es antes de ejecutar.\n' +
+      'NO usar si: el usuario solo pregunta qué hay pendiente (listar_mensajes_pendientes_aprobacion) o no nombra una gestión/cliente concreto. NUNCA llamar esta tool por iniciativa propia.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        gestion_id: { type: 'number', description: 'ID numérico de la gestión a aprobar' },
+      },
+      required: ['gestion_id'],
+    },
+  },
+  {
+    name: 'descartar_gestion',
+    description:
+      'Cuándo usar: el usuario dice EXPLÍCITAMENTE "descarta la gestión X", "cancela lo de fulano", "no mandes eso" — con un gestion_id concreto.\n' +
+      'Qué hace: marca la gestión como DESCARTADO. No se envía nada al cliente y la gestión no se vuelve a proponer sola. Solo funciona sobre gestiones PENDIENTE, y solo si quien pregunta es supervisor.\n' +
+      'Devuelve: { mensaje: string }.\n' +
+      'Pre-condiciones: gestion_id numérico exacto. Si el usuario no dio un motivo, pídeselo antes de llamar la tool — no inventes uno.\n' +
+      'NO usar si: el usuario no nombra una gestión concreta. NUNCA llamar esta tool por iniciativa propia.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        gestion_id: { type: 'number', description: 'ID numérico de la gestión a descartar' },
+        motivo: { type: 'string', description: 'Motivo del descarte, tal como lo dio el usuario' },
+      },
+      required: ['gestion_id', 'motivo'],
+    },
+  },
+  {
+    name: 'escalar_gestion',
+    description:
+      'Cuándo usar: el usuario dice EXPLÍCITAMENTE "escala la gestión X", "esto lo llevo yo a mano", "pásalo a gestión manual" — con un gestion_id concreto.\n' +
+      'Qué hace: marca la gestión como ESCALADO, sacándola del flujo automático para seguimiento manual. No envía nada al cliente. No requiere ser supervisor (a diferencia de aprobar/descartar).\n' +
+      'Devuelve: { mensaje: string }.\n' +
+      'Pre-condiciones: gestion_id numérico exacto. Solo funciona sobre gestiones PENDIENTE.\n' +
+      'NO usar si: el usuario no nombra una gestión concreta.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        gestion_id: { type: 'number', description: 'ID numérico de la gestión a escalar' },
+        notas: { type: 'string', description: 'Notas opcionales sobre por qué se escala' },
+      },
+      required: ['gestion_id'],
     },
   },
   {
@@ -598,10 +655,40 @@ interface ResultadoTool {
   error?: string;
 }
 
+/**
+ * Envuelve aprobar_gestion/descartar_gestion/escalar_gestion: arma el
+ * ActorGestion a partir del ctx (rol ya resuelto por el caller vía
+ * TelegramUserAuth, sin round-trip extra a la DB) y valida que exista antes
+ * de mutar nada.
+ */
+async function ejecutarAccionGestion(
+  accion: (gestionId: number, actor: ActorGestion) => Promise<ResultadoAccionGestion>,
+  gestionId: number,
+  ctx?: { userId?: string; userEmail?: string; rol?: 'supervisor' | 'agente_cobros' }
+): Promise<ResultadoTool> {
+  if (!gestionId || Number.isNaN(gestionId)) {
+    return { ok: false, error: 'gestion_id inválido o ausente.' };
+  }
+  if (!ctx?.rol) {
+    return { ok: false, error: 'No se pudo verificar tu usuario de Telegram.' };
+  }
+  const resultado = await accion(gestionId, {
+    userId: ctx.userId || 'desconocido',
+    userEmail: ctx.userEmail || 'telegram:desconocido',
+    esSupervisor: ctx.rol === 'supervisor',
+  });
+  return { ok: resultado.ok, data: { mensaje: resultado.mensaje } };
+}
+
 export async function ejecutarTool(
   nombre: string,
   argumentos: Record<string, unknown>,
-  ctx?: { userId?: string; userEmail?: string; telegramUserId?: number }
+  ctx?: {
+    userId?: string;
+    userEmail?: string;
+    telegramUserId?: number;
+    rol?: 'supervisor' | 'agente_cobros';
+  }
 ): Promise<ResultadoTool> {
   try {
     switch (nombre) {
@@ -618,6 +705,26 @@ export async function ejecutarTool(
       case 'listar_pendientes_aprobacion': // alias deprecado, retirar tras 1 release
       case 'listar_mensajes_pendientes_aprobacion':
         return await listarPendientesAprobacion(Number(argumentos.limite) || 10);
+
+      case 'aprobar_gestion':
+        return await ejecutarAccionGestion(aprobarGestion, Number(argumentos.gestion_id), ctx);
+
+      case 'descartar_gestion': {
+        const motivo = String(argumentos.motivo || '').trim();
+        if (!motivo) return { ok: false, error: 'Falta el motivo del descarte.' };
+        return await ejecutarAccionGestion(
+          (id, actor) => descartarGestion(id, actor, motivo),
+          Number(argumentos.gestion_id),
+          ctx
+        );
+      }
+
+      case 'escalar_gestion':
+        return await ejecutarAccionGestion(
+          (id, actor) => escalarGestion(id, actor, String(argumentos.notas || '')),
+          Number(argumentos.gestion_id),
+          ctx
+        );
 
       case 'listar_promesas_vencidas': // alias deprecado, retirar tras 1 release
       case 'listar_promesas_pago_incumplidas':

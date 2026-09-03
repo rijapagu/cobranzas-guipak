@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { resolverUsuarioTelegram, esSupervisor } from '@/lib/telegram/auth';
 import { procesarMensajeBot } from '@/lib/telegram/agent';
 import { getTelegraf } from '@/lib/telegram/client';
-import { cobranzasQuery, cobranzasExecute, logAccion } from '@/lib/db/cobranzas';
-import { enviarGestion } from '@/lib/telegram/enviar-gestion';
+import { cobranzasQuery, logAccion } from '@/lib/db/cobranzas';
+import { aprobarGestion, descartarGestion } from '@/lib/telegram/gestion-acciones';
 import { marcarUpdateVisto } from '@/lib/telegram/idempotency';
 import { enHorarioLaboral, descripcionHorarioLaboral } from '@/lib/horario';
 import { secretoValido } from '@/lib/auth/secrets';
@@ -299,36 +299,14 @@ async function manejarCallback(
 
   switch (accion) {
     case 'aprobar': {
-      // CP-02: marcar APROBADO con aprobado_por
-      // CP-08: log antes de la acción
-      await logAccion(
-        String(auth.usuario_id),
-        'GESTION_APROBADA_TELEGRAM',
-        'gestion',
-        String(gestionId),
-        { cliente: gestion.codigo_cliente, saldo: Number(gestion.saldo_pendiente) }
-      );
-
-      await cobranzasExecute(
-        `UPDATE cobranza_gestiones
-         SET estado='APROBADO', aprobado_por=?, fecha_aprobacion=NOW(),
-             mensaje_final_email = COALESCE(mensaje_final_email, mensaje_propuesto_email)
-         WHERE id = ?`,
-        [`telegram:${auth.telegram_username || auth.telegram_user_id}`, gestionId]
-      );
-
-      // Intentar enviar inmediatamente
-      let mensajeFeedback = `✅ Aprobado por ${auth.telegram_username || 'Telegram'}.`;
-      try {
-        const resultadoEnvio = await enviarGestion(gestionId);
-        if (resultadoEnvio.ok) {
-          mensajeFeedback += `\n📤 Correo enviado a ${resultadoEnvio.destinatario || 'cliente'}.`;
-        } else {
-          mensajeFeedback += `\n⚠️ Aprobado pero no se pudo enviar: ${resultadoEnvio.error}`;
-        }
-      } catch (err) {
-        mensajeFeedback += `\n⚠️ Aprobado pero error en envío: ${err instanceof Error ? err.message : 'desconocido'}`;
-      }
+      // Delega en gestion-acciones.ts (compartida con la tool aprobar_gestion
+      // del agente conversacional) para que botón y texto libre nunca diverjan.
+      const resultado = await aprobarGestion(gestionId, {
+        userId: String(auth.usuario_id),
+        userEmail: `telegram:${auth.telegram_username || auth.telegram_user_id}`,
+        esSupervisor: true, // ya verificado arriba antes del switch
+      });
+      const mensajeFeedback = `${resultado.ok ? '✅' : '⚠️'} ${resultado.mensaje}`;
 
       // Editar el mensaje original — quitar botones, agregar feedback
       if (cb.message) {
@@ -346,21 +324,19 @@ async function manejarCallback(
           console.error('[callback aprobar] Error editando mensaje:', err);
         }
       }
-      await bot.telegram.answerCbQuery(cb.id, '✅ Aprobado');
-      return NextResponse.json({ ok: true });
+      await bot.telegram.answerCbQuery(cb.id, resultado.ok ? '✅ Aprobado' : '⚠️ No se pudo aprobar');
+      return NextResponse.json({ ok: resultado.ok });
     }
 
     case 'descartar': {
-      await logAccion(
-        String(auth.usuario_id),
-        'GESTION_DESCARTADA_TELEGRAM',
-        'gestion',
-        String(gestionId),
-        { cliente: gestion.codigo_cliente }
-      );
-      await cobranzasExecute(
-        `UPDATE cobranza_gestiones SET estado='DESCARTADO', motivo_descarte=?, aprobado_por=? WHERE id = ?`,
-        ['Descartado desde Telegram', `telegram:${auth.telegram_username || auth.telegram_user_id}`, gestionId]
+      const resultado = await descartarGestion(
+        gestionId,
+        {
+          userId: String(auth.usuario_id),
+          userEmail: `telegram:${auth.telegram_username || auth.telegram_user_id}`,
+          esSupervisor: true, // ya verificado arriba antes del switch
+        },
+        'Descartado desde Telegram'
       );
       if (cb.message) {
         try {
@@ -370,13 +346,15 @@ async function manejarCallback(
             undefined,
             undefined
           );
-          await bot.telegram.sendMessage(cb.message.chat.id, '❌ Gestión descartada.', {
-            reply_parameters: { message_id: cb.message.message_id },
-          });
+          await bot.telegram.sendMessage(
+            cb.message.chat.id,
+            `${resultado.ok ? '❌' : '⚠️'} ${resultado.mensaje}`,
+            { reply_parameters: { message_id: cb.message.message_id } }
+          );
         } catch {}
       }
-      await bot.telegram.answerCbQuery(cb.id, '❌ Descartado');
-      return NextResponse.json({ ok: true });
+      await bot.telegram.answerCbQuery(cb.id, resultado.ok ? '❌ Descartado' : '⚠️ No se pudo descartar');
+      return NextResponse.json({ ok: resultado.ok });
     }
 
     case 'editar': {

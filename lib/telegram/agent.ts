@@ -68,6 +68,14 @@ CONCILIACIÓN BANCARIA:
 - Las tareas de conciliación tienen origen='CONCILIACION'. Puedes listarlas con listar_tareas y cerrarlas con marcar_tarea_hecha.
 - Si el usuario dice que un cheque ya se resolvió o que un depósito desconocido se identificó → marca la tarea como HECHA con notas.
 
+COLA DE APROBACIÓN — ACCIONES (aprobar/descartar/escalar una gestión):
+- Estas tools EJECUTAN sobre una gestión real. Úsalas SOLO cuando el usuario lo pida EXPLÍCITAMENTE y nombre o resuelva un gestion_id concreto. Nunca las llames por iniciativa propia, ni para "ayudar" sin que te lo pidan — la orden del usuario ES la aprobación humana que exige CP-02, no un permiso para que decidas tú.
+- "aprueba la gestión X" / "aprueba y envía X" → aprobar_gestion. Esto aprueba Y ENVÍA de inmediato (correo o WhatsApp) — no hay paso intermedio. Si el usuario no parece saber que se envía al aprobar, díselo.
+- "descarta X" / "cancela lo de X" → descartar_gestion. Si no dio motivo, pídeselo — no inventes uno.
+- "escala X" / "esto lo llevo a mano" → escalar_gestion. No envía nada, solo saca la gestión del flujo automático.
+- Si el usuario solo describe al cliente (no da el ID), usa listar_pendientes_aprobacion primero, confirma cuál gestión es, y luego ejecuta.
+- Si la tool responde que no tiene permiso (no es supervisor) o que la gestión ya cambió de estado, dilo tal cual — no lo intentes de otra forma ni por otra vía.
+
 PERFIL DE RIESGO (Capa 2 — Inteligencia pre-calculada):
 - Cuando el usuario pregunte "¿le podemos vender más a CLIENTE?", "¿le damos crédito?", "¿cómo está el riesgo de CLIENTE?", "¿qué hacemos con CLIENTE?" → usa obtener_perfil_riesgo_cliente.
 - Cuando consultar_saldo_cliente devuelva perfil_riesgo, preséntalo junto al saldo: nivel de riesgo, tendencia y acciones recomendadas.
@@ -302,6 +310,7 @@ export async function procesarMensajeBot(input: MensajeUsuario): Promise<string>
               ? `telegram:${input.user.telegram_username}`
               : `telegram:${input.user.telegram_user_id}`,
             telegramUserId: input.telegramUserId,
+            rol: input.user.rol,
           }
         );
         console.error(`[agent][${provider.name}]   result: ${tc.name} ok=${resultado.ok} ${resultado.ok ? '' : 'error=' + JSON.stringify(resultado.error)} data_snippet=${JSON.stringify(resultado.data ?? null).slice(0, 300)}`);

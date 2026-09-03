@@ -63,6 +63,13 @@ Usuario: "recuérdame llamar a Padron mañana"
 Usuario: "qué hay por aprobar"
 → listar_pendientes_aprobacion({})
 
+Usuario: "aprueba la gestión 123"
+→ aprobar_gestion({"gestion_id": 123})
+[SOLO si el usuario da o confirma un gestion_id concreto — NUNCA por iniciativa propia]
+
+Usuario: "descarta la 123, ya pagó"
+→ descartar_gestion({"gestion_id": 123, "motivo": "ya pagó"})
+
 Usuario: "cómo está el riesgo de LOM"
 → buscar_cliente({"termino": "LOM"})
 [espera el código del resultado, después llama obtener_perfil_riesgo_cliente con ese código]
