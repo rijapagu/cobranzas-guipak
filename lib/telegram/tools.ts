@@ -1482,6 +1482,10 @@ async function estadoCobrosHoy(): Promise<ResultadoTool> {
 }
 
 async function listarPendientesAprobacion(limite: number): Promise<ResultadoTool> {
+  // LIMIT como literal, no como parámetro: mysql2/prepared statements
+  // rechaza "LIMIT ?" en este servidor con "Incorrect arguments to
+  // mysqld_stmt_execute" (2026-09-04).
+  const limiteSeguro = Math.min(Math.max(Math.trunc(limite) || 10, 1), 50);
   const rows = await cobranzasQuery<{
     id: number;
     codigo_cliente: string;
@@ -1496,8 +1500,8 @@ async function listarPendientesAprobacion(limite: number): Promise<ResultadoTool
      FROM cobranza_gestiones
      WHERE empresa_id = 1 AND estado='PENDIENTE'
      ORDER BY created_at ASC
-     LIMIT ?`,
-    [limite]
+     LIMIT ${limiteSeguro}`,
+    []
   );
 
   return {
@@ -1518,6 +1522,8 @@ async function listarPendientesAprobacion(limite: number): Promise<ResultadoTool
 }
 
 async function listarPromesasVencidas(limite: number): Promise<ResultadoTool> {
+  // LIMIT como literal (ver nota en listarPendientesAprobacion arriba).
+  const limiteSeguro = Math.min(Math.max(Math.trunc(limite) || 10, 1), 50);
   const rows = await cobranzasQuery<{
     id: number;
     codigo_cliente: string;
@@ -1529,8 +1535,8 @@ async function listarPromesasVencidas(limite: number): Promise<ResultadoTool> {
      FROM cobranza_acuerdos
      WHERE empresa_id = 1 AND estado='PENDIENTE' AND fecha_prometida < CURDATE()
      ORDER BY fecha_prometida ASC
-     LIMIT ?`,
-    [limite]
+     LIMIT ${limiteSeguro}`,
+    []
   );
 
   return {
@@ -1555,6 +1561,8 @@ async function historialConversacionesCliente(
   codigoCliente: string,
   limite: number
 ): Promise<ResultadoTool> {
+  // LIMIT como literal (ver nota en listarPendientesAprobacion arriba).
+  const limiteSeguro = Math.min(Math.max(Math.trunc(limite) || 10, 1), 50);
   const rows = await cobranzasQuery<{
     canal: string;
     direccion: string;
@@ -1565,8 +1573,8 @@ async function historialConversacionesCliente(
      FROM cobranza_conversaciones
      WHERE empresa_id = 1 AND codigo_cliente = ?
      ORDER BY created_at DESC
-     LIMIT ?`,
-    [normalizarCodigoCliente(codigoCliente), limite]
+     LIMIT ${limiteSeguro}`,
+    [normalizarCodigoCliente(codigoCliente)]
   );
 
   return {
@@ -2325,6 +2333,9 @@ async function obtenerPerfilRiesgoCliente(codigoCliente: string): Promise<Result
 }
 
 async function analizarRiesgoCartera(limiteCriticos: number): Promise<ResultadoTool> {
+  // LIMIT como literal (ver nota en listarPendientesAprobacion arriba).
+  const limiteCriticosSeguro = Math.min(Math.max(Math.trunc(limiteCriticos) || 5, 1), 30);
+
   // Distribución por nivel
   const distribucion = await cobranzasQuery<{
     risk_level: string;
@@ -2354,8 +2365,8 @@ async function analizarRiesgoCartera(limiteCriticos: number): Promise<ResultadoT
      FROM cobranza_cliente_inteligencia
      WHERE empresa_id = 1 AND risk_level IN ('CRITICO','ROJO')
      ORDER BY risk_score DESC, saldo_neto DESC
-     LIMIT ?`,
-    [limiteCriticos]
+     LIMIT ${limiteCriticosSeguro}`,
+    []
   );
 
   // Clientes con tendencia empeorando

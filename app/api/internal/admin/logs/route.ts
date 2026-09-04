@@ -33,15 +33,18 @@ export async function GET(req: NextRequest) {
     where.push('entidad = ?');
     params.push(entidad);
   }
-  params.push(limite);
 
   try {
+    // LIMIT como literal, no como parámetro: mysql2/prepared statements
+    // rechaza "LIMIT ?" en este servidor con "Incorrect arguments to
+    // mysqld_stmt_execute" -- exactamente el error que esta ruta nació para
+    // diagnosticar. `limite` ya está acotado arriba (Math.min/Math.max).
     const logs = await cobranzasQuery(
       `SELECT *
          FROM cobranza_logs
          ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
         ORDER BY id DESC
-        LIMIT ?`,
+        LIMIT ${limite}`,
       params
     );
     return NextResponse.json({ total: logs.length, logs });

@@ -94,6 +94,11 @@ async function ejecutarSinRespuestaEmpresa(empresaId: number): Promise<StatsSinR
   // Gestiones aprobadas hace >= UMBRAL_DIAS pero no demasiado viejas
   // (>30 dias significa que ya quedo enterrado, no vale la pena re-enviar
   // el mismo correo — la cadencia ya escaló a otro paso si correspondía).
+  //
+  // LIMIT como literal, no como parámetro: mysql2/prepared statements
+  // rechaza "LIMIT ?" en este servidor con "Incorrect arguments to
+  // mysqld_stmt_execute" (2026-09-04) -- MAX_GESTIONES_POR_RUN es una
+  // constante fija, segura de interpolar.
   const candidatas = await cobranzasQuery<GestionSinRespuesta>(
     `SELECT
        g.id,
@@ -109,8 +114,8 @@ async function ejecutarSinRespuestaEmpresa(empresaId: number): Promise<StatsSinR
        AND g.canal IN ('EMAIL','WHATSAPP')
        AND DATEDIFF(CURDATE(), g.fecha_aprobacion) BETWEEN ? AND 30
      ORDER BY g.fecha_aprobacion ASC
-     LIMIT ?`,
-    [empresaId, UMBRAL_DIAS_SIN_RESPUESTA, MAX_GESTIONES_POR_RUN]
+     LIMIT ${MAX_GESTIONES_POR_RUN}`,
+    [empresaId, UMBRAL_DIAS_SIN_RESPUESTA]
   );
 
   stats.gestiones_evaluadas = candidatas.length;

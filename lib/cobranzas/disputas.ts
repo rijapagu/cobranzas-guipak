@@ -58,15 +58,17 @@ export async function listarDisputas(
     params.push(opts.codigoCliente);
   }
   const limite = Math.min(Math.max(opts.limite ?? 20, 1), 50);
-  params.push(limite);
 
+  // LIMIT como literal, no como parámetro: mysql2/prepared statements
+  // rechaza "LIMIT ?" en este servidor con "Incorrect arguments to
+  // mysqld_stmt_execute" (2026-09-04) -- `limite` ya está acotado arriba.
   const rows = await cobranzasQuery<Omit<Disputa, 'nombre_cliente'>>(
     `SELECT d.id, d.codigo_cliente, d.ij_inum, d.motivo, d.monto_disputado, d.estado,
             d.resolucion, d.resuelto_por, d.fecha_resolucion, d.registrado_por, d.created_at
        FROM cobranza_disputas d
       WHERE ${where.join(' AND ')}
       ORDER BY FIELD(d.estado, 'ABIERTA','EN_REVISION','RESUELTA','ANULADA'), d.created_at DESC
-      LIMIT ?`,
+      LIMIT ${limite}`,
     params
   );
 

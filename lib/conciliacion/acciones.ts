@@ -105,14 +105,17 @@ export async function listarDepositosPendientes(
     condiciones.push('archivo_origen = ?');
     params.push(archivo);
   }
-  params.push(limite);
 
+  // LIMIT como literal, no como parámetro: mysql2/prepared statements
+  // rechaza "LIMIT ?" en este servidor con "Incorrect arguments to
+  // mysqld_stmt_execute" (2026-09-04) -- `limite` ya está acotado arriba
+  // (Math.min/Math.max), así que interpolarlo es seguro.
   return cobranzasQuery<DepositoPendiente>(
     `SELECT id, estado, fecha_transaccion, descripcion, referencia, cuenta_origen, monto, moneda, archivo_origen, codigo_cliente
      FROM cobranza_conciliacion
      WHERE ${condiciones.join(' AND ')}
      ORDER BY monto DESC
-     LIMIT ?`,
+     LIMIT ${limite}`,
     params
   );
 }

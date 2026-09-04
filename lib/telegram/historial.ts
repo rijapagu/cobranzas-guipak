@@ -89,19 +89,28 @@ export async function buscarHistorial(opts: {
   }
 
   const limite = Math.min(Math.max(opts.limite ?? 15, 1), 50);
-  params.push(limite);
 
+  // LIMIT como literal, no como parámetro: mysql2/prepared statements
+  // rechaza "LIMIT ?" en este servidor con "Incorrect arguments to
+  // mysqld_stmt_execute" (2026-09-04) -- `limite` ya está acotado arriba,
+  // así que interpolarlo es seguro.
   return cobranzasQuery<ResultadoBusquedaHistorial>(
     `SELECT rol, contenido, codigo_cliente, chat_id, created_at
        FROM cobranza_telegram_historial
       WHERE ${where.join(' AND ')}
       ORDER BY created_at DESC
-      LIMIT ?`,
+      LIMIT ${limite}`,
     params
   );
 }
 
 export async function cargarHistorial(chatId: number, limite = 30): Promise<MensajeHistorial[]> {
+  // LIMIT como literal (ver nota en buscarHistorial arriba) -- este es el
+  // caso más grave: se llama en CADA mensaje del bot (agent.ts) envuelto en
+  // un .catch(() => []), así que este bug hacía que el bot operara SIEMPRE
+  // sin historial, sin que ningún log lo mostrara como error.
+  const limiteSeguro = Math.min(Math.max(Math.trunc(limite) || 30, 1), 100);
+
   // Carga los últimos N mensajes ordenados por fecha DESC, luego invierte para Claude
   const rows = await cobranzasQuery<{ rol: string; contenido: string }>(
     `SELECT rol, contenido FROM (
@@ -109,9 +118,9 @@ export async function cargarHistorial(chatId: number, limite = 30): Promise<Mens
          FROM cobranza_telegram_historial
         WHERE empresa_id = 1 AND chat_id = ?
         ORDER BY created_at DESC
-        LIMIT ?
+        LIMIT ${limiteSeguro}
      ) sub ORDER BY created_at ASC`,
-    [chatId, limite]
+    [chatId]
   );
   return rows.map((r) => ({
     rol: r.rol as 'usuario' | 'asistente',

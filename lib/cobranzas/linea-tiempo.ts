@@ -86,13 +86,14 @@ export async function lineaDeTiempoCliente(
     filtroFecha += ' AND DATE(fecha) <= ?';
     params.push(opts.hasta);
   }
-  params.push(limite);
-
+  // LIMIT como literal, no como parámetro: mysql2/prepared statements
+  // rechaza "LIMIT ?" en este servidor con "Incorrect arguments to
+  // mysqld_stmt_execute" (2026-09-04) -- `limite` ya está acotado arriba.
   return cobranzasQuery<EventoLineaTiempo>(
     `SELECT * FROM (${subconsultas}) eventos
       WHERE 1=1${filtroFecha}
       ORDER BY fecha DESC
-      LIMIT ?`,
+      LIMIT ${limite}`,
     params
   );
 }
