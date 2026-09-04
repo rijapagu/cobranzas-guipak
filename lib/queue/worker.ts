@@ -10,6 +10,35 @@ import {
   recordarDepositosSinDueno,
 } from '@/lib/conciliacion/seguimiento';
 
+/**
+ * `err.message` solo puede venir VACIO (ej. ECONNREFUSED de mysql2) -- ver
+ * el comentario de worker.on('failed') mas abajo. Un solo lugar para esa
+ * extraccion en vez de repetirla en cada handler de error.
+ */
+function detalleError(err: unknown): string {
+  const e = err as (NodeJS.ErrnoException & { code?: string }) | undefined;
+  const detalle = [e?.message, e?.code].filter(Boolean).join(' | ');
+  return detalle || String(err);
+}
+
+// Sin esto, un error no atrapado en CUALQUIER punto (no solo dentro de un
+// job -- BullMQ ya aisla esos) mata el proceso con la traza por defecto de
+// Node, que en Dokploy se pierde entre el resto del output si nadie está
+// mirando en ese momento (2026-09-04: el worker llevaba meses reiniciandose
+// sin que nadie lo notara). Loguea fuerte con el mismo detalle que
+// worker.on('failed') y sale limpio -- restart:unless-stopped de
+// docker-compose levanta un proceso nuevo; no tiene sentido intentar seguir
+// con estado desconocido tras una excepcion no atrapada.
+process.on('uncaughtException', (err) => {
+  console.error(`[Worker] EXCEPCION NO ATRAPADA -> ${detalleError(err)}`, err);
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error(`[Worker] PROMESA RECHAZADA SIN ATRAPAR -> ${detalleError(reason)}`, reason);
+  process.exit(1);
+});
+
 async function main() {
   console.log('[Worker] Iniciando worker de cobranzas...');
 
@@ -78,15 +107,8 @@ async function main() {
     // `err.message` solo NO alcanza: los errores de conexion de mysql2
     // (ECONNREFUSED) llegan con message VACIO, asi que la linea quedaba en
     // "Job fallido: cadencias-horarias" y nada mas. Eso escondio un dia entero
-    // de fallos del worker el 2026-09-01. Se agrega el code y, si sigue sin
-    // haber texto, el error completo.
-    const e = err as NodeJS.ErrnoException & { code?: string };
-    const detalle = [e?.message, e?.code].filter(Boolean).join(' | ');
-    if (detalle) {
-      console.error(`[Worker] Job fallido: ${job?.name} -> ${detalle}`);
-    } else {
-      console.error(`[Worker] Job fallido: ${job?.name} -> sin mensaje:`, err);
-    }
+    // de fallos del worker el 2026-09-01.
+    console.error(`[Worker] Job fallido: ${job?.name} (intento ${job?.attemptsMade}) -> ${detalleError(err)}`);
   });
 
   console.log('[Worker] Listo. Esperando jobs...');
@@ -99,6 +121,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error('[Worker] Error fatal:', err);
+  console.error(`[Worker] Error fatal -> ${detalleError(err)}`, err);
   process.exit(1);
 });
