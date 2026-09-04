@@ -17,6 +17,7 @@ import {
   descartarGestion,
   escalarGestion,
   editarGestion,
+  listarGestionesPendientes,
   type ActorGestion,
   type ResultadoAccionGestion,
 } from './gestion-acciones';
@@ -1482,40 +1483,24 @@ async function estadoCobrosHoy(): Promise<ResultadoTool> {
 }
 
 async function listarPendientesAprobacion(limite: number): Promise<ResultadoTool> {
-  // LIMIT como literal, no como parámetro: mysql2/prepared statements
-  // rechaza "LIMIT ?" en este servidor con "Incorrect arguments to
-  // mysqld_stmt_execute" (2026-09-04).
-  const limiteSeguro = Math.min(Math.max(Math.trunc(limite) || 10, 1), 50);
-  const rows = await cobranzasQuery<{
-    id: number;
-    codigo_cliente: string;
-    ij_inum: number;
-    canal: string;
-    saldo_pendiente: number;
-    dias_vencida: number;
-    segmento: string;
-    created_at: string;
-  }>(
-    `SELECT id, codigo_cliente, ij_inum, canal, saldo_pendiente, dias_vencida, segmento, created_at
-     FROM cobranza_gestiones
-     WHERE empresa_id = 1 AND estado='PENDIENTE'
-     ORDER BY created_at ASC
-     LIMIT ${limiteSeguro}`,
-    []
-  );
-
+  // Delega en gestion-acciones.ts (compartida con el seguimiento proactivo
+  // cada 2h) -- esta implementación local usaba columnas que no existen
+  // (dias_vencida/segmento en vez de dias_vencido/segmento_riesgo) y fallaba
+  // en CADA llamada, silenciado por el try/catch de ejecutarTool() (2026-09-04).
+  const { total, items } = await listarGestionesPendientes(limite);
   return {
     ok: true,
     data: {
-      total: rows.length,
-      mensajes: rows.map((r) => ({
+      total,
+      mensajes: items.map((r) => ({
         id: r.id,
         codigo_cliente: r.codigo_cliente,
         factura: r.ij_inum,
         canal: r.canal,
         saldo: Number(r.saldo_pendiente),
-        dias_vencida: r.dias_vencida,
-        segmento: r.segmento,
+        dias_vencido: r.dias_vencido,
+        segmento_riesgo: r.segmento_riesgo,
+        asunto: r.asunto_email,
       })),
     },
   };

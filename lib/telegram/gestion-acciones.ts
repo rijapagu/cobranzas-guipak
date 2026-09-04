@@ -10,6 +10,7 @@
  * web /gestiones/[id]/aprobar y /descartar. Escalar no exige rol, igual que
  * escalar/route.ts (solo pide sesión autenticada).
  */
+import type { InlineKeyboardMarkup } from 'telegraf/types';
 import { cobranzasQuery, cobranzasExecute, logAccion } from '@/lib/db/cobranzas';
 import { EMPRESA_GUIPAK } from '@/lib/tenant';
 import { enviarGestion } from './enviar-gestion';
@@ -187,4 +188,71 @@ export async function escalarGestion(
     [notas ? `ESCALADO: ${notas}` : 'Escalado a gestión manual', actor.userEmail, gestionId]
   );
   return { ok: true, mensaje: `Gestión ${gestionId} escalada para seguimiento manual.` };
+}
+
+/**
+ * Botones de una gestión PENDIENTE — un solo lugar para que el mensaje
+ * reactivo (agente conversacional, vía la marca <gestion-pendiente/>) y el
+ * seguimiento proactivo (lib/queue/jobs/seguimiento-pendientes.ts, cada 2h)
+ * no puedan divergir. callback_data es "accion:id" (dos puntos, no guión
+ * bajo) -- lo parsea manejarCallback() en el webhook con `data.split(':')`.
+ */
+export function construirBotonesGestion(gestionId: number): InlineKeyboardMarkup {
+  return {
+    inline_keyboard: [
+      [{ text: '✅ Aprobar y enviar', callback_data: `aprobar:${gestionId}` }],
+      [
+        { text: '✏️ Editar', callback_data: `editar:${gestionId}` },
+        { text: '❌ Descartar', callback_data: `descartar:${gestionId}` },
+      ],
+      [{ text: '⚠️ Escalar (gestión manual)', callback_data: `escalar:${gestionId}` }],
+    ],
+  };
+}
+
+export interface GestionPendiente {
+  id: number;
+  codigo_cliente: string;
+  ij_inum: number;
+  canal: string;
+  saldo_pendiente: number;
+  dias_vencido: number;
+  segmento_riesgo: string;
+  asunto_email: string | null;
+  created_at: string;
+}
+
+/**
+ * Gestiones PENDIENTE, las más viejas primero -- para que ninguna quede
+ * enterrada indefinidamente en el seguimiento cada 2h. `total` es el conteo
+ * REAL (sin el LIMIT) para que quien llama pueda decir "van N de M".
+ *
+ * Reemplaza el SELECT que tenía listarPendientesAprobacion() en tools.ts:
+ * usaba dias_vencida/segmento, columnas que no existen (son dias_vencido/
+ * segmento_riesgo) -- fallaba en cada llamada, silenciado por el try/catch
+ * de ejecutarTool(). Encontrado 2026-09-04 al construir el seguimiento
+ * proactivo; tools.ts ahora delega aquí.
+ */
+export async function listarGestionesPendientes(
+  limite = 10,
+  empresaId: number = EMPRESA_GUIPAK
+): Promise<{ total: number; items: GestionPendiente[] }> {
+  const limiteSeguro = Math.min(Math.max(Math.trunc(limite) || 10, 1), 50);
+
+  const [items, totalRows] = await Promise.all([
+    cobranzasQuery<GestionPendiente>(
+      `SELECT id, codigo_cliente, ij_inum, canal, saldo_pendiente, dias_vencido, segmento_riesgo, asunto_email, created_at
+         FROM cobranza_gestiones
+        WHERE empresa_id = ? AND estado = 'PENDIENTE'
+        ORDER BY created_at ASC
+        LIMIT ${limiteSeguro}`,
+      [empresaId]
+    ),
+    cobranzasQuery<{ total: number }>(
+      "SELECT COUNT(*) AS total FROM cobranza_gestiones WHERE empresa_id = ? AND estado = 'PENDIENTE'",
+      [empresaId]
+    ),
+  ]);
+
+  return { total: Number(totalRows[0]?.total) || 0, items };
 }

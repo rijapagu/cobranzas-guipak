@@ -24,6 +24,7 @@ export const JOBS = {
   PEDIR_EXTRACTO_RECORDATORIO: 'pedir-extracto-recordatorio',
   CONCILIACION_SEGUIMIENTO: 'conciliacion-seguimiento',
   DEPOSITOS_SIN_DUENO: 'depositos-sin-dueno',
+  SEGUIMIENTO_PENDIENTES: 'seguimiento-pendientes',
 } as const;
 
 let cronQueue: Queue | null = null;

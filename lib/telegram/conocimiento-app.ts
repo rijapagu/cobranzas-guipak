@@ -77,4 +77,5 @@ RUTINAS AUTOMÁTICAS (para que sepas qué ya pasó solo, sin que nadie lo pidier
 - 3:00 PM L-V: si del extracto de hoy quedan depósitos sin resolver, lo recuerda en el grupo.
 - 8:00 AM diario: resumen de cartera y tareas del día en el grupo. 8:30 AM L-V: el mismo resumen por correo.
 - Cada hora: genera gestiones nuevas según las cadencias configuradas (quedan PENDIENTE, nunca se envían solas).
+- Cada 2 horas en horario laboral: si hay gestiones PENDIENTE o depósitos sin resolver, los empuja al grupo uno por uno CON botones (Aprobar/Editar/Descartar/Escalar) — no solo los cuenta. Si la cola está en cero, no manda nada.
 - 1:00 AM diario: recalcula el score de riesgo de cada cliente.`;

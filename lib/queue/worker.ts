@@ -69,6 +69,7 @@ async function main() {
     recordatorioChequesDevueltos,
     recordarDepositosSinDueno,
   } = await import('@/lib/conciliacion/seguimiento');
+  const { ejecutarSeguimientoPendientes } = await import('./jobs/seguimiento-pendientes');
 
   await scheduleRepeatable(JOBS.EMPUJE_MATUTINO, '0 12 * * *'); // 8:00 AM AST
   await scheduleRepeatable(JOBS.CADENCIAS_HORARIAS, '0 * * * *'); // cada hora
@@ -81,6 +82,15 @@ async function main() {
   await scheduleRepeatable(JOBS.PEDIR_EXTRACTO_RECORDATORIO, '0 15 * * 1-5', { modo: 'recordatorio' }); // 11:00 AM AST L-V
   await scheduleRepeatable(JOBS.CONCILIACION_SEGUIMIENTO, '0 13,17,21 * * 1-5'); // 9AM/1PM/5PM AST L-V
   await scheduleRepeatable(JOBS.DEPOSITOS_SIN_DUENO, '0 19 * * 1-5'); // 3:00 PM AST L-V
+
+  // Seguimiento proactivo de la cola de aprobación (2026-09-04, a pedido
+  // expreso de Ricardo: "quiero que esté pendiente de todo, que pregunte y
+  // vuelva a preguntar hasta que no quede tarea pendiente" -- no quiere tener
+  // que entrar a la app). Cada 2h dentro de horario laboral (8AM-6PM AST
+  // aprox.; enHorarioLaboral() adentro del job es el filtro real, este cron
+  // solo evita correr de noche). Si no hay nada pendiente, el job no manda
+  // nada -- así deja de insistir solo cuando la cola llega a cero.
+  await scheduleRepeatable(JOBS.SEGUIMIENTO_PENDIENTES, '0 12,14,16,18,20,22 * * *');
 
   const worker = createCronWorker(async (job) => {
     console.log(`[Worker] Procesando job: ${job.name}`);
@@ -124,6 +134,13 @@ async function main() {
     if (job.name === JOBS.DEPOSITOS_SIN_DUENO) {
       const r = await recordarDepositosSinDueno();
       console.log(`[Worker] Depósitos sin dueño: avisado=${r.avisado} motivo=${r.motivo}`);
+    }
+
+    if (job.name === JOBS.SEGUIMIENTO_PENDIENTES) {
+      const r = await ejecutarSeguimientoPendientes();
+      console.log(
+        `[Worker] Seguimiento pendientes: enviado=${r.enviado} motivo=${r.motivo} gestiones=${r.gestiones_pendientes ?? 0} depositos=${r.depositos_pendientes ?? 0}`
+      );
     }
   });
 

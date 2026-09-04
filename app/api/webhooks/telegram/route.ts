@@ -3,7 +3,7 @@ import { resolverUsuarioTelegram, esSupervisor } from '@/lib/telegram/auth';
 import { procesarMensajeBot } from '@/lib/telegram/agent';
 import { getTelegraf } from '@/lib/telegram/client';
 import { cobranzasQuery, logAccion } from '@/lib/db/cobranzas';
-import { aprobarGestion, descartarGestion } from '@/lib/telegram/gestion-acciones';
+import { aprobarGestion, descartarGestion, escalarGestion, construirBotonesGestion } from '@/lib/telegram/gestion-acciones';
 import { limpiarSesion } from '@/lib/telegram/session';
 import { marcarUpdateVisto } from '@/lib/telegram/idempotency';
 import { enHorarioLaboral, descripcionHorarioLaboral } from '@/lib/horario';
@@ -238,20 +238,6 @@ function extraerGestionPendiente(texto: string): {
   return { texto: limpio, gestionId: id };
 }
 
-function construirBotonesGestion(gestionId: number): InlineKeyboardMarkup {
-  return {
-    inline_keyboard: [
-      [
-        { text: '✅ Aprobar y enviar', callback_data: `aprobar:${gestionId}` },
-      ],
-      [
-        { text: '✏️ Editar', callback_data: `editar:${gestionId}` },
-        { text: '❌ Descartar', callback_data: `descartar:${gestionId}` },
-      ],
-    ],
-  };
-}
-
 async function manejarCallback(
   cb: TelegramCallbackQuery
 ): Promise<NextResponse> {
@@ -368,6 +354,38 @@ async function manejarCallback(
         } catch {}
       }
       await bot.telegram.answerCbQuery(cb.id, resultado.ok ? '❌ Descartado' : '⚠️ No se pudo descartar');
+      return NextResponse.json({ ok: resultado.ok });
+    }
+
+    case 'escalar': {
+      // A diferencia de aprobar/descartar, escalar NO exige rol supervisor
+      // (ver el guard antes del switch) -- paridad con escalar/route.ts, que
+      // solo pide sesión autenticada.
+      const resultado = await escalarGestion(
+        gestionId,
+        {
+          userId: String(auth.usuario_id),
+          userEmail: `telegram:${auth.telegram_username || auth.telegram_user_id}`,
+          esSupervisor: esSupervisor(auth),
+        },
+        'Escalado desde Telegram'
+      );
+      if (cb.message) {
+        try {
+          await bot.telegram.editMessageReplyMarkup(
+            cb.message.chat.id,
+            cb.message.message_id,
+            undefined,
+            undefined
+          );
+          await bot.telegram.sendMessage(
+            cb.message.chat.id,
+            `${resultado.ok ? '📤' : '⚠️'} ${resultado.mensaje}`,
+            { reply_parameters: { message_id: cb.message.message_id } }
+          );
+        } catch {}
+      }
+      await bot.telegram.answerCbQuery(cb.id, resultado.ok ? '📤 Escalada' : '⚠️ No se pudo escalar');
       return NextResponse.json({ ok: resultado.ok });
     }
 
