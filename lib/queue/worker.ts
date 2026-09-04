@@ -1,14 +1,27 @@
-import { createCronWorker, scheduleRepeatable, JOBS } from './bullmq';
-import { ejecutarEmpujeMatutino } from './jobs/empuje-matutino';
-import { ejecutarCadenciasHorarias } from './jobs/cadencias';
-import { enviarReporteDiario } from '@/lib/reportes/reporte-diario';
-import { ejecutarInteligenciaClientes } from './jobs/inteligencia-clientes';
-import {
-  pedirExtractoSiFalta,
-  verificarDesconocidos,
-  recordatorioChequesDevueltos,
-  recordarDepositosSinDueno,
-} from '@/lib/conciliacion/seguimiento';
+// Causa raiz encontrada en produccion (2026-09-04): Dockerfile.worker corre
+// `tsx lib/queue/worker.ts` DIRECTO, sin pasar por Next.js -- y es Next.js
+// (via @next/env) el que carga los .env automaticamente para cobranzas-guipak.
+// El contenedor del worker arrancaba con NODE_ENV y nada mas (confirmado con
+// `env` dentro del contenedor: DB_COBRANZAS_HOST y todo el resto vacios), asi
+// que mysql2 caia al host/puerto default (localhost) y tiraba ECONNREFUSED en
+// cada intento de cadencias-horarias y los demas jobs -- por meses.
+//
+// El resto de los imports de este archivo (./bullmq, los jobs, etc.) son
+// DINAMICOS (import() dentro de main(), no `import ... from` estatico arriba)
+// a proposito: en ESM todos los imports estaticos de un modulo se evaluan
+// ANTES de que el propio modulo empiece a correr su codigo de nivel superior.
+// Si `./bullmq` fuera un import estatico normal, se evaluaria (creando el
+// pool de mysql2 en lib/db/cobranzas.ts) ANTES de que el cargarEnv() de abajo
+// llegue a ejecutarse -- exactamente el mismo bug otra vez, mas dificil de ver.
+import { config as cargarEnv } from 'dotenv';
+
+// Mismo orden de prioridad que usa Next.js (mayor a menor; dotenv no pisa una
+// variable ya puesta por un config() anterior, asi que cargar en este orden
+// replica esa prioridad sin tener que adivinar cual archivo concreto escribe
+// Dokploy): .env.production.local > .env.local > .env.production > .env
+for (const archivo of ['.env.production.local', '.env.local', '.env.production', '.env']) {
+  cargarEnv({ path: archivo });
+}
 
 /**
  * `err.message` solo puede venir VACIO (ej. ECONNREFUSED de mysql2) -- ver
@@ -41,6 +54,21 @@ process.on('unhandledRejection', (reason) => {
 
 async function main() {
   console.log('[Worker] Iniciando worker de cobranzas...');
+
+  // Imports dinamicos: recien aqui, DESPUES del cargarEnv() de arriba, es
+  // seguro evaluar modulos que leen process.env en su propio top-level (el
+  // pool de mysql2 en lib/db/cobranzas.ts, por ejemplo).
+  const { createCronWorker, scheduleRepeatable, JOBS } = await import('./bullmq');
+  const { ejecutarEmpujeMatutino } = await import('./jobs/empuje-matutino');
+  const { ejecutarCadenciasHorarias } = await import('./jobs/cadencias');
+  const { enviarReporteDiario } = await import('@/lib/reportes/reporte-diario');
+  const { ejecutarInteligenciaClientes } = await import('./jobs/inteligencia-clientes');
+  const {
+    pedirExtractoSiFalta,
+    verificarDesconocidos,
+    recordatorioChequesDevueltos,
+    recordarDepositosSinDueno,
+  } = await import('@/lib/conciliacion/seguimiento');
 
   await scheduleRepeatable(JOBS.EMPUJE_MATUTINO, '0 12 * * *'); // 8:00 AM AST
   await scheduleRepeatable(JOBS.CADENCIAS_HORARIAS, '0 * * * *'); // cada hora
