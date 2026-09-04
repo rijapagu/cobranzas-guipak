@@ -35,14 +35,20 @@ export async function GET(req: NextRequest) {
   }
   params.push(limite);
 
-  const logs = await cobranzasQuery(
-    `SELECT id, empresa_id, usuario_id, accion, entidad, entidad_id, detalle, created_at
-       FROM cobranza_logs
-       ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
-      ORDER BY created_at DESC
-      LIMIT ?`,
-    params
-  );
-
-  return NextResponse.json({ total: logs.length, logs });
+  try {
+    const logs = await cobranzasQuery(
+      `SELECT *
+         FROM cobranza_logs
+         ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
+        ORDER BY id DESC
+        LIMIT ?`,
+      params
+    );
+    return NextResponse.json({ total: logs.length, logs });
+  } catch (error) {
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : String(error) },
+      { status: 500 }
+    );
+  }
 }
